@@ -154,23 +154,24 @@ static void wifi_apply_network(int idx)
             if (ip4addr_aton(n.gateway,   &a)) ip_info.gw.addr      = a.addr;
             esp_netif_set_ip_info(sta, &ip_info);
 
-            /* Static mode disables the DHCP client, which means no DNS
-             * lands on the netif automatically. Apply the per-network
-             * DNS when one is configured; without it the resolver stays
-             * empty until somebody sets it manually. */
-            if (n.dns[0]) {
-                ip4_addr_t da;
-                if (ip4addr_aton(n.dns, &da)) {
-                    esp_netif_dns_info_t dns = {0};
-                    dns.ip.type = ESP_IPADDR_TYPE_V4;
-                    dns.ip.u_addr.ip4.addr = da.addr;
-                    esp_netif_set_dns_info(sta, ESP_NETIF_DNS_MAIN, &dns);
-                }
+            /* Static mode disables the DHCP client, so no DNS lands on
+             * the netif automatically. When the operator filled in the
+             * per-network DNS field, use that; otherwise point DNS at
+             * the gateway — most home routers act as a DNS forwarder,
+             * which gives the same effective behaviour as DHCP would
+             * have ("use whatever the upstream router uses"). */
+            const char *dns_src = n.dns[0] ? n.dns : n.gateway;
+            ip4_addr_t da;
+            if (ip4addr_aton(dns_src, &da) && da.addr) {
+                esp_netif_dns_info_t dns = {0};
+                dns.ip.type = ESP_IPADDR_TYPE_V4;
+                dns.ip.u_addr.ip4.addr = da.addr;
+                esp_netif_set_dns_info(sta, ESP_NETIF_DNS_MAIN, &dns);
             }
 
-            ESP_LOGI("WiFi Sta", "wifi[%d] '%s' static %s/%s via %s%s%s",
-                     idx, n.ssid, n.static_ip, n.subnet, n.gateway,
-                     n.dns[0] ? " dns=" : "", n.dns[0] ? n.dns : "");
+            ESP_LOGI("WiFi Sta", "wifi[%d] '%s' static %s/%s via %s dns=%s%s",
+                     idx, n.ssid, n.static_ip, n.subnet, n.gateway, dns_src,
+                     n.dns[0] ? "" : " (gateway)");
         } else {
             esp_netif_dhcpc_start(sta);
             ESP_LOGI("WiFi Sta", "wifi[%d] '%s' DHCP", idx, n.ssid);
