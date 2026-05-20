@@ -23,6 +23,9 @@
 #include "log_capture.h"
 #include "web_password.h"
 #include "esp_random.h"
+#include "esp_system.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 
 /* Globals owned by main.c — link status flags rendered in /api/status. */
 extern int ap_connect;
@@ -530,6 +533,73 @@ static const httpd_uri_t uri_system = {
     .user_ctx = NULL,
 };
 
+static void delayed_restart_task(void *arg)
+{
+    /* Give the HTTP response a moment to flush + the TCP socket to close
+     * cleanly before we yank the power. */
+    vTaskDelay(pdMS_TO_TICKS(1000));
+    esp_restart();
+}
+
+static esp_err_t system_save_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char buf[512];
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+
+    /* Telemetry block — { enabled, url, key }. Empty key is allowed and
+     * means "keep the default key" inside telemetry_set_key. */
+    const cJSON *t = cJSON_GetObjectItem(root, "telemetry");
+    if (cJSON_IsObject(t)) {
+        const cJSON *en = cJSON_GetObjectItem(t, "enabled");
+        if (cJSON_IsBool(en))  telemetry_set_enabled(cJSON_IsTrue(en));
+        const cJSON *url = cJSON_GetObjectItem(t, "url");
+        if (cJSON_IsString(url)) telemetry_set_url(url->valuestring);
+        const cJSON *key = cJSON_GetObjectItem(t, "key");
+        if (cJSON_IsString(key)) telemetry_set_key(key->valuestring);
+    }
+
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static esp_err_t system_restart_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, "{\"ok\":true,\"restarting\":true}");
+    xTaskCreate(delayed_restart_task, "reboot", 2048, NULL, 5, NULL);
+    return err;
+}
+
+static esp_err_t system_factory_reset_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    nvs_param_erase_all();
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, "{\"ok\":true,\"restarting\":true}");
+    xTaskCreate(delayed_restart_task, "reboot", 2048, NULL, 5, NULL);
+    return err;
+}
+
+static const httpd_uri_t uri_system_save = {
+    .uri = "/api/system", .method = HTTP_POST, .handler = system_save_handler,
+};
+static const httpd_uri_t uri_system_restart = {
+    .uri = "/api/system/restart", .method = HTTP_POST, .handler = system_restart_handler,
+};
+static const httpd_uri_t uri_system_factory_reset = {
+    .uri = "/api/system/factory_reset", .method = HTTP_POST, .handler = system_factory_reset_handler,
+};
+
 /* ---- Session management -------------------------------------------------
  * Single in-memory session, like the OLD repo. 32-byte random token hex-
  * encoded into a cookie that expires after 30 min of inactivity. The
@@ -731,6 +801,9 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_tailscale_save);
     httpd_register_uri_handler(server, &uri_system);
+    httpd_register_uri_handler(server, &uri_system_save);
+    httpd_register_uri_handler(server, &uri_system_restart);
+    httpd_register_uri_handler(server, &uri_system_factory_reset);
     httpd_register_uri_handler(server, &uri_auth_status);
     httpd_register_uri_handler(server, &uri_auth_login);
     httpd_register_uri_handler(server, &uri_auth_logout);
