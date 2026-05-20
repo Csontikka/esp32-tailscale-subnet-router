@@ -18,6 +18,7 @@
 #include "web_ui.h"
 #include "tailscale_config.h"
 #include "nvs_params.h"
+#include "microlink.h"
 
 /* Globals owned by main.c — link status flags rendered in /api/status. */
 extern int ap_connect;
@@ -185,6 +186,115 @@ static const httpd_uri_t uri_network = {
     .user_ctx = NULL,
 };
 
+/* Format a host-byte-order IPv4 as "a.b.c.d" — used for the accepted-
+ * routes table where host order is the documented storage. */
+static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size)
+{
+    snprintf(out, out_size, "%u.%u.%u.%u",
+             (unsigned)((hbo >> 24) & 0xff),
+             (unsigned)((hbo >> 16) & 0xff),
+             (unsigned)((hbo >> 8)  & 0xff),
+             (unsigned)( hbo        & 0xff));
+}
+
+static esp_err_t tailscale_handler(httpd_req_t *req)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    /* Settings — auth_key is intentionally never serialised. */
+    cJSON *settings = cJSON_CreateObject();
+    cJSON_AddBoolToObject  (settings, "enabled",                 tailscale_enabled != 0);
+    if (tailscale_hostname)         cJSON_AddStringToObject(settings, "hostname",       tailscale_hostname);
+    if (tailscale_login_server)     cJSON_AddStringToObject(settings, "login_server",   tailscale_login_server);
+    if (tailscale_advertise_routes) cJSON_AddStringToObject(settings, "advertise_routes", tailscale_advertise_routes);
+    cJSON_AddNumberToObject(settings, "max_peers",               tailscale_max_peers);
+    cJSON_AddNumberToObject(settings, "default_derp_region",     tailscale_default_derp_region);
+    cJSON_AddBoolToObject  (settings, "netcheck_override",       tailscale_netcheck_override != 0);
+    cJSON_AddNumberToObject(settings, "netcheck_threshold_ms",   tailscale_netcheck_threshold_ms);
+    cJSON_AddBoolToObject  (settings, "lan_bypass",              tailscale_lan_bypass != 0);
+    cJSON_AddBoolToObject  (settings, "accept_routes",           tailscale_accept_routes != 0);
+    if (tailscale_exit_node_ip) {
+        char buf[16];
+        ip4_to_str(tailscale_exit_node_ip, buf, sizeof buf);
+        cJSON_AddStringToObject(settings, "exit_node_ip", buf);
+    }
+    cJSON_AddItemToObject(root, "settings", settings);
+
+    /* Runtime state. */
+    cJSON *runtime = cJSON_CreateObject();
+    cJSON_AddBoolToObject(runtime, "connected", tailscale_connected);
+    if (tailscale_tunnel_ip) {
+        char buf[16];
+        ip4_to_str(tailscale_tunnel_ip, buf, sizeof buf);
+        cJSON_AddStringToObject(runtime, "tunnel_ip", buf);
+    }
+    cJSON_AddItemToObject(root, "runtime", runtime);
+
+    /* Peers — empty array when microlink isn't running. */
+    cJSON *peers = cJSON_CreateArray();
+    struct microlink_s *ml = tailscale_get_microlink();
+    if (ml) {
+        int n = microlink_get_peer_count(ml);
+        for (int i = 0; i < n; i++) {
+            microlink_peer_info_t pi;
+            if (microlink_get_peer_info(ml, i, &pi) != ESP_OK) continue;
+            cJSON *p = cJSON_CreateObject();
+            cJSON_AddStringToObject(p, "hostname",     pi.hostname);
+            cJSON_AddBoolToObject  (p, "online",       pi.online);
+            cJSON_AddBoolToObject  (p, "direct_path",  pi.direct_path);
+            cJSON_AddBoolToObject  (p, "is_exit_node", pi.is_exit_node);
+            char buf[16];
+            ip4_to_str(pi.vpn_ip, buf, sizeof buf);
+            cJSON_AddStringToObject(p, "vpn_ip", buf);
+            cJSON *routes = cJSON_CreateArray();
+            for (int r = 0; r < pi.subnet_route_count; r++) {
+                cJSON *rt = cJSON_CreateObject();
+                ip4_hbo_to_str(pi.subnet_routes[r].network, buf, sizeof buf);
+                cJSON_AddStringToObject(rt, "network",    buf);
+                cJSON_AddNumberToObject(rt, "prefix_len", pi.subnet_routes[r].prefix_len);
+                cJSON_AddItemToArray(routes, rt);
+            }
+            cJSON_AddItemToObject(p, "subnet_routes", routes);
+            cJSON_AddItemToArray(peers, p);
+        }
+    }
+    cJSON_AddItemToObject(root, "peers", peers);
+
+    /* Accepted-routes table (peer routes we've decided to honour). */
+    cJSON *acc = cJSON_CreateArray();
+    for (int i = 0; i < tailscale_accepted_routes_count; i++) {
+        cJSON *r = cJSON_CreateObject();
+        char buf[16];
+        ip4_hbo_to_str(tailscale_accepted_routes[i].network, buf, sizeof buf);
+        cJSON_AddStringToObject(r, "network",    buf);
+        cJSON_AddNumberToObject(r, "prefix_len", tailscale_accepted_routes[i].prefix_len);
+        cJSON_AddItemToArray(acc, r);
+    }
+    cJSON_AddItemToObject(root, "accepted_routes", acc);
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static const httpd_uri_t uri_tailscale = {
+    .uri      = "/api/tailscale",
+    .method   = HTTP_GET,
+    .handler  = tailscale_handler,
+    .user_ctx = NULL,
+};
+
 void web_ui_init(void)
 {
     static httpd_handle_t server = NULL;
@@ -202,5 +312,6 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_index);
     httpd_register_uri_handler(server, &uri_status);
     httpd_register_uri_handler(server, &uri_network);
+    httpd_register_uri_handler(server, &uri_tailscale);
     ESP_LOGI(TAG, "web UI listening on :%d", config.server_port);
 }
