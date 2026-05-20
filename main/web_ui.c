@@ -402,6 +402,73 @@ static const httpd_uri_t uri_tailscale = {
     .user_ctx = NULL,
 };
 
+static esp_err_t tailscale_save_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char buf[2048];   /* generous: auth_key alone can run to ~120 chars. */
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+
+    /* Same omit-to-keep convention as /api/network. The "settings"
+     * wrapper matches the GET shape so the SPA can round-trip its
+     * editable form straight back. auth_key is write-only — it's never
+     * returned by the GET, and POSTing it with an empty string clears
+     * the credential. */
+    const cJSON *s = cJSON_GetObjectItem(root, "settings");
+    if (cJSON_IsObject(s)) {
+        const cJSON *enabled = cJSON_GetObjectItem(s, "enabled");
+        if (cJSON_IsBool(enabled)) {
+            nvs_param_set_int("ts_enabled", cJSON_IsTrue(enabled) ? 1 : 0);
+        }
+        save_str_if_present(s, "auth_key",         "ts_authkey");
+        save_str_if_present(s, "hostname",         "ts_hostname");
+        save_str_if_present(s, "login_server",     "ts_login");
+        save_str_if_present(s, "advertise_routes", "ts_routes");
+        save_int_if_present(s, "max_peers",        "ts_maxpeers");
+        save_int_if_present(s, "default_derp_region",   "ts_def_derp");
+        save_int_if_present(s, "netcheck_threshold_ms", "ts_nc_thr");
+
+        const cJSON *bool_keys[][2] = {
+            { cJSON_GetObjectItem(s, "netcheck_override"), (void *)"ts_nc_ovr"  },
+            { cJSON_GetObjectItem(s, "lan_bypass"),        (void *)"ts_lan_bp"  },
+            { cJSON_GetObjectItem(s, "accept_routes"),     (void *)"ts_acpt_rt" },
+        };
+        for (size_t i = 0; i < sizeof bool_keys / sizeof bool_keys[0]; i++) {
+            const cJSON *v = bool_keys[i][0];
+            if (cJSON_IsBool(v)) {
+                nvs_param_set_int((const char *)bool_keys[i][1], cJSON_IsTrue(v) ? 1 : 0);
+            }
+        }
+
+        /* exit_node_ip is a dotted-quad string in the JSON, stored in
+         * NVS as the host-order int that tailscale_init reads back. */
+        const cJSON *exit_node = cJSON_GetObjectItem(s, "exit_node_ip");
+        if (cJSON_IsString(exit_node)) {
+            ip4_addr_t a = { 0 };
+            if (exit_node->valuestring[0] == '\0' || ip4addr_aton(exit_node->valuestring, &a)) {
+                nvs_param_set_int("ts_exit_node", (int32_t)a.addr);
+            }
+        }
+    }
+
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true,\"restart_required\":true}");
+}
+
+static const httpd_uri_t uri_tailscale_save = {
+    .uri      = "/api/tailscale",
+    .method   = HTTP_POST,
+    .handler  = tailscale_save_handler,
+    .user_ctx = NULL,
+};
+
 #define WEB_UI_LOG_SNAPSHOT_BYTES 4096
 
 static esp_err_t system_handler(httpd_req_t *req)
@@ -662,6 +729,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_network);
     httpd_register_uri_handler(server, &uri_network_save);
     httpd_register_uri_handler(server, &uri_tailscale);
+    httpd_register_uri_handler(server, &uri_tailscale_save);
     httpd_register_uri_handler(server, &uri_system);
     httpd_register_uri_handler(server, &uri_auth_status);
     httpd_register_uri_handler(server, &uri_auth_login);
