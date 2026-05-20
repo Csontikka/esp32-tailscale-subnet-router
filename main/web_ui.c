@@ -28,6 +28,11 @@
 #include "dhcp_reservations.h"
 #include "dhcps_ext.h"
 #include "portmap.h"
+
+/* Cap on log payloads we surface over /api endpoints — both the live
+ * log tail and the pre-crash snapshot share this ceiling so the JSON
+ * stays bounded. */
+#define WEB_UI_LOG_SNAPSHOT_BYTES 4096
 #include "telemetry.h"
 #include "log_capture.h"
 #include "netif_hooks.h"
@@ -1693,8 +1698,6 @@ static const httpd_uri_t uri_tailscale_save = {
     .handler  = tailscale_save_handler,
     .user_ctx = NULL,
 };
-
-#define WEB_UI_LOG_SNAPSHOT_BYTES 4096
 
 static esp_err_t system_handler(httpd_req_t *req)
 {
