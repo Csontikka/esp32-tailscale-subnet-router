@@ -220,6 +220,27 @@
     /* =====================================================================
        LAYOUT — PAGE CONTAINER
        ===================================================================== */
+    .pending-reboot-banner {
+      display: none;
+      position: sticky;
+      top: 0;
+      z-index: 50;
+      background: linear-gradient(90deg, rgba(245,158,11,0.16), rgba(245,158,11,0.10));
+      border: 1px solid var(--warning);
+      border-radius: var(--radius-md);
+      padding: var(--sp-3) var(--sp-4);
+      margin: 0 0 var(--sp-4) 0;
+      align-items: center;
+      gap: var(--sp-3);
+      animation: pending-slide-down 200ms ease forwards;
+    }
+    .pending-reboot-banner.visible { display: flex; }
+    .pending-reboot-banner-icon  { color: var(--warning); flex-shrink: 0; }
+    .pending-reboot-banner-text  { flex: 1; }
+    .pending-reboot-banner-title { font-weight: var(--weight-medium); color: var(--text-primary); }
+    .pending-reboot-banner-sub   { font-size: var(--text-xs); color: var(--text-muted); margin-top: 2px; }
+    @keyframes pending-slide-down { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: translateY(0); } }
+
     .page-container {
       max-width: 1100px;
       margin: 0 auto;
@@ -1320,6 +1341,28 @@
        PAGE CONTAINER
        =================================================================== -->
   <div class="page-container">
+    <!-- ===================================================================
+         PENDING REBOOT BANNER
+         A successful POST that returns restart_required:true latches this
+         banner. It clears automatically once the SPA observes the device
+         coming back from a reboot (uptime_s drops below the last seen
+         value), or when the operator hits Reboot now.
+         =================================================================== -->
+    <div class="pending-reboot-banner" id="pendingRebootBanner" role="status">
+      <span class="pending-reboot-banner-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"/>
+          <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
+        </svg>
+      </span>
+      <div class="pending-reboot-banner-text">
+        <div class="pending-reboot-banner-title">Pending changes — reboot required</div>
+        <div class="pending-reboot-banner-sub">WiFi and Tailscale changes only take effect after the device restarts.</div>
+      </div>
+      <button class="btn btn-secondary btn-sm" id="pendingDismiss" type="button">Dismiss</button>
+      <button class="btn btn-primary btn-sm"   id="pendingReboot"  type="button">Reboot now</button>
+    </div>
+
 
     <!-- =================================================================
          STATUS PAGE
@@ -2516,6 +2559,7 @@
       }
 
       // Uptime
+      pendingRebootObserveUptime(data.uptime_s);
       document.getElementById('uptime-value').textContent = formatUptime(data.uptime_s || 0);
       /* last_reboot is computed client-side: now - uptime. Avoids needing
        * the device to know wallclock at boot. */
@@ -3011,11 +3055,7 @@
         .then(function (resp) {
           btn.textContent = 'Save';
           showToast('success', 'Saved', 'Network settings written to NVS.', 4000);
-          if (resp.restart_required) {
-            showConfirm('Reboot now?',
-                        'WiFi changes only take effect after a reboot. Reboot the device now?',
-                        function () { apiFetch('/api/system/restart', { method: 'POST' }); });
-          }
+          if (resp.restart_required) setPendingReboot(true);
         })
         .catch(function (e) {
           btn.disabled = false;
@@ -3274,11 +3314,7 @@
         .then(function (resp) {
           btn.textContent = 'Save';
           showToast('success', 'Saved', 'Tailscale settings written to NVS.', 4000);
-          if (resp.restart_required) {
-            showConfirm('Reboot now?',
-                        'Tailscale changes only take effect after a reboot. Reboot now?',
-                        function () { apiFetch('/api/system/restart', { method: 'POST' }); });
-          }
+          if (resp.restart_required) setPendingReboot(true);
         })
         .catch(function (e) {
           btn.disabled = false;
@@ -3853,6 +3889,45 @@
     // =====================================================================
     /* Centralised brand-name updater. Called on every /api/auth/status
      * fetch + after the operator saves a new name from the System tab. */
+    /* Pending-reboot banner state. Latches on any restart_required:true
+     * response and clears when the SPA observes the device coming back
+     * from a reboot (uptime drops below the last seen value). */
+    var s_last_seen_uptime = -1;
+    function setPendingReboot(on) {
+      var b = document.getElementById('pendingRebootBanner');
+      if (!b) return;
+      if (on) {
+        b.classList.add('visible');
+        try { localStorage.setItem('pending_reboot', '1'); } catch (e) {}
+      } else {
+        b.classList.remove('visible');
+        try { localStorage.removeItem('pending_reboot'); } catch (e) {}
+      }
+    }
+    function pendingRebootObserveUptime(uptime_s) {
+      if (typeof uptime_s !== 'number') return;
+      if (s_last_seen_uptime > 0 && uptime_s + 5 < s_last_seen_uptime) {
+        /* Device rebooted between fetches → flag clears itself. */
+        setPendingReboot(false);
+      }
+      s_last_seen_uptime = uptime_s;
+    }
+    /* Restore latched state on page load. */
+    try {
+      if (localStorage.getItem('pending_reboot') === '1') setPendingReboot(true);
+    } catch (e) {}
+    document.getElementById('pendingDismiss').addEventListener('click', function () {
+      setPendingReboot(false);
+    });
+    document.getElementById('pendingReboot').addEventListener('click', function () {
+      showConfirm('Reboot now?',
+                  'The device will restart and become reachable again in ~10 s.',
+                  function () {
+                    apiFetch('/api/system/restart', { method: 'POST' });
+                    showToast('info', 'Rebooting…', '', 6000);
+                  });
+    });
+
     function updateBrandName(name) {
       var n = (name && name.length) ? name : 'ESP32 Router';
       document.title = n;
