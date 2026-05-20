@@ -43,6 +43,7 @@
 #include "syslog_client.h"
 #include "remote_console.h"
 #include "nvs_params.h"
+#include "pcap_capture.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -346,6 +347,10 @@ void app_main(void)
      * drop denied traffic. Must run AFTER esp_wifi_start so the netifs
      * exist and have their default input/linkoutput function pointers. */
     netif_hooks_init();
+
+    /* PCAP-over-TCP capture (listens on port 19000 for Wireshark).
+     * Mode is OFF on boot; operator enables it from /api/tools/pcap. */
+    pcap_init();
 
     /* HTTP server with the embedded SPA at / + the JSON API endpoints. */
     web_ui_init();
