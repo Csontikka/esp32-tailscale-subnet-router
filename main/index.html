@@ -1280,8 +1280,8 @@
       <div class="auth-error" id="setup-error"></div>
       <div class="form-group">
         <label class="form-label" for="setup-pw">Password</label>
-        <input class="input" type="password" id="setup-pw" autocomplete="new-password" placeholder="Enter password" minlength="6">
-        <span class="auth-hint">Minimum 6 characters</span>
+        <input class="input" type="password" id="setup-pw" autocomplete="new-password" placeholder="Enter password" minlength="8">
+        <span class="auth-hint">Min 8 chars, with a lowercase, uppercase, digit, and special character.</span>
       </div>
       <div class="form-group" style="margin-bottom:var(--sp-6)">
         <label class="form-label" for="setup-pw2">Confirm password</label>
@@ -2357,6 +2357,19 @@
     }
 
     // =====================================================================
+    // AUTH — password policy. Mirrors the backend check_password_policy
+    // wording so the SPA shows the same message the server would return.
+    // =====================================================================
+    function checkPasswordPolicy(pw) {
+      if (!pw || pw.length < 8)         return 'Password must be at least 8 characters.';
+      if (!/[a-z]/.test(pw))            return 'Password must include a lowercase letter.';
+      if (!/[A-Z]/.test(pw))            return 'Password must include an uppercase letter.';
+      if (!/[0-9]/.test(pw))            return 'Password must include a digit.';
+      if (!/[^A-Za-z0-9]/.test(pw))     return 'Password must include a special character.';
+      return null;
+    }
+
+    // =====================================================================
     // AUTH — setup wizard submit
     // =====================================================================
     document.getElementById('setupSubmitBtn').addEventListener('click', function () {
@@ -2365,8 +2378,9 @@
 
       setAuthError('setup-error', '');
 
-      if (pw.length < 6) {
-        setAuthError('setup-error', 'Password must be at least 6 characters.');
+      var policyError = checkPasswordPolicy(pw);
+      if (policyError) {
+        setAuthError('setup-error', policyError);
         return;
       }
       if (pw !== pw2) {
