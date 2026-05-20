@@ -37,6 +37,7 @@
 #include "tailscale_mtu.h"
 #include "telemetry.h"
 #include "lwip_route_hook.h"
+#include "web_ui.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -305,4 +306,9 @@ void app_main(void)
     if (esp_netif_napt_enable(esp_netif_ap) != ESP_OK) {
         ESP_LOGE(TAG_STA, "NAPT not enabled on the netif: %p", esp_netif_ap);
     }
+
+    /* HTTP server with the embedded SPA at /. JSON API endpoints land
+     * in later commits; for now this just gives the user a visible page
+     * confirming the router is up. */
+    web_ui_init();
 }
