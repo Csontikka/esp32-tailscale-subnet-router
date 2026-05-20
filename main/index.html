@@ -1079,6 +1079,110 @@
       .page-header { flex-direction: column; align-items: flex-start; }
       .stat-label { min-width: 100px; }
     }
+
+    /* =====================================================================
+       AUTH OVERLAY
+       ===================================================================== */
+    .auth-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      background: var(--bg-page);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: var(--sp-4);
+      animation: auth-fade-in 180ms ease forwards;
+    }
+
+    @keyframes auth-fade-in {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+
+    .auth-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow-lg);
+      width: 100%;
+      max-width: 360px;
+      padding: var(--sp-8) var(--sp-6);
+      animation: auth-slide-up 200ms ease forwards;
+    }
+
+    @keyframes auth-slide-up {
+      from { opacity: 0; transform: translateY(12px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    .auth-icon {
+      width: 40px;
+      height: 40px;
+      background: var(--accent-muted);
+      border: 1px solid var(--accent-border);
+      border-radius: var(--radius-lg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: var(--sp-5);
+    }
+
+    .auth-title {
+      font-size: var(--text-xl);
+      font-weight: var(--weight-semibold);
+      color: var(--fg-primary);
+      letter-spacing: -0.02em;
+      margin-bottom: var(--sp-1);
+    }
+
+    .auth-subtitle {
+      font-size: var(--text-sm);
+      color: var(--fg-muted);
+      margin-bottom: var(--sp-6);
+    }
+
+    .auth-error {
+      font-size: var(--text-sm);
+      color: var(--danger);
+      background: var(--danger-muted);
+      border: 1px solid var(--danger-border);
+      border-radius: var(--radius-md);
+      padding: var(--sp-2) var(--sp-3);
+      margin-bottom: var(--sp-4);
+      display: none;
+    }
+    .auth-error.visible { display: block; }
+
+    .auth-hint {
+      font-size: var(--text-xs);
+      color: var(--fg-muted);
+      margin-top: var(--sp-2);
+    }
+
+    /* Lock button in nav */
+    .btn-lock {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      font-size: var(--text-xs);
+      color: var(--fg-muted);
+      background: transparent;
+      border: 1px solid transparent;
+      border-radius: var(--radius-md);
+      padding: 4px 9px;
+      cursor: pointer;
+      transition: color var(--transition-fast), background var(--transition-fast),
+                  border-color var(--transition-fast);
+      font-family: var(--font-ui);
+      font-weight: var(--weight-medium);
+    }
+    .btn-lock:hover {
+      color: var(--fg-primary);
+      background: var(--bg-elevated);
+      border-color: var(--border);
+    }
+    .btn-lock svg { flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -1148,9 +1252,64 @@
           <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
         </svg>
       </button>
-      <button class="btn btn-ghost btn-sm" id="logoutBtn">Logout</button>
+      <button class="btn-lock" id="lockBtn" title="Lock session" style="display:none" aria-label="Lock">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0110 0v4"/>
+        </svg>
+        Lock
+      </button>
     </div>
   </nav>
+
+  <!-- ===================================================================
+       AUTH OVERLAYS  (shown above everything; hidden once authenticated)
+       =================================================================== -->
+
+  <!-- First-boot setup wizard -->
+  <div class="auth-overlay" id="authSetup" style="display:none" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+    <div class="auth-card">
+      <div class="auth-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0110 0v4"/>
+        </svg>
+      </div>
+      <div class="auth-title" id="setup-title">Set up admin password</div>
+      <div class="auth-subtitle">Protect the router web interface. You can change this later from the System tab.</div>
+      <div class="auth-error" id="setup-error"></div>
+      <div class="form-group">
+        <label class="form-label" for="setup-pw">Password</label>
+        <input class="input" type="password" id="setup-pw" autocomplete="new-password" placeholder="Enter password" minlength="6">
+        <span class="auth-hint">Minimum 6 characters</span>
+      </div>
+      <div class="form-group" style="margin-bottom:var(--sp-6)">
+        <label class="form-label" for="setup-pw2">Confirm password</label>
+        <input class="input" type="password" id="setup-pw2" autocomplete="new-password" placeholder="Confirm password">
+      </div>
+      <button class="btn btn-primary btn-full btn-lg" id="setupSubmitBtn">Set password &amp; continue</button>
+    </div>
+  </div>
+
+  <!-- Login screen -->
+  <div class="auth-overlay" id="authLogin" style="display:none" role="dialog" aria-modal="true" aria-labelledby="login-title">
+    <div class="auth-card">
+      <div class="auth-icon">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
+          <path d="M7 11V7a5 5 0 0110 0v4"/>
+        </svg>
+      </div>
+      <div class="auth-title" id="login-title">ESP32 Router</div>
+      <div class="auth-subtitle">Enter your admin password to continue.</div>
+      <div class="auth-error" id="login-error"></div>
+      <div class="form-group" style="margin-bottom:var(--sp-6)">
+        <label class="form-label" for="login-pw">Password</label>
+        <input class="input" type="password" id="login-pw" autocomplete="current-password" placeholder="Password">
+      </div>
+      <button class="btn btn-primary btn-full btn-lg" id="loginSubmitBtn">Sign in</button>
+    </div>
+  </div>
 
   <!-- ===================================================================
        PAGE CONTAINER
@@ -2115,20 +2274,25 @@
       document.getElementById('status-updated').textContent = 'Last updated ' + new Date().toLocaleTimeString();
     }
 
-    // Fetch with fallback to sample data
+    // Fetch with fallback to sample data; 401 → login overlay
     function fetchStatus() {
       var refreshIcon = document.querySelector('#refreshBtn svg');
       if (refreshIcon) refreshIcon.style.animation = 'spin 0.7s linear infinite';
 
-      fetch('/api/status')
+      fetch('/api/status', { credentials: 'same-origin' })
         .then(function (r) {
+          if (r.status === 401) {
+            showAuthOverlay('login');
+            throw new Error('401');
+          }
           if (!r.ok) throw new Error('HTTP ' + r.status);
           return r.json();
         })
         .then(function (data) {
           applyStatus(data);
         })
-        .catch(function () {
+        .catch(function (err) {
+          if (err && err.message === '401') return; // already handled
           // Running standalone from filesystem — use sample data silently
           applyStatus(SAMPLE_STATUS);
         })
@@ -2149,25 +2313,209 @@
     });
 
     // =====================================================================
-    // LOGOUT
+    // AUTH — helpers
     // =====================================================================
-    document.getElementById('logoutBtn').addEventListener('click', function () {
-      showConfirm('Log out', 'End your current session and return to the login screen?', function () {
-        // Production: fetch('/api/logout', {method:'POST'}).then(...)
-        showToast('info', 'Logged out', 'Session ended.');
+
+    function showAuthOverlay(which) {
+      // which: 'setup' | 'login' | null
+      var setupEl = document.getElementById('authSetup');
+      var loginEl = document.getElementById('authLogin');
+      var lockBtn = document.getElementById('lockBtn');
+
+      setupEl.style.display = 'none';
+      loginEl.style.display = 'none';
+
+      if (which === 'setup') {
+        setupEl.style.display = 'flex';
+        document.getElementById('setup-pw').focus();
+      } else if (which === 'login') {
+        loginEl.style.display = 'flex';
+        document.getElementById('login-pw').focus();
+      }
+
+      // Show/hide lock button based on auth state
+      if (lockBtn) lockBtn.style.display = (which === null) ? 'inline-flex' : 'none';
+    }
+
+    function setAuthError(id, msg) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.textContent = msg;
+      el.classList.toggle('visible', !!msg);
+    }
+
+    // Wrapper around fetch that redirects to login on 401
+    function apiFetch(url, opts) {
+      return fetch(url, Object.assign({ credentials: 'same-origin' }, opts || {}))
+        .then(function (r) {
+          if (r.status === 401) {
+            showAuthOverlay('login');
+            throw new Error('401');
+          }
+          return r;
+        });
+    }
+
+    // =====================================================================
+    // AUTH — setup wizard submit
+    // =====================================================================
+    document.getElementById('setupSubmitBtn').addEventListener('click', function () {
+      var pw  = document.getElementById('setup-pw').value;
+      var pw2 = document.getElementById('setup-pw2').value;
+
+      setAuthError('setup-error', '');
+
+      if (pw.length < 6) {
+        setAuthError('setup-error', 'Password must be at least 6 characters.');
+        return;
+      }
+      if (pw !== pw2) {
+        setAuthError('setup-error', 'Passwords do not match.');
+        return;
+      }
+
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Setting up…';
+
+      fetch('/api/auth/setup', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw })
+      })
+        .then(function (r) {
+          if (r.ok) return r;
+          return r.json().then(function (body) {
+            throw new Error(body.message || 'Setup failed (' + r.status + ')');
+          });
+        })
+        .then(function () {
+          document.getElementById('setup-pw').value  = '';
+          document.getElementById('setup-pw2').value = '';
+          showAuthOverlay(null);
+          loadDashboard();
+          showToast('success', 'Password set', 'Admin password configured.');
+        })
+        .catch(function (err) {
+          if (err.message !== '401') {
+            setAuthError('setup-error', err.message || 'Setup failed.');
+          }
+        })
+        .finally(function () {
+          btn.disabled = false;
+          btn.textContent = 'Set password & continue';
+        });
+    });
+
+    // Submit setup on Enter in either field
+    ['setup-pw', 'setup-pw2'].forEach(function (id) {
+      document.getElementById(id).addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') document.getElementById('setupSubmitBtn').click();
       });
     });
 
     // =====================================================================
-    // INITIAL LOAD
+    // AUTH — login submit
     // =====================================================================
-    fetchStatus();
+    document.getElementById('loginSubmitBtn').addEventListener('click', function () {
+      var pw = document.getElementById('login-pw').value;
+      setAuthError('login-error', '');
+
+      if (!pw) {
+        setAuthError('login-error', 'Please enter your password.');
+        return;
+      }
+
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Signing in…';
+
+      fetch('/api/auth/login', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: pw })
+      })
+        .then(function (r) {
+          if (r.ok) return r;
+          if (r.status === 401) throw new Error('wrong');
+          throw new Error('error');
+        })
+        .then(function () {
+          document.getElementById('login-pw').value = '';
+          showAuthOverlay(null);
+          loadDashboard();
+        })
+        .catch(function (err) {
+          if (err.message === 'wrong') {
+            setAuthError('login-error', 'Wrong password.');
+            setTimeout(function () { setAuthError('login-error', ''); }, 3000);
+          } else {
+            setAuthError('login-error', 'Login failed. Please try again.');
+          }
+        })
+        .finally(function () {
+          btn.disabled = false;
+          btn.textContent = 'Sign in';
+        });
+    });
+
+    document.getElementById('login-pw').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') document.getElementById('loginSubmitBtn').click();
+    });
+
+    // =====================================================================
+    // AUTH — lock (logout)
+    // =====================================================================
+    document.getElementById('lockBtn').addEventListener('click', function () {
+      fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin'
+      }).finally(function () {
+        showAuthOverlay('login');
+      });
+    });
+
+    // =====================================================================
+    // DASHBOARD LOAD — called after successful auth
+    // =====================================================================
+    function loadDashboard() {
+      fetchStatus();
+    }
+
+    // =====================================================================
+    // INITIAL LOAD — auth gate
+    // =====================================================================
+    fetch('/api/auth/status', { credentials: 'same-origin' })
+      .then(function (r) { return r.json(); })
+      .then(function (s) {
+        if (s.authenticated) {
+          showAuthOverlay(null);
+          loadDashboard();
+        } else if (!s.auth_required) {
+          // No password set yet — first boot wizard
+          showAuthOverlay('setup');
+        } else {
+          // Password set, not authenticated
+          showAuthOverlay('login');
+        }
+      })
+      .catch(function () {
+        // Can't reach /api/auth/status — likely served from filesystem
+        // Fall through to dashboard with sample data
+        showAuthOverlay(null);
+        loadDashboard();
+      });
 
     // Auto-refresh every 30 seconds when on Status page
     setInterval(function () {
       var statusSection = document.getElementById('page-status');
       if (statusSection && statusSection.classList.contains('active')) {
-        fetchStatus();
+        // Only auto-refresh when authenticated (overlay not showing)
+        var setupVisible = document.getElementById('authSetup').style.display !== 'none';
+        var loginVisible = document.getElementById('authLogin').style.display !== 'none';
+        if (!setupVisible && !loginVisible) fetchStatus();
       }
     }, 30000);
   </script>
