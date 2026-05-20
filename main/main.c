@@ -40,6 +40,7 @@
 #include "web_ui.h"
 #include "acl.h"
 #include "netif_hooks.h"
+#include "syslog_client.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -131,6 +132,9 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         if (tailscale_enabled) {
             xTaskCreate(tailscale_connect_task, "ts_connect", 4096, NULL, 5, NULL);
         }
+        /* Tell the syslog forwarder to (re-)resolve its server now that
+         * the network is up — no-op if syslog isn't enabled. */
+        syslog_notify_connected();
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
@@ -248,6 +252,11 @@ void app_main(void)
      * persisted rules from NVS. The actual packet-filter hook lands in
      * the netif_hooks slice; this just makes the rules queryable. */
     load_acl_rules();
+
+    /* Remote syslog UDP forwarder. Loads NVS config and installs the
+     * vprintf hook if previously enabled. Waits for STA IP via
+     * syslog_notify_connected (wired below in the IP event handler). */
+    syslog_init();
 
     /* Initialize event group */
     s_wifi_event_group = xEventGroupCreate();
