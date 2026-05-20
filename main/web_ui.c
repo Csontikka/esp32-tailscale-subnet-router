@@ -365,10 +365,15 @@ static esp_err_t network_save_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
 
-    char buf[4096];   /* bigger budget — up to 5 networks with full creds */
-    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+    /* Heap-allocate the body buffer — a 4 KB stack-local on the httpd
+     * worker overflows the task stack once cJSON parsing piles on. */
+    size_t buf_size = 4096;
+    char *buf = malloc(buf_size);
+    if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
+    if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
 
     cJSON *root = cJSON_Parse(buf);
+    free(buf);
     if (!root) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
         return ESP_FAIL;
@@ -1036,10 +1041,14 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
 
-    char buf[2048];   /* generous: auth_key alone can run to ~120 chars. */
-    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+    /* Heap-allocate the body buffer — see network_save_handler comment. */
+    size_t buf_size = 2048;
+    char *buf = malloc(buf_size);
+    if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
+    if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
 
     cJSON *root = cJSON_Parse(buf);
+    free(buf);
     if (!root) {
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
         return ESP_FAIL;
@@ -1557,7 +1566,9 @@ void web_ui_init(void)
     httpd_config_t config   = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn     = httpd_uri_match_wildcard;
     config.max_uri_handlers = 32;   /* we have 21 today + room to grow */
-    config.stack_size       = 8192;
+    config.stack_size       = 12288; /* +50 % over default — multi-net POST
+                                      * pushes cJSON parse + handler locals
+                                      * past the previous 8 KB ceiling. */
 
     if (httpd_start(&server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "httpd_start failed");
