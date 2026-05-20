@@ -73,6 +73,24 @@ static esp_err_t require_auth(httpd_req_t *req)
     return ESP_FAIL;
 }
 
+/* Translate esp_reset_reason() into the short string the SPA renders. */
+static const char *reset_reason_str(void)
+{
+    switch (esp_reset_reason()) {
+        case ESP_RST_POWERON:  return "POWERON";
+        case ESP_RST_EXT:      return "EXT";
+        case ESP_RST_SW:       return "SW";
+        case ESP_RST_PANIC:    return "PANIC";
+        case ESP_RST_INT_WDT:  return "INT_WDT";
+        case ESP_RST_TASK_WDT: return "TASK_WDT";
+        case ESP_RST_WDT:      return "WDT";
+        case ESP_RST_DEEPSLEEP:return "DEEPSLEEP";
+        case ESP_RST_BROWNOUT: return "BROWNOUT";
+        case ESP_RST_SDIO:     return "SDIO";
+        default:               return "UNKNOWN";
+    }
+}
+
 static esp_err_t status_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -84,18 +102,31 @@ static esp_err_t status_handler(httpd_req_t *req)
     }
 
     const esp_app_desc_t *desc = esp_app_get_description();
-    cJSON_AddStringToObject(root, "version", desc ? desc->version : "?");
-    cJSON_AddNumberToObject(root, "uptime_s", esp_timer_get_time() / 1000000);
-    cJSON_AddNumberToObject(root, "free_heap", esp_get_free_heap_size());
-    cJSON_AddNumberToObject(root, "free_psram", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    cJSON_AddStringToObject(root, "version",      desc ? desc->version : "?");
+    cJSON_AddNumberToObject(root, "uptime_s",     esp_timer_get_time() / 1000000);
+    cJSON_AddNumberToObject(root, "free_heap",    esp_get_free_heap_size());
+    /* Heap total tracks the largest-known-free moment since boot; the
+     * SPA only uses it to draw the % bar, so the exact denominator
+     * isn't important — what matters is that it stays >= free_heap. */
+    cJSON_AddNumberToObject(root, "heap_total",   heap_caps_get_total_size(MALLOC_CAP_8BIT));
+    cJSON_AddNumberToObject(root, "free_psram",   heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    cJSON_AddStringToObject(root, "reset_reason", reset_reason_str());
 
-    /* STA (uplink) — SSID, IP, RSSI when associated. */
+    /* STA (uplink) — SSID, IP, RSSI, MAC. */
     cJSON *sta = cJSON_CreateObject();
     cJSON_AddBoolToObject(sta, "connected", ap_connect != 0);
     wifi_ap_record_t apr;
     if (ap_connect && esp_wifi_sta_get_ap_info(&apr) == ESP_OK) {
         cJSON_AddStringToObject(sta, "ssid", (const char *)apr.ssid);
         cJSON_AddNumberToObject(sta, "rssi", apr.rssi);
+        cJSON_AddNumberToObject(sta, "channel", apr.primary);
+    }
+    uint8_t mac[6];
+    char mac_str[18];
+    if (esp_wifi_get_mac(WIFI_IF_STA, mac) == ESP_OK) {
+        snprintf(mac_str, sizeof mac_str, "%02x:%02x:%02x:%02x:%02x:%02x",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        cJSON_AddStringToObject(sta, "mac", mac_str);
     }
     esp_netif_t *sta_if = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
     esp_netif_ip_info_t ip;
@@ -106,9 +137,19 @@ static esp_err_t status_handler(httpd_req_t *req)
     }
     cJSON_AddItemToObject(root, "sta", sta);
 
-    /* AP (downlink) — client count + AP IP. */
+    /* AP (downlink) — SSID + channel from live wifi_config, MAC, clients, IP. */
     cJSON *ap = cJSON_CreateObject();
     cJSON_AddNumberToObject(ap, "clients", connect_count);
+    wifi_config_t ap_cfg;
+    if (esp_wifi_get_config(WIFI_IF_AP, &ap_cfg) == ESP_OK) {
+        cJSON_AddStringToObject(ap, "ssid",    (const char *)ap_cfg.ap.ssid);
+        cJSON_AddNumberToObject(ap, "channel", ap_cfg.ap.channel);
+    }
+    if (esp_wifi_get_mac(WIFI_IF_AP, mac) == ESP_OK) {
+        snprintf(mac_str, sizeof mac_str, "%02x:%02x:%02x:%02x:%02x:%02x",
+                 mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+        cJSON_AddStringToObject(ap, "mac", mac_str);
+    }
     esp_netif_t *ap_if = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
     if (ap_if && esp_netif_get_ip_info(ap_if, &ip) == ESP_OK) {
         char buf[16];
@@ -119,14 +160,41 @@ static esp_err_t status_handler(httpd_req_t *req)
 
     /* Tailscale (microlink) — runtime state from tailscale_config.h. */
     cJSON *ts = cJSON_CreateObject();
-    cJSON_AddBoolToObject(ts, "enabled",   tailscale_enabled != 0);
-    cJSON_AddBoolToObject(ts, "connected", tailscale_connected);
+    cJSON_AddBoolToObject  (ts, "enabled",   tailscale_enabled != 0);
+    cJSON_AddBoolToObject  (ts, "connected", tailscale_connected);
+    if (tailscale_hostname)         cJSON_AddStringToObject(ts, "hostname",         tailscale_hostname);
+    if (tailscale_advertise_routes) cJSON_AddStringToObject(ts, "advertise_routes", tailscale_advertise_routes);
     if (tailscale_tunnel_ip) {
         char buf[16];
         ip4_to_str(tailscale_tunnel_ip, buf, sizeof buf);
         cJSON_AddStringToObject(ts, "tunnel_ip", buf);
     }
+    if (tailscale_exit_node_ip) {
+        char buf[16];
+        ip4_to_str(tailscale_exit_node_ip, buf, sizeof buf);
+        cJSON_AddStringToObject(ts, "exit_node_ip", buf);
+    }
+    /* Peer count summary — full peer table lives at /api/tailscale. */
+    int online = 0, total = 0;
+    struct microlink_s *ml = tailscale_get_microlink();
+    if (ml) {
+        total = microlink_get_peer_count(ml);
+        for (int i = 0; i < total; i++) {
+            microlink_peer_info_t pi;
+            if (microlink_get_peer_info(ml, i, &pi) == ESP_OK && pi.online) online++;
+        }
+    }
+    cJSON_AddNumberToObject(ts, "peers_online", online);
+    cJSON_AddNumberToObject(ts, "peers_total",  total);
     cJSON_AddItemToObject(root, "tailscale", ts);
+
+    /* Telemetry summary — full counters in /api/system. */
+    telemetry_state_t tm = telemetry_get_state();
+    cJSON *tlm = cJSON_CreateObject();
+    cJSON_AddStringToObject(tlm, "status", tm.enabled ? "ok" : "off");
+    cJSON_AddNumberToObject(tlm, "boot_count",  tm.boot_count);
+    cJSON_AddNumberToObject(tlm, "flash_count", tm.flash_count);
+    cJSON_AddItemToObject(root, "telemetry", tlm);
 
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
