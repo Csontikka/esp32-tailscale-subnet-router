@@ -25,6 +25,7 @@
 #include "net_diag.h"
 #include "pcap_capture.h"
 #include "wifi_networks.h"
+#include "dhcp_reservations.h"
 #include "telemetry.h"
 #include "log_capture.h"
 #include "web_password.h"
@@ -922,6 +923,154 @@ static const httpd_uri_t uri_firewall_clear = {
     .uri = "/api/firewall/clear",  .method = HTTP_POST, .handler = firewall_clear_handler,
 };
 
+/* ───────────────────────── DHCP reservations ────────────────────────
+ * GET  /api/dhcp/reservations  → { reservations: [{mac,ip,name}...], max }
+ * POST /api/dhcp/reservations  → body { reservations: [...] } replaces the
+ *                                whole table. Empty/invalid entries are
+ *                                silently dropped. */
+
+static bool parse_mac_str(const char *s, uint8_t out[6])
+{
+    if (!s) return false;
+    unsigned v[6];
+    if (sscanf(s, "%x:%x:%x:%x:%x:%x",
+               &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6
+        && sscanf(s, "%x-%x-%x-%x-%x-%x",
+                  &v[0], &v[1], &v[2], &v[3], &v[4], &v[5]) != 6) {
+        return false;
+    }
+    for (int i = 0; i < 6; i++) {
+        if (v[i] > 0xff) return false;
+        out[i] = (uint8_t)v[i];
+    }
+    return true;
+}
+
+static esp_err_t dhcp_reservations_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON *arr  = cJSON_CreateArray();
+    if (!root || !arr) {
+        cJSON_Delete(root);
+        cJSON_Delete(arr);
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    for (int i = 0; i < DHCP_RESERVATIONS_MAX; i++) {
+        dhcp_reservation_t r;
+        if (!dhcp_reservations_get(i, &r)) continue;
+
+        char mac_str[18];
+        snprintf(mac_str, sizeof mac_str, "%02x:%02x:%02x:%02x:%02x:%02x",
+                 r.mac[0], r.mac[1], r.mac[2], r.mac[3], r.mac[4], r.mac[5]);
+
+        ip4_addr_t a = { .addr = r.ip };
+        char ip_str[16];
+        snprintf(ip_str, sizeof ip_str, IPSTR, IP2STR(&a));
+
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "mac",  mac_str);
+        cJSON_AddStringToObject(e, "ip",   ip_str);
+        cJSON_AddStringToObject(e, "name", r.name);
+        cJSON_AddItemToArray(arr, e);
+    }
+    cJSON_AddItemToObject(root, "reservations", arr);
+    cJSON_AddNumberToObject(root, "max", DHCP_RESERVATIONS_MAX);
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static esp_err_t dhcp_reservations_save_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    /* Heap buffer — the table can grow up to 16 entries and cJSON
+     * parsing piles on top of the httpd worker stack. */
+    size_t buf_size = 4096;
+    char *buf = malloc(buf_size);
+    if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
+    if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *arr = cJSON_GetObjectItem(root, "reservations");
+    if (!cJSON_IsArray(arr)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing reservations[]");
+        return ESP_FAIL;
+    }
+
+    dhcp_reservation_t out[DHCP_RESERVATIONS_MAX];
+    memset(out, 0, sizeof out);
+    int n_in  = cJSON_GetArraySize(arr);
+    int n_out = 0;
+
+    for (int i = 0; i < n_in && n_out < DHCP_RESERVATIONS_MAX; i++) {
+        cJSON *e = cJSON_GetArrayItem(arr, i);
+        if (!cJSON_IsObject(e)) continue;
+
+        cJSON *mac_j = cJSON_GetObjectItem(e, "mac");
+        cJSON *ip_j  = cJSON_GetObjectItem(e, "ip");
+        if (!cJSON_IsString(mac_j) || !cJSON_IsString(ip_j)) continue;
+
+        dhcp_reservation_t *r = &out[n_out];
+        if (!parse_mac_str(mac_j->valuestring, r->mac)) continue;
+
+        ip4_addr_t a;
+        if (!ip4addr_aton(ip_j->valuestring, &a) || a.addr == 0) continue;
+        r->ip = a.addr;
+
+        cJSON *name_j = cJSON_GetObjectItem(e, "name");
+        if (cJSON_IsString(name_j)) {
+            strlcpy(r->name, name_j->valuestring, sizeof r->name);
+        }
+        r->valid = 1;
+        n_out++;
+    }
+    cJSON_Delete(root);
+
+    esp_err_t err = dhcp_reservations_set_all(out, n_out);
+
+    httpd_resp_set_type(req, "application/json");
+    /* Reservations apply on the next DHCP REQUEST — the table is hot-
+     * reloaded into the lookup cache, so no reboot is required. Clients
+     * already holding a non-matching lease keep it until expiry. */
+    if (err == ESP_OK) {
+        char resp[64];
+        snprintf(resp, sizeof resp, "{\"ok\":true,\"count\":%d}", n_out);
+        return httpd_resp_sendstr(req, resp);
+    }
+    return httpd_resp_sendstr(req, "{\"ok\":false}");
+}
+
+static const httpd_uri_t uri_dhcp_reservations = {
+    .uri      = "/api/dhcp/reservations",
+    .method   = HTTP_GET,
+    .handler  = dhcp_reservations_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t uri_dhcp_reservations_save = {
+    .uri      = "/api/dhcp/reservations",
+    .method   = HTTP_POST,
+    .handler  = dhcp_reservations_save_handler,
+    .user_ctx = NULL,
+};
+
 /* Format a host-byte-order IPv4 as "a.b.c.d" — used for the accepted-
  * routes table where host order is the documented storage. */
 static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size)
@@ -1588,6 +1737,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_firewall_add);
     httpd_register_uri_handler(server, &uri_firewall_delete);
     httpd_register_uri_handler(server, &uri_firewall_clear);
+    httpd_register_uri_handler(server, &uri_dhcp_reservations);
+    httpd_register_uri_handler(server, &uri_dhcp_reservations_save);
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_tailscale_save);
     httpd_register_uri_handler(server, &uri_system);
