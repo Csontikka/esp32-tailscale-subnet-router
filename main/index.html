@@ -1617,7 +1617,15 @@
           <div class="grid grid-cols-2">
             <div class="form-group">
               <label class="form-label" for="net-sta-ssid">SSID</label>
-              <input class="input" type="text" id="net-sta-ssid" placeholder="Network name">
+              <div style="display:flex; gap:0.5rem;">
+                <input class="input" type="text" id="net-sta-ssid" placeholder="Network name" style="flex:1; min-width:0;">
+                <button class="btn btn-secondary btn-md" type="button" id="net-sta-scan" title="Scan for nearby networks">
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0121.16 0M8.53 16.11a6 6 0 016.95 0M12 20h.01"/>
+                  </svg>
+                  Scan
+                </button>
+              </div>
             </div>
             <div class="form-group">
               <label class="form-label" for="net-sta-pw">Password</label>
@@ -1964,6 +1972,25 @@
        TOAST CONTAINER
        =================================================================== -->
   <div class="toast-container" id="toastContainer"></div>
+
+  <!-- ===================================================================
+       SCAN MODAL — WiFi network picker
+       =================================================================== -->
+  <div class="modal-backdrop" id="scanModal" role="dialog" aria-modal="true" aria-labelledby="scan-title">
+    <div class="modal" style="max-width:480px;">
+      <div class="modal-header">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0121.16 0M8.53 16.11a6 6 0 016.95 0M12 20h.01"/>
+        </svg>
+        <span class="modal-title" id="scan-title">Available networks</span>
+      </div>
+      <div class="modal-body" id="scan-body" style="max-height:60vh; overflow-y:auto; padding:0;"></div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary btn-md" id="scan-cancel">Close</button>
+        <button class="btn btn-primary btn-md" id="scan-refresh">Rescan</button>
+      </div>
+    </div>
+  </div>
 
   <!-- ===================================================================
        MODAL / CONFIRM
@@ -2662,6 +2689,70 @@
       var body = { sta: { ssid: ssid, hostname: hostname } };
       if (pw) body.sta.password = pw;   /* omit-to-keep semantics */
       saveNetwork(this, body);
+    });
+
+    /* SSID scan picker — opens the scan modal, fetches /api/network/scan,
+     * lets the operator click a row to fill the STA SSID input. */
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+      });
+    }
+    function rssiBars(rssi) {
+      if (rssi >= -55) return '████';
+      if (rssi >= -65) return '███░';
+      if (rssi >= -75) return '██░░';
+      if (rssi >= -85) return '█░░░';
+      return '░░░░';
+    }
+    function refreshScan() {
+      var body = document.getElementById('scan-body');
+      body.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--text-muted);">Scanning…</div>';
+      apiFetch('/api/network/scan')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var nets = (d && d.networks) || [];
+          nets.sort(function (a, b) { return b.rssi - a.rssi; });
+          if (!nets.length) {
+            body.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--text-muted);">No networks found.</div>';
+            return;
+          }
+          var html = '';
+          nets.forEach(function (n) {
+            var locked = (n.auth && n.auth !== 'open') ? '🔒' : '';
+            html += '<div class="scan-row" data-ssid="' + escapeHtml(n.ssid) + '"'
+                  + ' style="padding:0.7rem 1rem; border-bottom:1px solid var(--border);'
+                  + ' cursor:pointer; display:flex; align-items:center; gap:0.75rem;">'
+                  + '<span style="font-family:var(--font-mono); color:var(--accent); width:3rem;">' + rssiBars(n.rssi) + '</span>'
+                  + '<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + escapeHtml(n.ssid || '(hidden)') + '</span>'
+                  + '<span style="color:var(--text-muted); font-size:0.85rem;">ch' + n.channel + '</span>'
+                  + '<span style="color:var(--text-muted); font-size:0.85rem; width:4rem; text-align:right;">' + n.rssi + ' dBm</span>'
+                  + '<span style="width:1rem; text-align:center;">' + locked + '</span>'
+                  + '</div>';
+          });
+          body.innerHTML = html;
+          body.querySelectorAll('.scan-row').forEach(function (row) {
+            row.addEventListener('click', function () {
+              document.getElementById('net-sta-ssid').value = this.dataset.ssid;
+              document.getElementById('net-sta-save').disabled = false;
+              document.getElementById('scanModal').classList.remove('open');
+            });
+          });
+        })
+        .catch(function () {
+          body.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--danger);">Scan failed.</div>';
+        });
+    }
+    document.getElementById('net-sta-scan').addEventListener('click', function () {
+      document.getElementById('scanModal').classList.add('open');
+      refreshScan();
+    });
+    document.getElementById('scan-cancel').addEventListener('click', function () {
+      document.getElementById('scanModal').classList.remove('open');
+    });
+    document.getElementById('scan-refresh').addEventListener('click', refreshScan);
+    document.getElementById('scanModal').addEventListener('click', function (e) {
+      if (e.target === this) this.classList.remove('open');
     });
 
     /* Static IP — dirty-track + save. Mode toggle is also dirty-tracking. */
