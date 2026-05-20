@@ -7,6 +7,12 @@
 # Written under main/ rather than ${CMAKE_CURRENT_BINARY_DIR} because the
 # latter is empty during PIO's first configure pass and ends up dropping
 # the file in the project root. The generated file is in .gitignore.
+#
+# Tell CMake to re-run this whole configure step whenever index.html
+# changes — without this, file(READ) only fires when CMakeLists.txt is
+# touched, and the device ends up serving a stale SPA blob.
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
+             "${CMAKE_CURRENT_LIST_DIR}/index.html")
 file(READ "${CMAKE_CURRENT_LIST_DIR}/index.html" _INDEX_HTML_HEX HEX)
 string(REGEX REPLACE "(..)" "0x\\1," _INDEX_HTML_BYTES "${_INDEX_HTML_HEX}")
 file(WRITE "${CMAKE_CURRENT_LIST_DIR}/index_html_data.c"

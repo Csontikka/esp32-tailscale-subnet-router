@@ -1593,99 +1593,45 @@
       <div class="page-header">
         <div class="page-header-left">
           <h1 class="page-title">Network</h1>
-          <p class="page-subtitle">WiFi, IP, DHCP reservations, port forwarding</p>
+          <p class="page-subtitle">Uplink WiFi, access point, IP configuration</p>
         </div>
       </div>
-      <div class="stub-page">
-        <div class="stub-notice">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          This page is a design prototype placeholder. The full Network configuration page renders STA/AP/static-IP forms, DHCP reservation table, and port-mapping table.
-        </div>
-        <!-- Sample form pattern -->
-        <div class="card">
-          <div class="card-header">
-            <div class="card-header-left">
-              <span class="card-title">Uplink (STA) WiFi</span>
-            </div>
-          </div>
-          <div class="card-body">
-            <div class="grid grid-cols-2">
-              <div class="form-group">
-                <label class="form-label">SSID</label>
-                <input class="input" type="text" value="HomeNetwork_5G" placeholder="Network name">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Password</label>
-                <div class="input-with-icon">
-                  <input class="input" type="password" placeholder="unchanged">
-                  <button class="input-icon-right" type="button" title="Show / hide">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                      <circle cx="12" cy="12" r="3"/>
-                    </svg>
-                  </button>
-                </div>
-              </div>
-            </div>
-            <div class="grid grid-cols-2">
-              <div class="form-group">
-                <label class="form-label">Band</label>
-                <select class="select">
-                  <option>Auto (strongest signal)</option>
-                  <option>2.4 GHz only</option>
-                  <option>5 GHz only</option>
-                </select>
-              </div>
-            </div>
-          </div>
-          <div class="form-footer">
-            <span class="form-footer-hint">Changes require a reboot to take effect.</span>
-            <div class="form-footer-actions">
-              <button class="btn btn-secondary btn-md">Cancel</button>
-              <button class="btn btn-primary btn-md">Save &amp; Reboot</button>
-            </div>
-          </div>
-        </div>
 
-        <!-- DHCP reservations sample table -->
-        <div class="card mt-4">
-          <div class="card-header">
-            <div class="card-header-left">
-              <span class="card-title">DHCP Reservations</span>
-            </div>
-            <button class="btn btn-secondary btn-sm">
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/>
-              </svg>
-              Add
-            </button>
+      <!-- ===== Uplink (STA) WiFi ===== -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Uplink (STA) WiFi</span>
           </div>
-          <div class="card-body-flush">
-            <div class="table-wrap">
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th>Name</th><th>MAC</th><th>Reserved IP</th><th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td>pi-sensor</td>
-                    <td class="mono">DC:A6:32:11:AA:BB</td>
-                    <td class="mono">192.168.4.10</td>
-                    <td><button class="btn btn-ghost btn-sm text-danger">Remove</button></td>
-                  </tr>
-                  <tr>
-                    <td>shelly-plug</td>
-                    <td class="mono">84:0D:8E:CC:12:34</td>
-                    <td class="mono">192.168.4.20</td>
-                    <td><button class="btn btn-ghost btn-sm text-danger">Remove</button></td>
-                  </tr>
-                </tbody>
-              </table>
+          <span class="badge badge-neutral" id="net-sta-badge">—</span>
+        </div>
+        <div class="card-body">
+          <div class="stat-row">
+            <span class="stat-label">Currently connected</span>
+            <span class="stat-value mono" id="net-sta-summary">—</span>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="net-sta-ssid">SSID</label>
+              <input class="input" type="text" id="net-sta-ssid" placeholder="Network name">
             </div>
+            <div class="form-group">
+              <label class="form-label" for="net-sta-pw">Password</label>
+              <input class="input" type="password" id="net-sta-pw" autocomplete="new-password" placeholder="Leave empty to keep current">
+            </div>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="net-hostname">Hostname</label>
+              <input class="input" type="text" id="net-hostname" placeholder="esp32-tailscale">
+            </div>
+          </div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Saving will write to NVS. A reboot is required to apply WiFi changes.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-secondary btn-md" id="net-sta-reload">Reload</button>
+            <button class="btn btn-primary btn-md" id="net-sta-save" disabled>Save</button>
           </div>
         </div>
       </div>
@@ -1959,6 +1905,10 @@
           this.setAttribute('aria-selected', 'true');
           var target = document.getElementById('page-' + page);
           if (target) target.classList.add('active');
+
+          /* Lazy-load page contents the first time the operator switches
+           * to a tab that has its own data fetcher. */
+          if (page === 'network' && typeof loadNetwork === 'function') loadNetwork();
         });
       });
     })();
@@ -2497,6 +2447,85 @@
     function loadDashboard() {
       fetchStatus();
     }
+
+    // =====================================================================
+    // NETWORK PAGE
+    // =====================================================================
+    function loadNetwork() {
+      apiFetch('/api/network')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var sta = (d && d.sta) || {};
+          document.getElementById('net-sta-ssid').value     = sta.ssid     || '';
+          document.getElementById('net-sta-pw').value       = '';
+          document.getElementById('net-hostname').value     = sta.hostname || '';
+          document.getElementById('net-sta-save').disabled  = true;
+        }).catch(function () {});
+
+      /* The "currently connected" line uses /api/status — same source the
+       * Status page hero uses, so the values agree. */
+      apiFetch('/api/status')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var badge   = document.getElementById('net-sta-badge');
+          var summary = document.getElementById('net-sta-summary');
+          var sta = (d && d.sta) || {};
+          if (sta.connected) {
+            badge.className   = 'badge badge-success';
+            badge.textContent = 'Connected';
+            var rssi = (typeof sta.rssi === 'number') ? '  '  + sta.rssi + ' dBm' : '';
+            summary.textContent = (sta.ssid || '?') + '  ' + (sta.ip || '') + rssi;
+          } else {
+            badge.className   = 'badge badge-warning';
+            badge.textContent = 'Not connected';
+            summary.textContent = '—';
+          }
+        }).catch(function () {});
+    }
+
+    /* Reload + dirty-track + save handlers. */
+    document.getElementById('net-sta-reload').addEventListener('click', loadNetwork);
+    ['net-sta-ssid', 'net-sta-pw', 'net-hostname'].forEach(function (id) {
+      document.getElementById(id).addEventListener('input', function () {
+        document.getElementById('net-sta-save').disabled = false;
+      });
+    });
+    document.getElementById('net-sta-save').addEventListener('click', function () {
+      var btn = this;
+      var ssid     = document.getElementById('net-sta-ssid').value.trim();
+      var pw       = document.getElementById('net-sta-pw').value;
+      var hostname = document.getElementById('net-hostname').value.trim();
+      if (!ssid) { showToast('error', 'SSID required', 'Enter an upstream SSID first.', 5000); return; }
+
+      var body = { sta: { ssid: ssid, hostname: hostname } };
+      if (pw) body.sta.password = pw;   /* omit-to-keep semantics — empty means "leave unchanged" */
+
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      apiFetch('/api/network', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body)
+      })
+        .then(function (r) {
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (resp) {
+          btn.textContent = 'Save';
+          showToast('success', 'Saved', 'Network settings written to NVS.', 4000);
+          if (resp.restart_required) {
+            showConfirm('Reboot now?',
+                        'WiFi changes only take effect after a reboot. Reboot the device now?',
+                        function () { apiFetch('/api/system/restart', { method: 'POST' }); });
+          }
+        })
+        .catch(function (e) {
+          btn.disabled = false;
+          btn.textContent = 'Save';
+          showToast('error', 'Save failed', e && e.message ? e.message : 'unknown error', 6000);
+        });
+    });
 
     // =====================================================================
     // INITIAL LOAD — auth gate
