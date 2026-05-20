@@ -6,6 +6,7 @@
 #include "esp_log.h"
 #include "nvs.h"
 #include "nvs_params.h"
+#include "dhcps_ext.h"
 #include "dhcp_reservations.h"
 
 static const char *TAG = "dhcp_res";
@@ -44,6 +45,11 @@ void dhcp_reservations_init(void)
         }
         nvs_close(nvs);
     }
+
+    /* Plug the lookup into the wrapped DHCP server so the next OFFER/ACK
+     * round-trip honours the table. Safe to call multiple times — the
+     * server just overwrites the function pointer. */
+    dhcps_set_reservation_lookup(dhcp_reservations_lookup);
 
     s_loaded = true;
 }
