@@ -2150,6 +2150,29 @@
           <pre id="tool-log-body" style="background:var(--bg-page); border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; max-height:24rem; overflow:auto; font-family:var(--font-mono); font-size:0.8rem; line-height:1.4; margin:0; white-space:pre-wrap; word-break:break-all;">— no log loaded yet —</pre>
         </div>
       </div>
+
+      <!-- ===== Pre-crash log (RTC slow-RAM, survives panic/WDT) ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Pre-crash log (last panic)</span>
+          </div>
+          <span class="badge badge-neutral" id="precrash-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">
+            Snapshot of the log lines just before the previous boot died — survives PANIC, WDT and soft reset. Lost on cold power-on.
+          </p>
+          <pre id="precrash-body" style="background:var(--bg-page); border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; max-height:24rem; overflow:auto; font-family:var(--font-mono); font-size:0.8rem; line-height:1.4; margin:0; white-space:pre-wrap; word-break:break-all;">— nothing yet —</pre>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Cleared on demand; the next crash will repopulate it.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-secondary btn-md" id="precrash-refresh">Refresh</button>
+            <button class="btn btn-ghost btn-md text-danger" id="precrash-clear">Clear</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- =================================================================
@@ -2428,6 +2451,7 @@
            * auto-loads its status so the operator sees the current mode
            * without clicking Refresh first. */
           if (page === 'tools'     && typeof pcapRefresh   === 'function') pcapRefresh();
+          if (page === 'tools'     && typeof loadPrecrashLog === 'function') loadPrecrashLog();
         });
       });
     })();
@@ -4482,6 +4506,43 @@
         })
         .catch(function () { pre.textContent = '— fetch failed —'; })
         .finally(function () { btn.disabled = false; btn.textContent = 'Refresh'; });
+    });
+
+    /* Pre-crash buffer — fetched lazily by the Refresh button. The
+     * Clear button wipes the RTC ring so a fresh panic gets a clean
+     * window to fill. */
+    function loadPrecrashLog() {
+      var btn = document.getElementById('precrash-refresh');
+      var pre = document.getElementById('precrash-body');
+      var b   = document.getElementById('precrash-badge');
+      btn.disabled = true; btn.textContent = 'Loading…';
+      apiFetch('/api/log/precrash')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.have && d.size > 0) {
+            pre.textContent = d.text || '— empty —';
+            b.className = 'badge badge-warning';
+            b.textContent = d.size + ' B';
+            pre.scrollTop = pre.scrollHeight;
+          } else {
+            pre.textContent = '— no pre-crash data (device booted cleanly) —';
+            b.className = 'badge badge-success';
+            b.textContent = 'clean';
+          }
+        })
+        .catch(function () { pre.textContent = '— fetch failed —'; })
+        .finally(function () { btn.disabled = false; btn.textContent = 'Refresh'; });
+    }
+    document.getElementById('precrash-refresh').addEventListener('click', loadPrecrashLog);
+    document.getElementById('precrash-clear').addEventListener('click', function () {
+      if (!confirm('Clear the pre-crash log buffer?')) return;
+      var btn = this;
+      btn.disabled = true; btn.textContent = 'Clearing…';
+      apiFetch('/api/log/precrash/clear', { method: 'POST' })
+        .then(function (r) { if (!r.ok) throw 0; })
+        .then(loadPrecrashLog)
+        .catch(function () { showToast('error', 'Clear failed', '', 4000); })
+        .finally(function () { btn.disabled = false; btn.textContent = 'Clear'; });
     });
 
     // =====================================================================

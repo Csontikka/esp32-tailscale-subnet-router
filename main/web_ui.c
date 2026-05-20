@@ -1443,6 +1443,71 @@ static const httpd_uri_t uri_portmap_save = {
     .user_ctx = NULL,
 };
 
+/* ─────────────────── Pre-crash log buffer ───────────────────
+ * The RTC slow-RAM ring captures log lines all the way to the panic
+ * and survives soft reset / watchdog / abort. Cleared on cold boot or
+ * brown-out. UI lives in the Tools tab. */
+
+static esp_err_t log_precrash_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root) { httpd_resp_send_500(req); return ESP_FAIL; }
+
+    bool have = log_capture_have_precrash();
+    size_t sz = log_capture_precrash_size();
+    cJSON_AddBoolToObject  (root, "have", have);
+    cJSON_AddNumberToObject(root, "size", (double)sz);
+
+    if (have && sz > 0) {
+        /* Cap to a reasonable web payload — same ceiling as the live
+         * log_tail. Pre-crash buffer can't legally exceed the RTC ring
+         * size anyway. */
+        size_t cap = WEB_UI_LOG_SNAPSHOT_BYTES;
+        char *buf = malloc(cap);
+        if (buf) {
+            size_t n = log_capture_read_precrash(buf, cap - 1);
+            buf[n] = '\0';
+            cJSON_AddStringToObject(root, "text", buf);
+            free(buf);
+        } else {
+            cJSON_AddStringToObject(root, "text", "");
+        }
+    } else {
+        cJSON_AddStringToObject(root, "text", "");
+    }
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static esp_err_t log_precrash_clear_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    log_capture_clear_precrash();
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static const httpd_uri_t uri_log_precrash = {
+    .uri      = "/api/log/precrash",
+    .method   = HTTP_GET,
+    .handler  = log_precrash_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t uri_log_precrash_clear = {
+    .uri      = "/api/log/precrash/clear",
+    .method   = HTTP_POST,
+    .handler  = log_precrash_clear_handler,
+    .user_ctx = NULL,
+};
+
 /* Format a host-byte-order IPv4 as "a.b.c.d" — used for the accepted-
  * routes table where host order is the documented storage. */
 static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size)
@@ -2115,6 +2180,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_dhcp_kick);
     httpd_register_uri_handler(server, &uri_portmap);
     httpd_register_uri_handler(server, &uri_portmap_save);
+    httpd_register_uri_handler(server, &uri_log_precrash);
+    httpd_register_uri_handler(server, &uri_log_precrash_clear);
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_tailscale_save);
     httpd_register_uri_handler(server, &uri_system);
