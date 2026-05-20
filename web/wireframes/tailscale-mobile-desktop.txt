@@ -1,0 +1,125 @@
+TAILSCALE PAGE — MOBILE + DESKTOP
+====================================
+
+MOBILE (≤639px)
+───────────────
+
+┌─────────────────────────────────────┐
+│ Tailscale                ● Connected│  .page-header
+│ VPN config, peers, exit node        │  .page-subtitle
+├─────────────────────────────────────┤
+│ ┌───────────────────────────────┐   │
+│ │ CONFIGURATION                 │   │  .card
+│ │─────────────────────────────  │   │
+│ │ Service                       │   │
+│ │  ◉ Enabled   ○ Disabled       │   │  .radio-group
+│ │                               │   │
+│ │ Auth Key                      │   │
+│ │ [••••••••••••••••••  👁]      │   │  password + eye toggle
+│ │                               │   │
+│ │ Hostname                      │   │
+│ │ [esp32-router         ]       │   │
+│ │                               │   │
+│ │ Login Server (Headscale)      │   │
+│ │ [https://headscale.example…]  │   │
+│ │                               │   │
+│ │ Advertised Subnet Routes      │   │
+│ │ ┌─────────────────────────┐   │   │  .textarea
+│ │ │ 192.168.4.0/24          │   │   │
+│ │ └─────────────────────────┘   │   │
+│ │ One CIDR per line.            │   │  .form-hint
+│ │                               │   │
+│ │ Exit Node                     │   │
+│ │ [None                    ▾]   │   │  .select
+│ │                               │   │
+│ │ Max Peers                     │   │
+│ │ [20         ] (1–50)          │   │
+│ │                               │   │
+│ │ Tunnel MTU                    │   │
+│ │  ◉ Auto (1420 / 1280 DERP)   │   │
+│ │  ○ Fixed [     ] (576–1500)   │   │
+│ │                               │   │
+│ │ DERP Region                   │   │
+│ │ [Auto (closest)          ▾]   │   │
+│ │                               │   │
+│ │─── sticky footer ───────────  │   │
+│ │ Requires reboot   [Cancel]    │   │
+│ │               [Save & Reboot] │   │
+│ └───────────────────────────────┘   │
+│                                     │
+│ ┌───────────────────────────────┐   │
+│ │ LIVE PEERS                    │   │  .card (read-only, auto-refresh)
+│ │─────────────────────────────  │   │
+│ │ ●  laptop-work                │   │  .peer-row
+│ │    100.64.0.1  direct  <2ms   │   │
+│ │ ●  pi-homelab                 │   │
+│ │    100.64.0.3  DERP    45ms   │   │
+│ │ ●  phone-pixel                │   │
+│ │    100.64.0.7  direct  8ms    │   │
+│ │ ○  tablet-old (offline)       │   │  muted row
+│ │    100.64.0.11  —             │   │
+│ │                               │   │
+│ │ [subnet-router] tag on peers  │   │  .badge-accent on route-advertising
+│ │ that advertise routes         │   │  peers; [exit-node] .badge-info
+│ └───────────────────────────────┘   │
+└─────────────────────────────────────┘
+
+DESKTOP (1024px+)
+─────────────────
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  Tailscale                                              ● Connected      │
+│  VPN config, peers, exit node, DERP region                               │
+├───────────────────────────────────────────────────────────────────────── │
+│                                                                          │
+│  ┌──────────────────────────────────────┐  ┌──────────────────────────┐ │
+│  │ CONFIGURATION                        │  │ LIVE PEERS               │ │
+│  │ ─────────────────────────────────── │  │ ─────────────────────── │ │
+│  │  Service  ◉ Enabled  ○ Disabled      │  │ ●  laptop-work           │ │
+│  │                                       │  │    100.64.0.1  direct    │ │
+│  │  Auth Key [••••••••••••••  👁]       │  │    <2ms                  │ │
+│  │                                       │  │ ●  pi-homelab            │ │
+│  │  [grid-cols-2]                        │  │    100.64.0.3  DERP      │ │
+│  │  Hostname          Login Server       │  │    45ms                  │ │
+│  │  [esp32-router]    [headscale.url]    │  │ ●  phone-pixel           │ │
+│  │                                       │  │    100.64.0.7  direct    │ │
+│  │  Subnet Routes                        │  │    8ms                   │ │
+│  │  ┌──────────────────────────────┐     │  │ ●  desktop-linux         │ │
+│  │  │ 192.168.4.0/24               │     │  │    100.64.0.9  direct    │ │
+│  │  └──────────────────────────────┘     │  │    3ms                   │ │
+│  │  One CIDR per line.                   │  │ ○  tablet-old (offline)  │ │
+│  │                                       │  │    100.64.0.11  —        │ │
+│  │  [grid-cols-2]                        │  │ ○  vpn-exit-de (offline) │ │
+│  │  Exit Node         Max Peers          │  │    100.64.0.14  —        │ │
+│  │  [None       ▾]    [20    ]           │  │                          │ │
+│  │                                       │  │  Role badges:            │ │
+│  │  Tunnel MTU                           │  │  [exit-node] [subnet-rtr]│ │
+│  │  ◉ Auto  ○ Fixed [    ]               │  │  shown inline per peer   │ │
+│  │                                       │  └──────────────────────────┘ │
+│  │  DERP Region                          │                                │
+│  │  [Auto (closest)              ▾]      │                                │
+│  │                                       │                                │
+│  │ ─── sticky footer ────────────────── │                                │
+│  │  Requires reboot.     [Cancel]        │                                │
+│  │                  [Save & Reboot]      │                                │
+│  └───────────────────────────────────────┘                                │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Layout: desktop uses grid-cols-2 — config form on left, live peers table on right.
+The peer table is NOT inside the form; it's a separate card driven by /api/status
+polling (no save button, read-only, refreshes with the 30s interval).
+
+PEER TABLE COLUMNS (desktop, .table inside .card):
+  Online dot | Hostname | Tailnet IP | Path | RTT | Last seen | Role badge
+
+DERP REGION SELECT:
+  ~30 options grouped by continent.
+  "Auto (closest)" is the default selected option.
+  Custom server URL option at bottom: user types in a text field
+  that appears when "Custom..." is selected.
+
+MTU INTERACTION:
+  Fixed radio selected → number input enables (was disabled+greyed).
+  Auto radio selected  → number input disables+greys, shows "(1420 direct / 1280 DERP)".
+  MTU change does NOT require reboot — it is applied live via /api/mtu POST.
+  The sticky footer text changes to "Applied immediately" when only MTU changed.

@@ -1,0 +1,79 @@
+STATUS PAGE — DESKTOP (1024px+)
+==================================
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│ [■] ESP32 Router │ ~Status │ ⬡Network │ 🌐Tailscale │ 🛡Firewall │ ⚙Tools │ ⚙System │   [⟳] [Logout] │
+│ (nav-brand)      │ (active pill bg-elevated)    │                         │
+├──────────────────────────────────────────────────────────────────────────┤
+│  max-width: 1100px, margin: 0 auto, padding: 24px 16px                   │
+│                                                                          │
+│  Status                                                  ● Online        │
+│  Last updated 12:34:01                                   (badge-success) │
+│                                                                          │
+│  ┌───────────────────────────────┐  ┌───────────────────────────────┐   │
+│  │ UPLINK WIFI       Connected   │  │ ACCESS POINT        3 clients │   │
+│  │ ─────────────────────────── │  │ ─────────────────────────────  │   │
+│  │ SSID   ▂▄▆_ HomeNetwork_5G  │  │ SSID      ESP32_IoT_AP         │   │
+│  │ IP     192.168.1.47          │  │ AP IP     192.168.4.1          │   │
+│  │ Signal -62 dBm               │  │ MAC       7C:DF:A1:5E:3B:02   │   │
+│  │ Chan   6 (2.4 GHz)           │  │ Channel   6                    │   │
+│  └──[green left stripe]─────────┘  └──[blue left stripe]────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────┐  ┌────────────────────────┐   │
+│  │ TAILSCALE                 ● Connected│  │ MEMORY                 │   │
+│  │ ──────────────────────────────────── │  │ ─────────────────────  │   │
+│  │ Tailnet IP   100.64.0.12             │  │ Free Heap              │   │
+│  │ Hostname     esp32-router            │  │   187 KB               │   │
+│  │ Peers online 4 / 6                   │  │ ████████████░░  74%    │   │
+│  │ Routes       192.168.4.0/24          │  │ of 253 KB DRAM         │   │
+│  │ Exit node    None                    │  ├────────────────────────┤   │
+│  │ ─────────── PEERS ──────────────── │  │ UPTIME                 │   │
+│  │ ● laptop-work   100.64.0.1   direct  │  │ ─────────────────────  │   │
+│  │ ● pi-homelab    100.64.0.3   DERP    │  │ Running   2d 4h 17m    │   │
+│  │ ● phone-pixel   100.64.0.7   direct  │  │ Rebooted  05-18 09:41  │   │
+│  │ ● desktop-linux 100.64.0.9   direct  │  │ Reason    [Power-on]   │   │
+│  │ ○ tablet-old    100.64.0.11  —       │  ├────────────────────────┤   │
+│  │ ○ vpn-exit-de   100.64.0.14  —       │  │ TELEMETRY         [OK] │   │
+│  │                                       │  │ ─────────────────────  │   │
+│  │  col-span-2 (2/3 of the 3-col grid)  │  │ Boots        47        │   │
+│  └───────────────────────────────────────┘  │ Flashes      12        │   │
+│                                              └────────────────────────┘   │
+│  (3-col grid: Tailscale=span-2, right column stacks Memory/Uptime/Tlm)   │
+└──────────────────────────────────────────────────────────────────────────┘
+
+GRID BREAKDOWN (desktop, 3-col):
+  Col 1+2 (span-2): Tailscale status card  — .col-span-2
+  Col 3:            Memory + Uptime + Telemetry stacked (.flex.flex-col.gap-3)
+
+Row 1 uses grid-cols-2: Uplink | AP  (equal halves)
+Row 2 uses grid-cols-3: Tailscale(span-2) | right-stack(span-1)
+
+TABLET (640–1023px):
+  Row 1: grid-cols-2 unchanged
+  Row 2: grid-cols-3 → grid-cols-2
+    Tailscale still col-span-2 → both columns = full width
+    Right stack flows below (col-span-2 also = full row), then 2-col mini-grid
+    (Memory | Uptime side-by-side, Telemetry below)
+
+SIGNAL BARS ANATOMY (.signal-bars):
+  4 bars, heights 25%/50%/75%/100% of 14px container
+  Active bars colored by quality class:
+    on-excellent: --success  (≥ -55 dBm)
+    on-good:      --success  (≥ -65 dBm, 80% opacity)
+    on-fair:      --warning  (≥ -75 dBm)
+    on-weak:      --warning  (≥ -85 dBm, 70% opacity)
+    on-poor:      --danger   (< -85 dBm)
+  Inactive bars: --border color
+
+RESET REASON BADGE COLORS:
+  POWER_ON   → badge-neutral  (grey)
+  SW_RESET   → badge-neutral  (grey)
+  PANIC      → badge-danger   (red)  + crash-info card shown below
+  WDT        → badge-warning  (amber)+ crash-info card shown below
+  BROWNOUT   → badge-warning  (amber)
+  FLASH/OTA  → badge-info     (cyan)
+
+HEAP METRIC THRESHOLDS:
+  ≥ 100 KB → text-success + success bar + card-stripe-success
+  50–99 KB → text-warning + warning bar + card-stripe-warning
+  < 50 KB  → text-danger  + danger  bar + card-stripe-danger
