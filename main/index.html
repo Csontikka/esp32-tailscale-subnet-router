@@ -1736,6 +1736,59 @@
           </div>
         </div>
       </div>
+
+      <!-- ===== DHCP reservations ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">DHCP reservations</span>
+          </div>
+          <span class="badge badge-neutral" id="dhcp-res-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">
+            Pin a fixed IP to a client MAC. The optional name shows up in the clients table below.
+            Reservations apply at the next DHCP renew — reboot or reconnect the client to force one.
+          </p>
+          <div id="dhcp-res-list"></div>
+          <div style="margin-top:0.75rem;">
+            <button class="btn btn-secondary btn-md" id="dhcp-res-add-btn" type="button">+ Add reservation</button>
+          </div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Save replaces the whole table. Up to 16 entries.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-secondary btn-md" id="dhcp-res-reload">Reload</button>
+            <button class="btn btn-primary btn-md" id="dhcp-res-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Connected clients ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Connected clients</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="dhcp-clients-refresh">Refresh</button>
+        </div>
+        <div class="card-body-flush" id="dhcp-clients-body">
+          <div style="padding:1rem; color:var(--text-muted);">— loading —</div>
+        </div>
+      </div>
+
+      <!-- ===== Active DHCP leases ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Active DHCP leases</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="dhcp-leases-refresh">Refresh</button>
+        </div>
+        <div class="card-body-flush" id="dhcp-leases-body">
+          <div style="padding:1rem; color:var(--text-muted);">— loading —</div>
+        </div>
+      </div>
     </div>
 
     <!-- =================================================================
@@ -3025,6 +3078,10 @@
           apBadge.textContent = clients === 1 ? '1 client' : (clients + ' clients');
           apClients.textContent = clients + (ap.ip ? '   (AP IP: ' + ap.ip + ')' : '');
         }).catch(function () {});
+
+      /* DHCP reservations + connected-client/lease snapshot. */
+      loadDhcpReservations();
+      loadDhcpLeases();
     }
 
     /* Top-level network-list buttons. */
@@ -3167,6 +3224,223 @@
       var body = { ap: { ssid: ssid, channel: channel } };
       if (pw) body.ap.password = pw;
       saveNetwork(this, body);
+    });
+
+    // =====================================================================
+    // DHCP RESERVATIONS / CLIENTS / LEASES (still on the Network tab)
+    // =====================================================================
+    var s_dhcp_res_list = [];
+    var s_dhcp_res_max  = 16;
+
+    function markDhcpDirty() {
+      document.getElementById('dhcp-res-save').disabled = false;
+    }
+
+    function snapshotDhcpResListFromDOM() {
+      var rows = document.querySelectorAll('.dhcp-res-row');
+      rows.forEach(function (row) {
+        var idx = parseInt(row.dataset.idx, 10);
+        var r = s_dhcp_res_list[idx]; if (!r) return;
+        r.mac  = row.querySelector('.dhcp-res-mac').value;
+        r.ip   = row.querySelector('.dhcp-res-ip').value;
+        r.name = row.querySelector('.dhcp-res-name').value;
+      });
+    }
+
+    function renderDhcpResList() {
+      var c = document.getElementById('dhcp-res-list');
+      var b = document.getElementById('dhcp-res-badge');
+      b.textContent = s_dhcp_res_list.length + ' / ' + s_dhcp_res_max;
+      b.className   = 'badge ' + (s_dhcp_res_list.length ? 'badge-accent' : 'badge-neutral');
+
+      if (!s_dhcp_res_list.length) {
+        c.innerHTML = '<div style="padding:1rem; color:var(--text-muted); border:1px dashed var(--border); border-radius:var(--radius-md);">No reservations — click <strong>+ Add reservation</strong> below, or use the <strong>Reserve</strong> button next to a connected client.</div>';
+        return;
+      }
+      var html = '';
+      s_dhcp_res_list.forEach(function (r, idx) {
+        html += '<div class="dhcp-res-row" data-idx="' + idx + '" style="border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; margin-bottom:0.5rem;">'
+              + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">'
+              +   '<span class="badge badge-neutral mono">#' + (idx + 1) + '</span>'
+              +   '<button class="btn btn-ghost btn-sm text-danger dhcp-res-del" type="button" title="Remove">×</button>'
+              + '</div>'
+              + '<div class="grid grid-cols-2">'
+              +   '<div class="form-group"><label class="form-label">MAC address</label>'
+              +     '<input class="input mono dhcp-res-mac"  type="text" placeholder="aa:bb:cc:dd:ee:ff" value="' + escapeHtml(r.mac || '') + '">'
+              +   '</div>'
+              +   '<div class="form-group"><label class="form-label">IP address</label>'
+              +     '<input class="input mono dhcp-res-ip"   type="text" placeholder="192.168.4.10" value="' + escapeHtml(r.ip || '') + '">'
+              +   '</div>'
+              + '</div>'
+              + '<div class="form-group" style="margin:0;">'
+              +   '<label class="form-label">Friendly name (optional)</label>'
+              +   '<input class="input dhcp-res-name" type="text" maxlength="31" placeholder="e.g. Raspberry Pi" value="' + escapeHtml(r.name || '') + '">'
+              + '</div>'
+              + '</div>';
+      });
+      c.innerHTML = html;
+      document.querySelectorAll('.dhcp-res-row').forEach(function (row) {
+        var idx = parseInt(row.dataset.idx, 10);
+        row.querySelectorAll('input').forEach(function (el) {
+          el.addEventListener('input',  markDhcpDirty);
+          el.addEventListener('change', markDhcpDirty);
+        });
+        row.querySelector('.dhcp-res-del').addEventListener('click', function () {
+          snapshotDhcpResListFromDOM();
+          s_dhcp_res_list.splice(idx, 1);
+          renderDhcpResList();
+          markDhcpDirty();
+        });
+      });
+    }
+
+    function loadDhcpReservations() {
+      apiFetch('/api/dhcp/reservations')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          s_dhcp_res_list = (d.reservations || []).slice();
+          if (typeof d.max === 'number') s_dhcp_res_max = d.max;
+          renderDhcpResList();
+          document.getElementById('dhcp-res-save').disabled = true;
+        }).catch(function () {});
+    }
+
+    function loadDhcpLeases() {
+      apiFetch('/api/dhcp/leases')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          renderDhcpClients (d.clients || []);
+          renderDhcpLeases  (d.leases  || []);
+        }).catch(function () {
+          document.getElementById('dhcp-clients-body').innerHTML =
+            '<div style="padding:1rem; color:var(--text-muted);">— failed to load —</div>';
+          document.getElementById('dhcp-leases-body').innerHTML =
+            '<div style="padding:1rem; color:var(--text-muted);">— failed to load —</div>';
+        });
+    }
+
+    function renderDhcpClients(clients) {
+      var body = document.getElementById('dhcp-clients-body');
+      if (!clients.length) {
+        body.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">No clients connected to the AP right now.</div>';
+        return;
+      }
+      var html = '<div class="table-wrap"><table class="table"><thead><tr>'
+               + '<th>MAC</th><th>IP</th><th>Name</th><th>Hostname</th><th>RSSI</th><th></th>'
+               + '</tr></thead><tbody>';
+      clients.forEach(function (c) {
+        var name = c.name || '';
+        var resBadge = c.reserved ? ' <span class="badge badge-success" style="margin-left:0.5rem;">reserved</span>' : '';
+        var rssi = (typeof c.rssi === 'number' && c.rssi !== 0) ? (c.rssi + ' dBm') : '—';
+        var canReserve = c.ip && !c.reserved;
+        html += '<tr>'
+              + '<td class="mono">' + escapeHtml(c.mac || '') + '</td>'
+              + '<td class="mono">' + escapeHtml(c.ip  || '—') + '</td>'
+              + '<td>' + escapeHtml(name) + resBadge + '</td>'
+              + '<td>' + escapeHtml(c.hostname || '') + '</td>'
+              + '<td class="mono">' + rssi + '</td>'
+              + '<td style="text-align:right;">'
+              + (canReserve
+                  ? '<button class="btn btn-secondary btn-sm dhcp-reserve-from" data-mac="' + escapeHtml(c.mac) + '" data-ip="' + escapeHtml(c.ip) + '" data-name="' + escapeHtml(c.hostname || '') + '" type="button">Reserve</button>'
+                  : '')
+              + '</td>'
+              + '</tr>';
+      });
+      html += '</tbody></table></div>';
+      body.innerHTML = html;
+      document.querySelectorAll('.dhcp-reserve-from').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (s_dhcp_res_list.length >= s_dhcp_res_max) {
+            showToast('error', 'List full', 'Max ' + s_dhcp_res_max + ' reservations. Remove one first.', 4000);
+            return;
+          }
+          snapshotDhcpResListFromDOM();
+          s_dhcp_res_list.push({
+            mac:  this.dataset.mac,
+            ip:   this.dataset.ip,
+            name: this.dataset.name || ''
+          });
+          renderDhcpResList();
+          markDhcpDirty();
+          showToast('success', 'Row added', 'Edit the name if you like, then click Save.', 3500);
+        });
+      });
+    }
+
+    function formatLeaseRemaining(sec) {
+      sec = sec | 0;
+      if (sec <= 0)    return 'expired';
+      if (sec < 60)    return sec + ' s';
+      if (sec < 3600)  return Math.floor(sec / 60) + ' min';
+      return Math.floor(sec / 3600) + ' h ' + Math.floor((sec % 3600) / 60) + ' min';
+    }
+
+    function renderDhcpLeases(leases) {
+      var body = document.getElementById('dhcp-leases-body');
+      if (!leases.length) {
+        body.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">No active leases.</div>';
+        return;
+      }
+      var html = '<div class="table-wrap"><table class="table"><thead><tr>'
+               + '<th>MAC</th><th>IP</th><th>Hostname</th><th>Remaining</th>'
+               + '</tr></thead><tbody>';
+      leases.forEach(function (l) {
+        html += '<tr>'
+              + '<td class="mono">' + escapeHtml(l.mac || '') + '</td>'
+              + '<td class="mono">' + escapeHtml(l.ip  || '') + '</td>'
+              + '<td>' + escapeHtml(l.hostname || '') + '</td>'
+              + '<td class="mono">' + formatLeaseRemaining(l.lease_remaining) + '</td>'
+              + '</tr>';
+      });
+      html += '</tbody></table></div>';
+      body.innerHTML = html;
+    }
+
+    document.getElementById('dhcp-res-reload')      .addEventListener('click', loadDhcpReservations);
+    document.getElementById('dhcp-clients-refresh') .addEventListener('click', loadDhcpLeases);
+    document.getElementById('dhcp-leases-refresh')  .addEventListener('click', loadDhcpLeases);
+    document.getElementById('dhcp-res-add-btn').addEventListener('click', function () {
+      if (s_dhcp_res_list.length >= s_dhcp_res_max) {
+        showToast('error', 'List full', 'Max ' + s_dhcp_res_max + ' reservations. Remove one first.', 4000);
+        return;
+      }
+      snapshotDhcpResListFromDOM();
+      s_dhcp_res_list.push({ mac: '', ip: '', name: '' });
+      renderDhcpResList();
+      markDhcpDirty();
+    });
+    document.getElementById('dhcp-res-save').addEventListener('click', function () {
+      snapshotDhcpResListFromDOM();
+      var clean = [];
+      for (var i = 0; i < s_dhcp_res_list.length; i++) {
+        var r = s_dhcp_res_list[i];
+        var mac = (r.mac || '').trim();
+        var ip  = (r.ip  || '').trim();
+        if (!mac || !ip) continue;
+        if (!/^([0-9a-fA-F]{2}[:\-]){5}[0-9a-fA-F]{2}$/.test(mac)) {
+          showToast('error', 'Invalid MAC', 'Row #' + (i + 1) + ' — fix the MAC and retry.', 5000);
+          return;
+        }
+        clean.push({ mac: mac, ip: ip, name: r.name || '' });
+      }
+      var btn = this;
+      btn.disabled = true; btn.textContent = 'Saving…';
+      apiFetch('/api/dhcp/reservations', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ reservations: clean })
+      }).then(function (r) {
+        if (!r.ok) throw 0;
+        return r.json();
+      }).then(function () {
+        btn.textContent = 'Save';
+        showToast('success', 'Saved', 'Reservations updated — new leases will honour them at the next renew.', 4000);
+        loadDhcpReservations();
+        loadDhcpLeases();
+      }).catch(function () {
+        btn.disabled = false; btn.textContent = 'Save';
+        showToast('error', 'Save failed', 'Reservations were not stored. Check the device log.', 5000);
+      });
     });
 
     // =====================================================================
