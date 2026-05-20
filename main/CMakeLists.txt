@@ -25,6 +25,7 @@ idf_component_register(SRCS "main.c"
                             "lwip_route_hook.c"
                             "web_ui.c"
                             "web_password.c"
+                            "netif_hooks.c"
                             "index_html_data.c"
                     PRIV_REQUIRES esp_wifi nvs_flash esp_event esp_netif esp_timer
                                   lwip microlink
