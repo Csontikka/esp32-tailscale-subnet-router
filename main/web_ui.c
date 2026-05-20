@@ -57,8 +57,20 @@ static void ip4_to_str(uint32_t ip_nbo, char *out, size_t out_size)
     snprintf(out, out_size, IPSTR, IP2STR(&a));
 }
 
+/* Forward decl — definition lives further down with the session block. */
+static bool request_authenticated(httpd_req_t *req);
+
+static esp_err_t require_auth(httpd_req_t *req)
+{
+    if (request_authenticated(req)) return ESP_OK;
+    httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "auth required");
+    return ESP_FAIL;
+}
+
 static esp_err_t status_handler(httpd_req_t *req)
 {
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
     cJSON *root = cJSON_CreateObject();
     if (!root) {
         httpd_resp_send_500(req);
@@ -142,6 +154,8 @@ static void add_nvs_string(cJSON *obj, const char *json_key, const char *nvs_key
 
 static esp_err_t network_handler(httpd_req_t *req)
 {
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
     cJSON *root = cJSON_CreateObject();
     if (!root) {
         httpd_resp_send_500(req);
@@ -203,6 +217,8 @@ static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size)
 
 static esp_err_t tailscale_handler(httpd_req_t *req)
 {
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
     cJSON *root = cJSON_CreateObject();
     if (!root) {
         httpd_resp_send_500(req);
@@ -303,6 +319,8 @@ static const httpd_uri_t uri_tailscale = {
 
 static esp_err_t system_handler(httpd_req_t *req)
 {
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
     cJSON *root = cJSON_CreateObject();
     if (!root) {
         httpd_resp_send_500(req);
