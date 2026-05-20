@@ -1417,6 +1417,14 @@
               <span class="stat-value mono" id="uplink-ip">192.168.1.47</span>
             </div>
             <div class="stat-row">
+              <span class="stat-label">Gateway</span>
+              <span class="stat-value mono" id="uplink-gateway">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">DNS</span>
+              <span class="stat-value mono" id="uplink-dns">—</span>
+            </div>
+            <div class="stat-row">
               <span class="stat-label">Signal</span>
               <span class="stat-value" id="uplink-rssi">-62 dBm</span>
             </div>
@@ -2641,7 +2649,9 @@
       // STA (uplink)
       var ul = data.sta || {};
       document.getElementById('uplink-ssid').textContent    = ul.ssid || '—';
-      document.getElementById('uplink-ip').textContent      = ul.ip   || '—';
+      document.getElementById('uplink-ip').textContent      = ul.ip      || '—';
+      document.getElementById('uplink-gateway').textContent = ul.gateway || '—';
+      document.getElementById('uplink-dns').textContent     = ul.dns     || '—';
       document.getElementById('uplink-rssi').textContent    = (ul.rssi != null ? ul.rssi + ' dBm' : '—');
       document.getElementById('uplink-channel').textContent = ul.channel != null ? String(ul.channel) : '—';
       document.getElementById('uplink-traffic').textContent = formatTraffic(ul.bytes_in, ul.bytes_out);
