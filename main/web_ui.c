@@ -1067,7 +1067,32 @@ static const httpd_uri_t uri_auth_logout = {
     .uri = "/api/auth/logout", .method = HTTP_POST, .handler = auth_logout_handler,
 };
 
-#define WEB_UI_PASSWORD_MIN_LEN 6
+#define WEB_UI_PASSWORD_MIN_LEN 8
+
+/* Returns NULL if the password meets the admin-policy requirements,
+ * otherwise a static, human-readable error string. The same wording
+ * is shown by the SPA next to the password input. */
+static const char *check_password_policy(const char *pw)
+{
+    if (!pw) return "missing password";
+    size_t len = strlen(pw);
+    if (len < WEB_UI_PASSWORD_MIN_LEN) {
+        return "password must be at least 8 characters";
+    }
+    bool lower = false, upper = false, digit = false, special = false;
+    for (size_t i = 0; i < len; i++) {
+        unsigned char c = (unsigned char)pw[i];
+        if (c >= 'a' && c <= 'z')      lower = true;
+        else if (c >= 'A' && c <= 'Z') upper = true;
+        else if (c >= '0' && c <= '9') digit = true;
+        else if (c >= 33 && c <= 126)  special = true;   /* printable non-alnum */
+    }
+    if (!lower)   return "password must include a lowercase letter";
+    if (!upper)   return "password must include an uppercase letter";
+    if (!digit)   return "password must include a digit";
+    if (!special) return "password must include a special character";
+    return NULL;
+}
 
 static esp_err_t auth_setup_handler(httpd_req_t *req)
 {
@@ -1090,10 +1115,10 @@ static esp_err_t auth_setup_handler(httpd_req_t *req)
 
     cJSON *body = cJSON_Parse(buf);
     cJSON *pw   = body ? cJSON_GetObjectItem(body, "password") : NULL;
-    if (!cJSON_IsString(pw) || strlen(pw->valuestring) < WEB_UI_PASSWORD_MIN_LEN) {
+    const char *policy_err = check_password_policy(cJSON_IsString(pw) ? pw->valuestring : NULL);
+    if (policy_err) {
         cJSON_Delete(body);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "password must be at least 6 characters");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, policy_err);
         return ESP_FAIL;
     }
 
@@ -1142,10 +1167,10 @@ static esp_err_t auth_change_password_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    if (strlen(new_pw->valuestring) < WEB_UI_PASSWORD_MIN_LEN) {
+    const char *policy_err = check_password_policy(new_pw->valuestring);
+    if (policy_err) {
         cJSON_Delete(body);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
-                            "new password must be at least 6 characters");
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, policy_err);
         return ESP_FAIL;
     }
 
