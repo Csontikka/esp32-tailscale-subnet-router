@@ -780,6 +780,55 @@ static const httpd_uri_t uri_auth_setup = {
     .uri = "/api/auth/setup", .method = HTTP_POST, .handler = auth_setup_handler,
 };
 
+static esp_err_t auth_change_password_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char buf[512];
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+
+    cJSON *body = cJSON_Parse(buf);
+    const cJSON *old_pw = body ? cJSON_GetObjectItem(body, "old_password") : NULL;
+    const cJSON *new_pw = body ? cJSON_GetObjectItem(body, "new_password") : NULL;
+    if (!cJSON_IsString(old_pw) || !cJSON_IsString(new_pw)) {
+        cJSON_Delete(body);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing old_password or new_password");
+        return ESP_FAIL;
+    }
+
+    if (!verify_web_password(old_pw->valuestring)) {
+        cJSON_Delete(body);
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "wrong old password");
+        return ESP_FAIL;
+    }
+
+    if (strlen(new_pw->valuestring) < WEB_UI_PASSWORD_MIN_LEN) {
+        cJSON_Delete(body);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "new password must be at least 6 characters");
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = set_web_password_hashed(new_pw->valuestring);
+    cJSON_Delete(body);
+    if (err != ESP_OK) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    /* Force re-login after a successful change — matches the OLD repo's
+     * behaviour and means a stolen-cookie attacker stays out even if the
+     * operator updates the password from a separate browser tab. */
+    session_clear();
+    httpd_resp_set_hdr(req, "Set-Cookie", "ts_session=; Path=/; HttpOnly; Max-Age=0");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static const httpd_uri_t uri_auth_change_password = {
+    .uri = "/api/auth/change_password", .method = HTTP_POST, .handler = auth_change_password_handler,
+};
+
 void web_ui_init(void)
 {
     static httpd_handle_t server = NULL;
@@ -808,5 +857,6 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_auth_login);
     httpd_register_uri_handler(server, &uri_auth_logout);
     httpd_register_uri_handler(server, &uri_auth_setup);
+    httpd_register_uri_handler(server, &uri_auth_change_password);
     ESP_LOGI(TAG, "web UI listening on :%d", config.server_port);
 }
