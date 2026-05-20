@@ -1871,70 +1871,20 @@
     </div>
 
     <!-- =================================================================
-         FIREWALL PAGE (stub)
+         FIREWALL PAGE
          =============================================================== -->
     <div class="page-section" id="page-firewall">
       <div class="page-header">
         <div class="page-header-left">
           <h1 class="page-title">Firewall</h1>
-          <p class="page-subtitle">4 ACL lists · First match wins · No match = allow</p>
+          <p class="page-subtitle">4 ACL chains · First match wins · No match = allow</p>
+        </div>
+        <div class="page-header-actions">
+          <button class="btn btn-secondary btn-md" id="fw-reload">Reload</button>
         </div>
       </div>
-      <div class="stub-page">
-        <div class="stub-notice">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          Firewall page — prototype stub. Full page: 4 ACL list cards (to_esp / from_esp / to_ap / from_ap), rule table per list with hit-count, add-rule form.
-        </div>
-        <!-- Sample ACL table -->
-        <div class="card">
-          <div class="card-header">
-            <div class="card-header-left">
-              <span class="card-title">to_esp — Internet → ESP32</span>
-            </div>
-            <div class="card-header-actions">
-              <span class="badge badge-neutral">2 rules · 1.4K hits</span>
-              <button class="btn btn-secondary btn-sm">Add Rule</button>
-            </div>
-          </div>
-          <div class="card-body-flush">
-            <div class="table-wrap">
-              <table class="table">
-                <thead>
-                  <tr>
-                    <th>#</th><th>Proto</th><th>Src IP</th><th>Src Port</th>
-                    <th>Dst IP</th><th>Dst Port</th><th>Action</th><th>Hits</th><th></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr>
-                    <td class="text-muted">1</td>
-                    <td>TCP</td>
-                    <td class="mono">any</td>
-                    <td class="mono">*</td>
-                    <td class="mono">any</td>
-                    <td class="mono">22</td>
-                    <td><span class="badge badge-danger">Deny</span></td>
-                    <td class="text-muted">1,241</td>
-                    <td><button class="btn btn-ghost btn-sm text-danger">Del</button></td>
-                  </tr>
-                  <tr>
-                    <td class="text-muted">2</td>
-                    <td>TCP</td>
-                    <td class="mono">any</td>
-                    <td class="mono">*</td>
-                    <td class="mono">any</td>
-                    <td class="mono">23</td>
-                    <td><span class="badge badge-danger">Deny</span></td>
-                    <td class="text-muted">189</td>
-                    <td><button class="btn btn-ghost btn-sm text-danger">Del</button></td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+      <div id="fw-lists">
+        <div style="padding:1.5rem; text-align:center; color:var(--text-muted);">Loading…</div>
       </div>
     </div>
 
@@ -2079,6 +2029,7 @@
            * to a tab that has its own data fetcher. */
           if (page === 'network'   && typeof loadNetwork   === 'function') loadNetwork();
           if (page === 'tailscale' && typeof loadTailscale === 'function') loadTailscale();
+          if (page === 'firewall'  && typeof loadFirewall  === 'function') loadFirewall();
         });
       });
     })();
@@ -3039,6 +2990,218 @@
           showToast('error', 'Save failed', e && e.message ? e.message : 'unknown error', 6000);
         });
     });
+
+    // =====================================================================
+    // FIREWALL PAGE
+    // =====================================================================
+    function protoName(p) {
+      switch (p) {
+        case 0:  return 'Any';
+        case 1:  return 'ICMP';
+        case 6:  return 'TCP';
+        case 17: return 'UDP';
+        default: return String(p);
+      }
+    }
+
+    function renderAclCard(list) {
+      var s = list.stats || {};
+      var statsBadge = '<span class="badge badge-neutral" style="margin-right:0.5rem;">'
+                     + (s.allowed || 0) + ' allow · '
+                     + (s.denied  || 0) + ' deny · '
+                     + (s.nomatch || 0) + ' nomatch</span>';
+
+      var rules = list.rules || [];
+      var rowsHtml = '';
+      if (rules.length === 0) {
+        rowsHtml = '<tr><td colspan="9" style="text-align:center; padding:1rem; color:var(--text-muted);">No rules — all packets allowed by default.</td></tr>';
+      } else {
+        rules.forEach(function (r) {
+          var actionBadge = (r.action === 1)
+            ? '<span class="badge badge-success">Allow</span>'
+            : '<span class="badge badge-danger">Deny</span>';
+          if (r.monitor) actionBadge += ' <span class="badge badge-info" title="Monitor — also feed PCAP">M</span>';
+          rowsHtml += '<tr>'
+            + '<td class="text-muted">' + r.index + '</td>'
+            + '<td>' + protoName(r.proto) + '</td>'
+            + '<td class="mono">' + escapeHtml(r.src) + '</td>'
+            + '<td class="mono">' + (r.s_port ? r.s_port : '*') + '</td>'
+            + '<td class="mono">' + escapeHtml(r.dest) + '</td>'
+            + '<td class="mono">' + (r.d_port ? r.d_port : '*') + '</td>'
+            + '<td>' + actionBadge + '</td>'
+            + '<td class="text-muted">' + r.hits + '</td>'
+            + '<td><button class="btn btn-ghost btn-sm text-danger fw-del-btn" data-acl="' + list.index + '" data-idx="' + r.index + '">Del</button></td>'
+            + '</tr>';
+        });
+      }
+
+      return ''
+        + '<div class="card mt-4">'
+        +   '<div class="card-header">'
+        +     '<div class="card-header-left">'
+        +       '<span class="card-title">' + escapeHtml(list.name) + ' — ' + escapeHtml(list.desc) + '</span>'
+        +     '</div>'
+        +     '<div class="card-header-actions" style="display:flex; align-items:center;">'
+        +       statsBadge
+        +       '<button class="btn btn-secondary btn-sm fw-add-toggle" data-acl="' + list.index + '">Add rule</button>'
+        +       '<button class="btn btn-ghost btn-sm text-danger fw-clear-btn" data-acl="' + list.index + '" style="margin-left:0.5rem;">Clear</button>'
+        +     '</div>'
+        +   '</div>'
+        +   '<div class="card-body-flush">'
+        +     '<div class="table-wrap"><table class="table">'
+        +       '<thead><tr>'
+        +         '<th>#</th><th>Proto</th>'
+        +         '<th>Src IP / CIDR</th><th>Src Port</th>'
+        +         '<th>Dst IP / CIDR</th><th>Dst Port</th>'
+        +         '<th>Action</th><th>Hits</th><th></th>'
+        +       '</tr></thead>'
+        +       '<tbody>' + rowsHtml + '</tbody>'
+        +     '</table></div>'
+        +   '</div>'
+        /* Add-rule form, hidden until Add Rule is clicked. */
+        +   '<div class="card-body fw-add-form" data-acl="' + list.index + '" style="display:none; border-top:1px solid var(--border);">'
+        +     '<div class="grid grid-cols-2">'
+        +       '<div class="form-group"><label class="form-label">Source</label>'
+        +         '<input class="input mono" type="text" placeholder="any or 192.168.4.0/24" data-fw="src" value="any"></div>'
+        +       '<div class="form-group"><label class="form-label">Destination</label>'
+        +         '<input class="input mono" type="text" placeholder="any or 1.2.3.4" data-fw="dst" value="any"></div>'
+        +     '</div>'
+        +     '<div class="grid grid-cols-2">'
+        +       '<div class="form-group"><label class="form-label">Protocol</label>'
+        +         '<select class="select" data-fw="proto">'
+        +           '<option value="0">Any</option>'
+        +           '<option value="1">ICMP</option>'
+        +           '<option value="6">TCP</option>'
+        +           '<option value="17">UDP</option>'
+        +         '</select></div>'
+        +       '<div class="form-group"><label class="form-label">Action</label>'
+        +         '<select class="select" data-fw="action">'
+        +           '<option value="1" selected>Allow</option>'
+        +           '<option value="0">Deny</option>'
+        +         '</select></div>'
+        +     '</div>'
+        +     '<div class="grid grid-cols-2">'
+        +       '<div class="form-group"><label class="form-label">Source port (0 = any)</label>'
+        +         '<input class="input" type="number" data-fw="s_port" value="0" min="0" max="65535"></div>'
+        +       '<div class="form-group"><label class="form-label">Destination port (0 = any)</label>'
+        +         '<input class="input" type="number" data-fw="d_port" value="0" min="0" max="65535"></div>'
+        +     '</div>'
+        +     '<div class="form-group">'
+        +       '<label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">'
+        +         '<input type="checkbox" data-fw="monitor"> Also mirror matching packets to PCAP (monitor)'
+        +       '</label>'
+        +     '</div>'
+        +     '<div style="text-align:right;">'
+        +       '<button class="btn btn-secondary btn-md fw-add-cancel" data-acl="' + list.index + '" style="margin-right:0.5rem;">Cancel</button>'
+        +       '<button class="btn btn-primary btn-md fw-add-submit" data-acl="' + list.index + '">Add rule</button>'
+        +     '</div>'
+        +   '</div>'
+        + '</div>';
+    }
+
+    function loadFirewall() {
+      apiFetch('/api/firewall')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var html = '';
+          (d.lists || []).forEach(function (list) { html += renderAclCard(list); });
+          document.getElementById('fw-lists').innerHTML = html;
+          attachFirewallHandlers();
+        })
+        .catch(function () {
+          document.getElementById('fw-lists').innerHTML =
+            '<div style="padding:1.5rem; text-align:center; color:var(--danger);">Failed to load firewall rules.</div>';
+        });
+    }
+
+    function attachFirewallHandlers() {
+      var names = ['to_esp', 'from_esp', 'to_ap', 'from_ap'];
+
+      document.querySelectorAll('.fw-add-toggle').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var acl = this.dataset.acl;
+          var form = document.querySelector('.fw-add-form[data-acl="' + acl + '"]');
+          form.style.display = (form.style.display === 'none' || !form.style.display) ? '' : 'none';
+        });
+      });
+      document.querySelectorAll('.fw-add-cancel').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var acl = this.dataset.acl;
+          document.querySelector('.fw-add-form[data-acl="' + acl + '"]').style.display = 'none';
+        });
+      });
+      document.querySelectorAll('.fw-add-submit').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var acl  = parseInt(this.dataset.acl, 10);
+          var form = document.querySelector('.fw-add-form[data-acl="' + acl + '"]');
+          var get  = function (name) { return form.querySelector('[data-fw="' + name + '"]'); };
+
+          var body = {
+            acl:     acl,
+            src:     get('src').value.trim() || 'any',
+            dest:    get('dst').value.trim() || 'any',
+            proto:   parseInt(get('proto').value, 10),
+            s_port:  parseInt(get('s_port').value, 10) || 0,
+            d_port:  parseInt(get('d_port').value, 10) || 0,
+            action:  parseInt(get('action').value, 10),
+            monitor: get('monitor').checked
+          };
+          var that = this;
+          that.disabled = true;
+          apiFetch('/api/firewall/add', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+          })
+            .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+            .then(function () {
+              showToast('success', 'Rule added', 'Saved to ' + names[acl] + '.', 3000);
+              loadFirewall();
+            })
+            .catch(function (e) {
+              that.disabled = false;
+              showToast('error', 'Add failed', e && e.message ? e.message : '', 5000);
+            });
+        });
+      });
+      document.querySelectorAll('.fw-del-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var acl = parseInt(this.dataset.acl, 10);
+          var idx = parseInt(this.dataset.idx, 10);
+          showConfirm('Delete rule?',
+                      'Remove rule ' + idx + ' from ' + names[acl] + '?',
+                      function () {
+                        apiFetch('/api/firewall/delete', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ acl: acl, index: idx })
+                        })
+                          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                          .then(function () { showToast('success', 'Deleted', '', 3000); loadFirewall(); })
+                          .catch(function () { showToast('error', 'Delete failed', '', 5000); });
+                      });
+        });
+      });
+      document.querySelectorAll('.fw-clear-btn').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var acl = parseInt(this.dataset.acl, 10);
+          showConfirm('Clear all rules?',
+                      'Remove EVERY rule from ' + names[acl] + '? This cannot be undone.',
+                      function () {
+                        apiFetch('/api/firewall/clear', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ acl: acl })
+                        })
+                          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+                          .then(function () { showToast('success', 'Cleared', '', 3000); loadFirewall(); })
+                          .catch(function () { showToast('error', 'Clear failed', '', 5000); });
+                      });
+        });
+      });
+    }
+
+    document.getElementById('fw-reload').addEventListener('click', loadFirewall);
 
     // =====================================================================
     // INITIAL LOAD — auth gate
