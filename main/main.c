@@ -289,6 +289,12 @@ esp_netif_t *wifi_init_softap(void)
     nvs_param_get_int("ap_channel", &channel);
     if (channel < 1 || channel > 13) channel = EXAMPLE_ESP_WIFI_CHANNEL;
 
+    /* Hidden SSID — when set, the AP doesn't broadcast its name in
+     * beacons. Clients still need the SSID to connect; this just stops
+     * casual scanners from listing it. */
+    uint8_t hidden = 0;
+    nvs_param_get_u8("ap_hidden", &hidden);
+
     wifi_config_t wifi_ap_config = {
         .ap = {
             .ssid_len = strlen(use_ssid),
@@ -296,6 +302,7 @@ esp_netif_t *wifi_init_softap(void)
             .max_connection = EXAMPLE_MAX_STA_CONN,
             .authmode = WIFI_AUTH_WPA2_PSK,
             .pmf_cfg = { .required = false },
+            .ssid_hidden = hidden ? 1 : 0,
         },
     };
     strlcpy((char*)wifi_ap_config.ap.ssid,     use_ssid, sizeof wifi_ap_config.ap.ssid);
