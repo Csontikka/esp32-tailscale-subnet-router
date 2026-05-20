@@ -38,6 +38,7 @@
 #include "telemetry.h"
 #include "lwip_route_hook.h"
 #include "web_ui.h"
+#include "acl.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -241,6 +242,11 @@ void app_main(void)
      * netif_default between STA and the WireGuard netif depending on
      * tailscale_exit_node_ip. Self-paces until netifs exist. */
     lwip_route_hook_init();
+
+    /* ACL firewall — initialise the in-memory rule tables, then load any
+     * persisted rules from NVS. The actual packet-filter hook lands in
+     * the netif_hooks slice; this just makes the rules queryable. */
+    load_acl_rules();
 
     /* Initialize event group */
     s_wifi_event_group = xEventGroupCreate();
