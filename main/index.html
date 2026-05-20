@@ -1602,11 +1602,11 @@
         </div>
       </div>
 
-      <!-- ===== Uplink (STA) WiFi ===== -->
+      <!-- ===== Uplink networks (priority list, up to 5) ===== -->
       <div class="card">
         <div class="card-header">
           <div class="card-header-left">
-            <span class="card-title">Uplink (STA) WiFi</span>
+            <span class="card-title">Uplink networks</span>
           </div>
           <span class="badge badge-neutral" id="net-sta-badge">—</span>
         </div>
@@ -1615,84 +1615,29 @@
             <span class="stat-label">Currently connected</span>
             <span class="stat-value mono" id="net-sta-summary">—</span>
           </div>
-          <div class="grid grid-cols-2">
-            <div class="form-group">
-              <label class="form-label" for="net-sta-ssid">SSID</label>
-              <div style="display:flex; gap:0.5rem;">
-                <input class="input" type="text" id="net-sta-ssid" placeholder="Network name" style="flex:1; min-width:0;">
-                <button class="btn btn-secondary btn-md" type="button" id="net-sta-scan" title="Scan for nearby networks">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M5 12.55a11 11 0 0114.08 0M1.42 9a16 16 0 0121.16 0M8.53 16.11a6 6 0 016.95 0M12 20h.01"/>
-                  </svg>
-                  Scan
-                </button>
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="net-sta-pw">Password</label>
-              <input class="input" type="password" id="net-sta-pw" autocomplete="new-password" placeholder="Leave empty to keep current">
-            </div>
+          <p class="form-hint" style="margin:0.5rem 0 0.75rem 0;">
+            The router tries networks in priority order. If the top one can't be reached after a few retries,
+            it rolls down to the next. Each network keeps its own IP configuration (DHCP or static).
+          </p>
+          <div id="net-list"></div>
+          <div style="margin-top:0.75rem;">
+            <button class="btn btn-secondary btn-md" id="net-add-btn" type="button">+ Add network</button>
           </div>
+
+          <hr style="border:none; border-top:1px solid var(--border); margin:1.25rem 0 0.75rem 0;">
+
           <div class="grid grid-cols-2">
             <div class="form-group">
-              <label class="form-label" for="net-hostname">Hostname</label>
+              <label class="form-label" for="net-hostname">Hostname (device-wide)</label>
               <input class="input" type="text" id="net-hostname" placeholder="esp32-tailscale">
             </div>
           </div>
         </div>
         <div class="form-footer">
-          <span class="form-footer-hint">Saving will write to NVS. A reboot is required to apply WiFi changes.</span>
+          <span class="form-footer-hint">Save writes to NVS. A reboot is required to apply WiFi changes.</span>
           <div class="form-footer-actions">
             <button class="btn btn-secondary btn-md" id="net-sta-reload">Reload</button>
             <button class="btn btn-primary btn-md" id="net-sta-save" disabled>Save</button>
-          </div>
-        </div>
-      </div>
-
-      <!-- ===== Uplink IP configuration ===== -->
-      <div class="card mt-4">
-        <div class="card-header">
-          <div class="card-header-left">
-            <span class="card-title">Uplink IP configuration</span>
-          </div>
-          <span class="badge badge-neutral" id="net-ip-badge">DHCP</span>
-        </div>
-        <div class="card-body">
-          <div class="form-group">
-            <label class="form-label">Address mode</label>
-            <div style="display:flex; gap:1rem; padding:0.25rem 0;">
-              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
-                <input type="radio" name="net-ip-mode" value="dhcp" id="net-ip-mode-dhcp" checked> DHCP
-              </label>
-              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
-                <input type="radio" name="net-ip-mode" value="static" id="net-ip-mode-static"> Static IP
-              </label>
-            </div>
-          </div>
-          <div id="net-static-fields" style="display:none;">
-            <div class="grid grid-cols-2">
-              <div class="form-group">
-                <label class="form-label" for="net-ip">IP address</label>
-                <input class="input mono" type="text" id="net-ip" placeholder="192.168.1.50">
-              </div>
-              <div class="form-group">
-                <label class="form-label" for="net-mask">Subnet mask</label>
-                <input class="input mono" type="text" id="net-mask" placeholder="255.255.255.0">
-              </div>
-            </div>
-            <div class="grid grid-cols-2">
-              <div class="form-group">
-                <label class="form-label" for="net-gw">Gateway</label>
-                <input class="input mono" type="text" id="net-gw" placeholder="192.168.1.1">
-              </div>
-            </div>
-          </div>
-        </div>
-        <div class="form-footer">
-          <span class="form-footer-hint">Reboot required to apply. Switching back to DHCP clears the stored IP.</span>
-          <div class="form-footer-actions">
-            <button class="btn btn-secondary btn-md" id="net-ip-reload">Reload</button>
-            <button class="btn btn-primary btn-md" id="net-ip-save" disabled>Save</button>
           </div>
         </div>
       </div>
@@ -2878,48 +2823,140 @@
     // =====================================================================
     // NETWORK PAGE
     // =====================================================================
-    /* Show or hide the static-IP fieldset based on the radio selection. */
-    function applyIpModeUI() {
-      var staticMode = document.getElementById('net-ip-mode-static').checked;
-      document.getElementById('net-static-fields').style.display = staticMode ? '' : 'none';
-      var badge = document.getElementById('net-ip-badge');
-      badge.textContent = staticMode ? 'Static IP' : 'DHCP';
-      badge.className   = 'badge ' + (staticMode ? 'badge-accent' : 'badge-neutral');
+    /* Multi-network state. Loaded from /api/network into s_net_list and
+     * round-tripped on save. Each entry: { ssid, static_ip:{ip,mask,gw},
+     * _new_pw (only set if operator typed a new password) }. */
+    var s_net_list = [];
+    var g_scan_target_idx = -1;   /* row index the scan modal will fill */
+
+    function escapeHtml(s) {
+      return String(s).replace(/[&<>"']/g, function (c) {
+        return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
+      });
+    }
+
+    function markNetDirty() {
+      document.getElementById('net-sta-save').disabled = false;
+    }
+
+    function snapshotNetListFromDOM() {
+      var rows = document.querySelectorAll('.net-row');
+      rows.forEach(function (row) {
+        var idx = parseInt(row.dataset.idx, 10);
+        var n   = s_net_list[idx]; if (!n) return;
+        n.ssid = row.querySelector('.net-ssid').value;
+        var pw = row.querySelector('.net-pw').value;
+        if (pw) n._new_pw = pw;
+        var isStatic = row.querySelector('.net-static-toggle').checked;
+        if (isStatic) {
+          n.static_ip = {
+            ip:   row.querySelector('.net-ip').value,
+            mask: row.querySelector('.net-mask').value,
+            gw:   row.querySelector('.net-gw').value
+          };
+        } else {
+          n.static_ip = {};
+        }
+      });
+    }
+
+    function renderNetList() {
+      var c = document.getElementById('net-list');
+      if (!s_net_list.length) {
+        c.innerHTML = '<div style="padding:1rem; color:var(--text-muted); border:1px dashed var(--border); border-radius:var(--radius-md);">No networks configured — click <strong>+ Add network</strong> below.</div>';
+        return;
+      }
+      var html = '';
+      s_net_list.forEach(function (n, idx) {
+        var sip = n.static_ip || {};
+        var isStatic = !!(sip.ip || sip.mask || sip.gw);
+        var pri = (idx === 0) ? '#1 preferred' : ('#' + (idx + 1));
+        html += '<div class="net-row" data-idx="' + idx + '" style="border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; margin-bottom:0.75rem;">'
+              + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">'
+              + '<span class="badge ' + (idx===0?'badge-accent':'badge-neutral') + '">' + pri + '</span>'
+              + '<div style="display:flex; gap:0.25rem;">'
+              + (idx > 0                       ? '<button class="btn btn-ghost btn-sm net-up" type="button" title="Move up">↑</button>'   : '')
+              + (idx < s_net_list.length - 1   ? '<button class="btn btn-ghost btn-sm net-down" type="button" title="Move down">↓</button>' : '')
+              + '<button class="btn btn-ghost btn-sm text-danger net-del" type="button" title="Remove">×</button>'
+              + '</div></div>'
+              + '<div class="grid grid-cols-2">'
+              +   '<div class="form-group"><label class="form-label">SSID</label>'
+              +     '<div style="display:flex; gap:0.5rem;">'
+              +       '<input class="input net-ssid" type="text" placeholder="Network name" value="' + escapeHtml(n.ssid || '') + '" style="flex:1; min-width:0;">'
+              +       '<button class="btn btn-secondary btn-md net-scan" type="button" title="Scan">Scan</button>'
+              +     '</div>'
+              +   '</div>'
+              +   '<div class="form-group"><label class="form-label">Password</label>'
+              +     '<input class="input net-pw" type="password" autocomplete="new-password" placeholder="' + (n.ssid ? 'Leave empty to keep current' : 'Enter password') + '">'
+              +   '</div>'
+              + '</div>'
+              + '<div class="form-group" style="margin-top:0.25rem;">'
+              +   '<label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">'
+              +     '<input type="checkbox" class="net-static-toggle" ' + (isStatic?'checked':'') + '> Use static IP on this network'
+              +   '</label>'
+              + '</div>'
+              + '<div class="net-static-block" style="display:' + (isStatic?'':'none') + ';">'
+              +   '<div class="grid grid-cols-2">'
+              +     '<div class="form-group"><label class="form-label">IP address</label><input class="input mono net-ip"   type="text" placeholder="192.168.1.50"  value="' + escapeHtml(sip.ip   || '') + '"></div>'
+              +     '<div class="form-group"><label class="form-label">Subnet mask</label><input class="input mono net-mask" type="text" placeholder="255.255.255.0" value="' + escapeHtml(sip.mask || '') + '"></div>'
+              +   '</div>'
+              +   '<div class="grid grid-cols-2">'
+              +     '<div class="form-group"><label class="form-label">Gateway</label>    <input class="input mono net-gw"   type="text" placeholder="192.168.1.1"   value="' + escapeHtml(sip.gw   || '') + '"></div>'
+              +   '</div>'
+              + '</div>'
+              + '</div>';
+      });
+      c.innerHTML = html;
+
+      /* Wire the freshly-rendered row buttons. */
+      document.querySelectorAll('.net-row').forEach(function (row) {
+        var idx = parseInt(row.dataset.idx, 10);
+        row.querySelectorAll('input').forEach(function (el) {
+          el.addEventListener('input',  markNetDirty);
+          el.addEventListener('change', markNetDirty);
+        });
+        var up   = row.querySelector('.net-up');
+        var down = row.querySelector('.net-down');
+        if (up)   up.addEventListener('click',   function () { snapshotNetListFromDOM(); var t = s_net_list[idx]; s_net_list[idx] = s_net_list[idx-1]; s_net_list[idx-1] = t; renderNetList(); markNetDirty(); });
+        if (down) down.addEventListener('click', function () { snapshotNetListFromDOM(); var t = s_net_list[idx]; s_net_list[idx] = s_net_list[idx+1]; s_net_list[idx+1] = t; renderNetList(); markNetDirty(); });
+        row.querySelector('.net-del').addEventListener('click', function () {
+          snapshotNetListFromDOM();
+          s_net_list.splice(idx, 1);
+          renderNetList();
+          markNetDirty();
+        });
+        row.querySelector('.net-static-toggle').addEventListener('change', function () {
+          row.querySelector('.net-static-block').style.display = this.checked ? '' : 'none';
+          markNetDirty();
+        });
+        row.querySelector('.net-scan').addEventListener('click', function () {
+          g_scan_target_idx = idx;
+          document.getElementById('scanModal').classList.add('open');
+          refreshScan();
+        });
+      });
     }
 
     function loadNetwork() {
       apiFetch('/api/network')
         .then(function (r) { return r.json(); })
         .then(function (d) {
-          var sta = (d && d.sta) || {};
-          document.getElementById('net-sta-ssid').value     = sta.ssid     || '';
-          document.getElementById('net-sta-pw').value       = '';
-          document.getElementById('net-hostname').value     = sta.hostname || '';
+          s_net_list = (d.networks || []).slice();
+          s_net_list.forEach(function (n) { if (!n.static_ip) n.static_ip = {}; });
+          renderNetList();
+          document.getElementById('net-hostname').value     = d.hostname || '';
           document.getElementById('net-sta-save').disabled  = true;
 
-          /* Static IP block — if any field is non-empty in NVS, we're in
-           * static mode. Empty = DHCP. */
-          var sIp = (sta.static_ip) || {};
-          var hasStatic = !!(sIp.ip || sIp.mask || sIp.gw);
-          document.getElementById('net-ip-mode-static').checked = hasStatic;
-          document.getElementById('net-ip-mode-dhcp').checked   = !hasStatic;
-          document.getElementById('net-ip').value   = sIp.ip   || '';
-          document.getElementById('net-mask').value = sIp.mask || '';
-          document.getElementById('net-gw').value   = sIp.gw   || '';
-          applyIpModeUI();
-          document.getElementById('net-ip-save').disabled = true;
-
           var ap = (d && d.ap) || {};
-          document.getElementById('net-ap-ssid').value     = ap.ssid || '';
-          document.getElementById('net-ap-pw').value       = '';
+          document.getElementById('net-ap-ssid').value      = ap.ssid || '';
+          document.getElementById('net-ap-pw').value        = '';
           if (typeof ap.channel === 'number' && ap.channel >= 1 && ap.channel <= 13) {
             document.getElementById('net-ap-channel').value = String(ap.channel);
           }
-          document.getElementById('net-ap-save').disabled = true;
+          document.getElementById('net-ap-save').disabled   = true;
         }).catch(function () {});
 
-      /* The "currently connected" line uses /api/status — same source the
-       * Status page hero uses, so the values agree. */
+      /* "Currently connected" + AP client count from /api/status. */
       apiFetch('/api/status')
         .then(function (r) { return r.json(); })
         .then(function (d) {
@@ -2947,16 +2984,21 @@
         }).catch(function () {});
     }
 
-    /* Reload + dirty-track + save handlers. */
+    /* Top-level network-list buttons. */
     document.getElementById('net-sta-reload').addEventListener('click', loadNetwork);
-    ['net-sta-ssid', 'net-sta-pw', 'net-hostname'].forEach(function (id) {
-      document.getElementById(id).addEventListener('input', function () {
-        document.getElementById('net-sta-save').disabled = false;
-      });
+    document.getElementById('net-hostname').addEventListener('input', markNetDirty);
+    document.getElementById('net-add-btn').addEventListener('click', function () {
+      if (s_net_list.length >= 5) {
+        showToast('error', 'List full', 'Max 5 networks. Remove one first.', 4000);
+        return;
+      }
+      snapshotNetListFromDOM();
+      s_net_list.push({ ssid: '', static_ip: {} });
+      renderNetList();
+      markNetDirty();
     });
-    /* Shared submit helper for the STA / AP / static-IP cards. Each
-     * card collects its own body subset and the helper handles the
-     * POST, toast feedback and reboot prompt. */
+
+    /* Shared save helper used by the network list + AP card. */
     function saveNetwork(btn, body) {
       btn.disabled = true;
       btn.textContent = 'Saving…';
@@ -2965,10 +3007,7 @@
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify(body)
       })
-        .then(function (r) {
-          if (!r.ok) throw new Error('HTTP ' + r.status);
-          return r.json();
-        })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function (resp) {
           btn.textContent = 'Save';
           showToast('success', 'Saved', 'Network settings written to NVS.', 4000);
@@ -2985,13 +3024,24 @@
         });
     }
 
+    /* Save the whole network list. */
     document.getElementById('net-sta-save').addEventListener('click', function () {
-      var ssid     = document.getElementById('net-sta-ssid').value.trim();
-      var pw       = document.getElementById('net-sta-pw').value;
-      var hostname = document.getElementById('net-hostname').value.trim();
-      if (!ssid) { showToast('error', 'SSID required', 'Enter an upstream SSID first.', 5000); return; }
-      var body = { sta: { ssid: ssid, hostname: hostname } };
-      if (pw) body.sta.password = pw;   /* omit-to-keep semantics */
+      snapshotNetListFromDOM();
+      var nets = s_net_list.map(function (n) {
+        var e = { ssid: (n.ssid || '').trim() };
+        if (n._new_pw) e.password = n._new_pw;
+        var sip = n.static_ip || {};
+        e.static_ip = {};
+        if (sip.ip)   e.static_ip.ip   = (sip.ip   || '').trim();
+        if (sip.mask) e.static_ip.mask = (sip.mask || '').trim();
+        if (sip.gw)   e.static_ip.gw   = (sip.gw   || '').trim();
+        return e;
+      }).filter(function (e) { return e.ssid.length > 0; });
+      if (!nets.length) {
+        showToast('error', 'No networks', 'Add at least one network with an SSID.', 5000);
+        return;
+      }
+      var body = { networks: nets, hostname: document.getElementById('net-hostname').value.trim() };
       saveNetwork(this, body);
     });
 
@@ -3037,8 +3087,12 @@
           body.innerHTML = html;
           body.querySelectorAll('.scan-row').forEach(function (row) {
             row.addEventListener('click', function () {
-              document.getElementById('net-sta-ssid').value = this.dataset.ssid;
-              document.getElementById('net-sta-save').disabled = false;
+              if (g_scan_target_idx >= 0 && g_scan_target_idx < s_net_list.length) {
+                snapshotNetListFromDOM();
+                s_net_list[g_scan_target_idx].ssid = this.dataset.ssid;
+                renderNetList();
+                markNetDirty();
+              }
               document.getElementById('scanModal').classList.remove('open');
             });
           });
@@ -3047,59 +3101,14 @@
           body.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--danger);">Scan failed.</div>';
         });
     }
-    document.getElementById('net-sta-scan').addEventListener('click', function () {
-      document.getElementById('scanModal').classList.add('open');
-      refreshScan();
-    });
+    /* Scan modal — opened per network row via its own Scan button.
+     * Cancel/refresh/backdrop-click stay shared. */
     document.getElementById('scan-cancel').addEventListener('click', function () {
       document.getElementById('scanModal').classList.remove('open');
     });
     document.getElementById('scan-refresh').addEventListener('click', refreshScan);
     document.getElementById('scanModal').addEventListener('click', function (e) {
       if (e.target === this) this.classList.remove('open');
-    });
-
-    /* Static IP — dirty-track + save. Mode toggle is also dirty-tracking. */
-    ['net-ip-mode-dhcp', 'net-ip-mode-static'].forEach(function (id) {
-      document.getElementById(id).addEventListener('change', function () {
-        applyIpModeUI();
-        document.getElementById('net-ip-save').disabled = false;
-      });
-    });
-    ['net-ip', 'net-mask', 'net-gw'].forEach(function (id) {
-      document.getElementById(id).addEventListener('input', function () {
-        document.getElementById('net-ip-save').disabled = false;
-      });
-    });
-    document.getElementById('net-ip-reload').addEventListener('click', loadNetwork);
-    document.getElementById('net-ip-save').addEventListener('click', function () {
-      var staticMode = document.getElementById('net-ip-mode-static').checked;
-      var body = { static_ip: {} };
-      if (staticMode) {
-        var ip   = document.getElementById('net-ip').value.trim();
-        var mask = document.getElementById('net-mask').value.trim();
-        var gw   = document.getElementById('net-gw').value.trim();
-        if (!ip || !mask || !gw) {
-          showToast('error', 'Missing fields', 'IP, mask and gateway are all required for static mode.', 5000);
-          return;
-        }
-        /* Light validation — full IPv4 syntax check happens server-side
-         * when the runtime tries to apply the values. */
-        var dotted = /^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/;
-        if (!dotted.test(ip) || !dotted.test(mask) || !dotted.test(gw)) {
-          showToast('error', 'Bad format', 'Use dotted-quad IPv4 (e.g. 192.168.1.50).', 5000);
-          return;
-        }
-        body.static_ip.ip = ip;
-        body.static_ip.mask = mask;
-        body.static_ip.gw = gw;
-      } else {
-        /* DHCP — explicitly clear all three NVS keys. */
-        body.static_ip.ip = '';
-        body.static_ip.mask = '';
-        body.static_ip.gw = '';
-      }
-      saveNetwork(this, body);
     });
 
     /* AP — same dirty-track + save pattern. */
