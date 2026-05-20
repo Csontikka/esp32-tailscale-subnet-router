@@ -26,6 +26,7 @@
 #include "pcap_capture.h"
 #include "wifi_networks.h"
 #include "dhcp_reservations.h"
+#include "dhcps_ext.h"
 #include "telemetry.h"
 #include "log_capture.h"
 #include "web_password.h"
@@ -1071,6 +1072,116 @@ static const httpd_uri_t uri_dhcp_reservations_save = {
     .user_ctx = NULL,
 };
 
+/* GET /api/dhcp/leases — { clients:[{mac,ip,hostname,name,rssi,reserved}...],
+ *                          leases :[{mac,ip,hostname,lease_remaining}...] }
+ *
+ * `clients` is the current AP station list, joined with the active-lease
+ * table for IP + hostname, then overlaid with the reservation name when
+ * one exists for that MAC.
+ *
+ * `leases` is the raw active-lease snapshot — a station that has fallen
+ * off the air still appears here until its lease expires. */
+
+#define DHCP_LEASES_MAX_REPORT 16
+
+static esp_err_t dhcp_leases_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    /* Pull both views first so we can cross-reference them in one pass. */
+    dhcp_lease_info_t leases[DHCP_LEASES_MAX_REPORT];
+    int lease_count = dhcps_get_active_leases(leases, DHCP_LEASES_MAX_REPORT);
+
+    wifi_sta_list_t sta_list;
+    memset(&sta_list, 0, sizeof sta_list);
+    esp_wifi_ap_get_sta_list(&sta_list);
+
+    cJSON *root         = cJSON_CreateObject();
+    cJSON *clients_arr  = cJSON_CreateArray();
+    cJSON *leases_arr   = cJSON_CreateArray();
+    if (!root || !clients_arr || !leases_arr) {
+        cJSON_Delete(root); cJSON_Delete(clients_arr); cJSON_Delete(leases_arr);
+        httpd_resp_send_500(req); return ESP_FAIL;
+    }
+
+    /* Connected stations — for each, find its lease and reservation. */
+    for (int i = 0; i < sta_list.num; i++) {
+        wifi_sta_info_t *sta = &sta_list.sta[i];
+
+        char mac_str[18];
+        snprintf(mac_str, sizeof mac_str, "%02x:%02x:%02x:%02x:%02x:%02x",
+                 sta->mac[0], sta->mac[1], sta->mac[2],
+                 sta->mac[3], sta->mac[4], sta->mac[5]);
+
+        const char *hostname = "";
+        uint32_t    ip_nbo   = 0;
+        for (int j = 0; j < lease_count; j++) {
+            if (memcmp(leases[j].mac, sta->mac, 6) == 0) {
+                hostname = leases[j].hostname;
+                ip_nbo   = leases[j].ip;
+                break;
+            }
+        }
+
+        const char *res_name = dhcp_reservations_lookup_name_by_mac(sta->mac);
+        bool reserved        = dhcp_reservations_lookup(sta->mac) != 0;
+
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "mac", mac_str);
+        if (ip_nbo) {
+            ip4_addr_t a = { .addr = ip_nbo };
+            char ip_str[16];
+            snprintf(ip_str, sizeof ip_str, IPSTR, IP2STR(&a));
+            cJSON_AddStringToObject(e, "ip", ip_str);
+        } else {
+            cJSON_AddStringToObject(e, "ip", "");
+        }
+        cJSON_AddStringToObject(e, "hostname", hostname);
+        cJSON_AddStringToObject(e, "name",     res_name ? res_name : "");
+        cJSON_AddNumberToObject(e, "rssi",     sta->rssi);
+        cJSON_AddBoolToObject  (e, "reserved", reserved);
+        cJSON_AddItemToArray(clients_arr, e);
+    }
+
+    /* Raw lease snapshot. */
+    for (int j = 0; j < lease_count; j++) {
+        char mac_str[18];
+        snprintf(mac_str, sizeof mac_str, "%02x:%02x:%02x:%02x:%02x:%02x",
+                 leases[j].mac[0], leases[j].mac[1], leases[j].mac[2],
+                 leases[j].mac[3], leases[j].mac[4], leases[j].mac[5]);
+
+        ip4_addr_t a = { .addr = leases[j].ip };
+        char ip_str[16];
+        snprintf(ip_str, sizeof ip_str, IPSTR, IP2STR(&a));
+
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "mac",      mac_str);
+        cJSON_AddStringToObject(e, "ip",       ip_str);
+        cJSON_AddStringToObject(e, "hostname", leases[j].hostname);
+        cJSON_AddNumberToObject(e, "lease_remaining", leases[j].lease_timer);
+        cJSON_AddItemToArray(leases_arr, e);
+    }
+
+    cJSON_AddItemToObject(root, "clients", clients_arr);
+    cJSON_AddItemToObject(root, "leases",  leases_arr);
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static const httpd_uri_t uri_dhcp_leases = {
+    .uri      = "/api/dhcp/leases",
+    .method   = HTTP_GET,
+    .handler  = dhcp_leases_handler,
+    .user_ctx = NULL,
+};
+
 /* Format a host-byte-order IPv4 as "a.b.c.d" — used for the accepted-
  * routes table where host order is the documented storage. */
 static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size)
@@ -1739,6 +1850,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_firewall_clear);
     httpd_register_uri_handler(server, &uri_dhcp_reservations);
     httpd_register_uri_handler(server, &uri_dhcp_reservations_save);
+    httpd_register_uri_handler(server, &uri_dhcp_leases);
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_tailscale_save);
     httpd_register_uri_handler(server, &uri_system);
