@@ -1,0 +1,146 @@
+SYSTEM PAGE
+===========
+
+LAYOUT CONCEPT
+──────────────
+Single-column, card-per-section layout on all breakpoints.
+Sections ordered by risk: safe config changes first, destructive actions last.
+Danger zone card always at the bottom, separated by extra spacing.
+
+DESKTOP + MOBILE (same structure, form grids collapse on mobile)
+─────────────────────────────────────────────────────────────────
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  System                                                                  │
+│  Password · firmware · backup/restore · telemetry · danger zone          │
+├───────────────────────────────────────────────────────────────────────── │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ WEB INTERFACE PASSWORD                                           │   │
+│  │ ─────────────────────────────────────────────────────────────── │   │
+│  │  [grid-cols-2 on desktop, 1-col on mobile]                       │   │
+│  │  Current Password           New Password                         │   │
+│  │  [••••••••••  👁]           [••••••••••  👁]                    │   │
+│  │                             Confirm New Password                 │   │
+│  │                             [••••••••••  👁]                    │   │
+│  │ ─── footer ────────────────────────────────────────────────── │   │
+│  │  Leave new password empty to disable protection.  [Save]        │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ SESSION                                                          │   │
+│  │ ─────────────────────────────────────────────────────────────── │   │
+│  │  Auth timeout   [30 minutes  ▾]                                  │   │
+│  │  Options: 5 min / 30 min / 4 hours / 24 hours / Never           │   │
+│  │ ─── footer ─────────────────────────────────────────────────── │   │
+│  │                                               [Save]            │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ FIRMWARE                                                         │   │
+│  │ ─────────────────────────────────────────────────────────────── │   │
+│  │  Running partition    ota_0                                      │   │
+│  │  Version              v0.9.1-beta                                │   │
+│  │  Build date           2026-05-19 14:23:08                        │   │
+│  │  ESP-IDF              v5.3.1                                     │   │
+│  │                                                                   │   │
+│  │  Upload new firmware (.bin)                                      │   │
+│  │  ┌─────────────────────────────────────────────────────────┐    │   │
+│  │  │  Choose .bin file...                             [Browse]│    │   │
+│  │  └─────────────────────────────────────────────────────────┘    │   │
+│  │  [Upload Firmware]                                               │   │
+│  │                                                                   │   │
+│  │  ████████████████████░░░░░  80%  (progress bar during upload)   │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ CONFIG BACKUP / RESTORE                                          │   │
+│  │ ─────────────────────────────────────────────────────────────── │   │
+│  │  Export config   [Download JSON]  → GET /api/config-export       │   │
+│  │                                                                   │   │
+│  │  Import config                                                   │   │
+│  │  ┌──────────────────────────────────────────────┐               │   │
+│  │  │  Choose .json file...                [Browse]│               │   │
+│  │  └──────────────────────────────────────────────┘               │   │
+│  │  [Upload Config]  (reboots after import)                         │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ TIME ZONE                                                        │   │
+│  │ ─────────────────────────────────────────────────────────────── │   │
+│  │  Preset     [Europe/Budapest (CET-1CEST,M3.5.0,M10.5.0/3)  ▾]  │   │
+│  │  POSIX TZ   [CET-1CEST,M3.5.0,M10.5.0/3                   ]   │   │
+│  │  (Preset selection auto-fills POSIX TZ field; editable directly) │   │
+│  │ ─── footer ─────────────────────────────────────────────────── │   │
+│  │                                               [Save]            │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ ANONYMOUS TELEMETRY                                              │   │
+│  │ ─────────────────────────────────────────────────────────────── │   │
+│  │  [info text: what is/isn't sent — collapsed behind [▶ Details]] │   │
+│  │  Service   ◉ Enabled   ○ Disabled                                │   │
+│  │  Status    [OK]  (badge-success / badge-warning / badge-danger)  │   │
+│  │  Device ID  a3f7c2b1  (mono, truncated SHA-256 hash)             │   │
+│  │  Boot       47    Flash   12                                     │   │
+│  │ ─── footer ─────────────────────────────────────────────────── │   │
+│  │                                               [Save]            │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ REMOTE CONSOLE                                                   │   │
+│  │ ─────────────────────────────────────────────────────────────── │   │
+│  │  Service   ◉ Enabled   ○ Disabled                                │   │
+│  │  Status    [Connected: 10.55.7.2:50241]  [Kick]                  │   │
+│  │  Port       2323                                                  │   │
+│  │  Bind       ☑ AP   ☑ STA   ☐ Tailscale                          │   │
+│  │  ⚠ Tailscale binding = plain TCP inside encrypted tunnel.        │   │
+│  │    Ensure your Tailnet ACLs restrict access to port 2323.        │   │
+│  │  Idle timeout  300 sec  (0 = never)                              │   │
+│  │ ─── footer ─────────────────────────────────────────────────── │   │
+│  │                                               [Save]            │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ╔══════════════════════════════════════════════════════════════════╗   │
+│  ║ ⚠ DANGER ZONE              .card .card-stripe-danger            ║   │
+│  ║ ─────────────────────────────────────────────────────────────── ║   │
+│  ║  Factory Reset                                                   ║   │
+│  ║  Erases all NVS settings. Reboots into default state.           ║   │
+│  ║                                          [Factory Reset]        ║   │
+│  ║                                                                   ║   │
+│  ║  Clear Web Password                                              ║   │
+│  ║  Removes password protection from web interface immediately.    ║   │
+│  ║                                       [Clear Password]          ║   │
+│  ║                                                                   ║   │
+│  ║  Disable Web UI                                                  ║   │
+│  ║  Re-enable via serial: web_ui enable                            ║   │
+│  ║                                          [Disable Web UI]       ║   │
+│  ╚══════════════════════════════════════════════════════════════════╝   │
+│                                                                          │
+└──────────────────────────────────────────────────────────────────────────┘
+
+DANGER ZONE INTERACTION:
+  All 3 actions → showConfirm() modal before any request is sent.
+  Modal title = action name, body = consequence text, [Cancel] / [Confirm] buttons.
+  Confirm button is .btn-danger (red).
+  After confirm: spinner shown in place of button, POST to /api/factory-reset etc.
+  On success: toast notification + (for factory-reset) redirect countdown.
+
+OTA UPLOAD FLOW:
+  1. User selects .bin file → filename shown in label span.
+  2. [Upload Firmware] → XHR POST /api/ota-upload with progress bar.
+  3. Progress bar fills to 100%.
+  4. On success: card body replaced by reboot countdown + redirect to /.
+  5. On error: inline error message below bar, bar resets.
+  No page navigation during upload (warn user if they try to leave).
+
+FILE INPUT STYLING:
+  Native <input type="file"> hidden.
+  Styled <label> wraps it: .bg-input border border-dashed border-border.
+  Hover state: border-accent, background: accent-muted.
+  Selected filename shown in <span> inside label.
+
+MOBILE ADJUSTMENTS:
+  All grid-cols-2 form groups collapse to 1 column.
+  Danger zone buttons are full-width.
+  Password fields: show/hide toggle essential for mobile usability.

@@ -1,0 +1,107 @@
+TOOLS PAGE
+==========
+
+LAYOUT CONCEPT
+──────────────
+Two-column on desktop (tools on left, output on right).
+Single-column on mobile (tool controls above output).
+Each tool is a collapsible card section — only one output pane visible at a time
+(tab-like within the page, or accordion). Accordion preferred — lower JS weight.
+
+DESKTOP (1024px+)
+─────────────────
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  Tools                                                                   │
+│  WiFi scan · ping · traceroute · PCAP · live log · diagnostics           │
+├───────────────────────────────────────────────────────────────────────── │
+│                                                                          │
+│  ┌────────────────────────────┐  ┌──────────────────────────────────┐   │
+│  │ WIFI SCAN              [▶] │  │  OUTPUT — WiFi Scan              │   │
+│  │ ─────────────────────────  │  │  ─────────────────────────────── │   │
+│  │ [Scan Now]  Auto-refresh   │  │  Found 8 networks                │   │
+│  │ ☐ (every 15s)              │  │  ─────────────────────────────── │   │
+│  │                             │  │  SSID        SIG  CH  SECURITY  │   │
+│  │ PING               [▼]     │  │  HomeNet_5G  ▂▄▆█  6  WPA2      │   │
+│  │ ─────────────────────────  │  │  Guest_2.4   ▂▄▆_  1  WPA2      │   │
+│  │ Target                     │  │  ALDI-IoT    ▂▄__  11 WPA2      │   │
+│  │ [8.8.8.8             ]     │  │  [Connect]  on each row          │   │
+│  │ Count [4   ]               │  │  (links to Network page STA form)│   │
+│  │ [Run Ping]                 │  │                                  │   │
+│  │                             │  │                                  │   │
+│  │ TRACEROUTE         [▼]     │  │                                  │   │
+│  │ ─────────────────────────  │  │                                  │   │
+│  │ Target                     │  │                                  │   │
+│  │ [1.1.1.1             ]     │  │                                  │   │
+│  │ [Run Traceroute]           │  │                                  │   │
+│  │                             │  │                                  │   │
+│  │ PCAP CAPTURE       [▼]     │  │                                  │   │
+│  │ ─────────────────────────  │  │                                  │   │
+│  │ Mode                       │  │                                  │   │
+│  │ [Off                  ▾]   │  │                                  │   │
+│  │ Snaplen [1500]  [Save]     │  │                                  │   │
+│  │ Status  No client          │  │                                  │   │
+│  │ Stats   0 cap / 0 dropped  │  │                                  │   │
+│  │ nc 192.168.4.1 19000 |     │  │                                  │   │
+│  │   wireshark -k -i -        │  │                                  │   │
+│  │                             │  │                                  │   │
+│  │ LIVE LOG           [▼]     │  │                                  │   │
+│  │ ─────────────────────────  │  │                                  │   │
+│  │ [Fetch Log]  Auto [☐ 5s]  │  │                                  │   │
+│  │                             │  │                                  │   │
+│  │ PRE-CRASH LOG      [▼]     │  │                                  │   │
+│  │ ─────────────────────────  │  │                                  │   │
+│  │ (shown only when present)  │  │                                  │   │
+│  │ From RTC-NOINIT ring buf   │  │                                  │   │
+│  │                             │  │                                  │   │
+│  │ DIAGNOSTICS        [▼]     │  │                                  │   │
+│  │ ─────────────────────────  │  │                                  │   │
+│  │ [Run Diag]                 │  │                                  │   │
+│  │ lwIP netif list            │  │                                  │   │
+│  │ Route lookup test          │  │                                  │   │
+│  │ Peer info dump             │  │                                  │   │
+│  └────────────────────────────┘  └──────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────┘
+
+Left column: .card per tool, accordion-style (▶ = collapsed, ▼ = expanded).
+Right column: sticky output pane — updates when a tool runs.
+Active tool section highlighted with .card-stripe-accent.
+
+MOBILE (≤639px)
+───────────────
+
+Single column. Each tool card:
+  Header row: [Tool Name]  [▶/▼ toggle]
+  Expanded body: controls
+  Output: appears inline below controls, inside same card
+  Monospace pre block with max-height + overflow-y:auto (max 300px)
+
+OUTPUT PANE:
+  .card with monospace pre/code block
+  Background: var(--bg-page) (darker than card, like a terminal)
+  Text: var(--fg-secondary)
+  Max-height: 400px on desktop, 300px on mobile
+  overflow-y: auto with thin scrollbar
+
+PING / TRACEROUTE OUTPUT EXAMPLE:
+  PING 8.8.8.8 (8.8.8.8): 56 data bytes
+  64 bytes from 8.8.8.8: icmp_seq=0 ttl=118 time=12.4 ms
+  64 bytes from 8.8.8.8: icmp_seq=1 ttl=118 time=11.9 ms
+  --- 8.8.8.8 ping statistics ---
+  4 packets transmitted, 4 received, 0% packet loss
+  (streamed via SSE or polled via /api/ping-result?id=xxx)
+
+LIVE LOG:
+  Fetches last 16KB from /api/log
+  ESP_LOG lines colored by level:
+    [E] → text-danger
+    [W] → text-warning
+    [I] → text-secondary (default)
+    [D] → text-muted
+  Auto-scroll to bottom toggle (on by default)
+
+WIFI SCAN TABLE SIGNAL BARS:
+  Same .signal-bars component as Status page.
+  4 bars sized proportionally to dBm.
+  [Connect] button navigates to Network page with STA SSID pre-filled
+  (sets a sessionStorage key that the Network page reads on load).

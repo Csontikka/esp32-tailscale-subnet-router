@@ -1,0 +1,98 @@
+NETWORK PAGE — BOTH BREAKPOINTS
+=================================
+
+DESKTOP (1024px+)
+─────────────────
+
+┌──────────────────────────────────────────────────────────────────────────┐
+│  Network                                                                 │
+│  WiFi, IP, DHCP reservations, port forwarding                            │
+├───────────────────────────────────────────────────────────────────────── │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ UPLINK (STA) WIFI                                                │   │
+│  │ ─────────────────────────────────────────────────────────────── │   │
+│  │  [grid-cols-2]                                                   │   │
+│  │  SSID                         Password                           │   │
+│  │  [HomeNetwork_5G      ]        [••••••••••  👁]                  │   │
+│  │                                                                   │   │
+│  │  Band                                                            │   │
+│  │  [Auto (strongest signal)  ▾]                                    │   │
+│  │                                                                   │   │
+│  │  ── WPA2 Enterprise (optional, collapsed by default) ──          │   │
+│  │  [▶ Show enterprise options]                                      │   │
+│  │                                                                   │   │
+│  │ ─── sticky form footer ─────────────────────────────────────── │   │
+│  │  Changes require a reboot.          [Cancel] [Save & Reboot]    │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ ACCESS POINT                                                     │   │
+│  │ ─────────────────────────────────────────────────────────────── │   │
+│  │  [grid-cols-2]                                                   │   │
+│  │  AP SSID                      AP Password                        │   │
+│  │  [ESP32_IoT_AP         ]       [••••••••    👁]                  │   │
+│  │                                                                   │   │
+│  │  AP IP Address                DNS Server                         │   │
+│  │  [192.168.4.1          ]       [empty = upstream DNS    ]        │   │
+│  │                                                                   │   │
+│  │  Channel     Security          Options                           │   │
+│  │  [6      ]   [WPA2/WPA3 ▾]   ☐ Open (no password)  ☐ Hidden    │   │
+│  │                                                                   │   │
+│  │ ─── sticky form footer ─────────────────────────────────────── │   │
+│  │  Changes require a reboot.          [Cancel] [Save & Reboot]    │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ UPLINK IP                                                        │   │
+│  │ ─────────────────────────────────────────────────────────────── │   │
+│  │  Mode    ◉ DHCP   ○ Static                                       │   │
+│  │                                                                   │   │
+│  │  [Static fields shown only when Static selected]                 │   │
+│  │  Static IP          Subnet Mask          Gateway                 │   │
+│  │  [             ]    [255.255.255.0 ]      [              ]       │   │
+│  │                                                                   │   │
+│  │ ─── sticky form footer ─────────────────────────────────────── │   │
+│  │  Changes require a reboot.          [Cancel] [Save & Reboot]    │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ DHCP RESERVATIONS                               [+ Add]          │   │
+│  │ ─────────────────────────────────────────────────────────────── │   │
+│  │  NAME          MAC                  RESERVED IP         ACTION  │   │
+│  │  pi-sensor     DC:A6:32:11:AA:BB    192.168.4.10        [Del]   │   │
+│  │  shelly-plug   84:0D:8E:CC:12:34    192.168.4.20        [Del]   │   │
+│  │  [Add row: inline form on + Add click]                           │   │
+│  │  Max 16 entries.                                                 │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+│                                                                          │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │ PORT FORWARDING                                 [+ Add]          │   │
+│  │ ─────────────────────────────────────────────────────────────── │   │
+│  │  PROTO  EXT PORT  DEST IP          DEST PORT  ACTION            │   │
+│  │  TCP    8080       192.168.4.10     80         [Del]             │   │
+│  │  UDP    5353       192.168.4.1      5353       [Del]             │   │
+│  │  Max 32 entries.                                                 │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────┘
+
+
+MOBILE (≤639px)
+───────────────
+
+All form grids collapse to 1 column.
+Label-above-input layout throughout (form-group flex-col).
+Tables get horizontal scroll via .table-wrap overflow-x:auto.
+Sticky form footer remains at bottom of viewport.
+"+ Add" button is full-width on mobile for DHCP/port tables.
+
+INTERACTION NOTES:
+- WPA2 Enterprise fields hidden by default behind a disclosure toggle.
+  Clicking "Show enterprise options" expands inline (no separate page).
+- Static IP fields disabled+greyed when DHCP radio is active.
+  JS toggles disabled attribute + opacity on radio change.
+- DHCP "Add" opens an inline row with MAC / IP / Name inputs + Save / Cancel.
+  No modal needed — inline append pattern keeps context.
+- Port forward "Add" same inline-row pattern.
+- Deleting a reservation/mapping: direct DELETE request, row fades out
+  with CSS opacity transition then is removed from DOM.
