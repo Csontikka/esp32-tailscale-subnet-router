@@ -2492,17 +2492,22 @@
     function resetReasonDisplay(reason) {
       /* Map from esp_reset_reason()-style strings to badge style + label. */
       var map = {
-        'POWERON':   { cls: 'badge-neutral',  label: 'Power-on' },
-        'EXT':       { cls: 'badge-neutral',  label: 'External pin' },
-        'SW':        { cls: 'badge-neutral',  label: 'SW Reset' },
-        'PANIC':     { cls: 'badge-danger',   label: 'PANIC' },
-        'INT_WDT':   { cls: 'badge-warning',  label: 'Interrupt WDT' },
-        'TASK_WDT':  { cls: 'badge-warning',  label: 'Task WDT' },
-        'WDT':       { cls: 'badge-warning',  label: 'Watchdog' },
-        'DEEPSLEEP': { cls: 'badge-neutral',  label: 'Deep sleep' },
-        'BROWNOUT':  { cls: 'badge-warning',  label: 'Brownout' },
-        'SDIO':      { cls: 'badge-neutral',  label: 'SDIO wake' },
-        'UNKNOWN':   { cls: 'badge-neutral',  label: 'Unknown' }
+        'POWERON':    { cls: 'badge-neutral',  label: 'Power-on' },
+        'EXT':        { cls: 'badge-neutral',  label: 'External pin' },
+        'SW':         { cls: 'badge-neutral',  label: 'SW Reset' },
+        'PANIC':      { cls: 'badge-danger',   label: 'PANIC' },
+        'INT_WDT':    { cls: 'badge-warning',  label: 'Interrupt WDT' },
+        'TASK_WDT':   { cls: 'badge-warning',  label: 'Task WDT' },
+        'WDT':        { cls: 'badge-warning',  label: 'Watchdog' },
+        'DEEPSLEEP':  { cls: 'badge-neutral',  label: 'Deep sleep' },
+        'BROWNOUT':   { cls: 'badge-warning',  label: 'Brownout' },
+        'SDIO':       { cls: 'badge-neutral',  label: 'SDIO wake' },
+        'USB':        { cls: 'badge-neutral',  label: 'USB reset' },
+        'JTAG':       { cls: 'badge-neutral',  label: 'JTAG reset' },
+        'EFUSE':      { cls: 'badge-warning',  label: 'eFuse error' },
+        'PWR_GLITCH': { cls: 'badge-warning',  label: 'Power glitch' },
+        'CPU_LOCKUP': { cls: 'badge-danger',   label: 'CPU lockup' },
+        'UNKNOWN':    { cls: 'badge-neutral',  label: 'Unknown' }
       };
       return map[reason] || { cls: 'badge-neutral', label: reason || '—' };
     }

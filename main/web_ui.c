@@ -77,21 +77,39 @@ static esp_err_t require_auth(httpd_req_t *req)
     return ESP_FAIL;
 }
 
-/* Translate esp_reset_reason() into the short string the SPA renders. */
+/* Translate esp_reset_reason() into the short string the SPA renders.
+ * IDF 5.5 added USB / JTAG / EFUSE / PWR_GLITCH / CPU_LOCKUP — without
+ * those cases the switch fell through to UNKNOWN every time the S3
+ * came back from a clean esp_restart(), since IDF reports it as one
+ * of the new codes rather than the legacy ESP_RST_SW. */
 static const char *reset_reason_str(void)
 {
-    switch (esp_reset_reason()) {
-        case ESP_RST_POWERON:  return "POWERON";
-        case ESP_RST_EXT:      return "EXT";
-        case ESP_RST_SW:       return "SW";
-        case ESP_RST_PANIC:    return "PANIC";
-        case ESP_RST_INT_WDT:  return "INT_WDT";
-        case ESP_RST_TASK_WDT: return "TASK_WDT";
-        case ESP_RST_WDT:      return "WDT";
-        case ESP_RST_DEEPSLEEP:return "DEEPSLEEP";
-        case ESP_RST_BROWNOUT: return "BROWNOUT";
-        case ESP_RST_SDIO:     return "SDIO";
-        default:               return "UNKNOWN";
+    /* ESP_RST_* are enum values (not #defines), so the previous #ifdef
+     * guards never compiled the new IDF 5.x cases in — that's why the
+     * S3 always reported UNKNOWN after a clean esp_restart(). With the
+     * guards gone, the chip's actual cause shows through. */
+    esp_reset_reason_t r = esp_reset_reason();
+    static char unk[16];
+    switch (r) {
+        case ESP_RST_POWERON:    return "POWERON";
+        case ESP_RST_EXT:        return "EXT";
+        case ESP_RST_SW:         return "SW";
+        case ESP_RST_PANIC:      return "PANIC";
+        case ESP_RST_INT_WDT:    return "INT_WDT";
+        case ESP_RST_TASK_WDT:   return "TASK_WDT";
+        case ESP_RST_WDT:        return "WDT";
+        case ESP_RST_DEEPSLEEP:  return "DEEPSLEEP";
+        case ESP_RST_BROWNOUT:   return "BROWNOUT";
+        case ESP_RST_SDIO:       return "SDIO";
+        case ESP_RST_USB:        return "USB";
+        case ESP_RST_JTAG:       return "JTAG";
+        case ESP_RST_EFUSE:      return "EFUSE";
+        case ESP_RST_PWR_GLITCH: return "PWR_GLITCH";
+        case ESP_RST_CPU_LOCKUP: return "CPU_LOCKUP";
+        default:
+            /* Surface the raw enum code so future IDF additions show up. */
+            snprintf(unk, sizeof unk, "RAW_%d", (int)r);
+            return unk;
     }
 }
 
