@@ -161,6 +161,20 @@ static esp_err_t status_handler(httpd_req_t *req)
         char buf[16];
         ip4_to_str(ip.ip.addr, buf, sizeof buf);
         cJSON_AddStringToObject(sta, "ip", buf);
+        ip4_to_str(ip.gw.addr, buf, sizeof buf);
+        cJSON_AddStringToObject(sta, "gateway", buf);
+    }
+    /* DNS — main resolver only; secondary is rarely set on this device.
+     * Reading via esp_netif_get_dns_info so we don't have to track
+     * whether DHCP or our static override last touched the slot. */
+    if (sta_if) {
+        esp_netif_dns_info_t dns_info = {0};
+        if (esp_netif_get_dns_info(sta_if, ESP_NETIF_DNS_MAIN, &dns_info) == ESP_OK
+            && dns_info.ip.u_addr.ip4.addr) {
+            char buf[16];
+            ip4_to_str(dns_info.ip.u_addr.ip4.addr, buf, sizeof buf);
+            cJSON_AddStringToObject(sta, "dns", buf);
+        }
     }
     cJSON_AddNumberToObject(sta, "bytes_in",  (double)netif_hooks_get_sta_bytes_in());
     cJSON_AddNumberToObject(sta, "bytes_out", (double)netif_hooks_get_sta_bytes_out());
