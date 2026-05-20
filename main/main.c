@@ -44,6 +44,7 @@
 #include "remote_console.h"
 #include "nvs_params.h"
 #include "pcap_capture.h"
+#include "wifi_networks.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -108,6 +109,58 @@ int connect_count = 0;
 /* Forward declarations — definitions land further down in this file. */
 static void softap_set_dns_addr(esp_netif_t *esp_netif_ap, esp_netif_t *esp_netif_sta);
 
+/* Multi-network rotation state. Index 0 is preferred; on association
+ * failure we tick s_net_retries and, after WIFI_RETRIES_PER_NETWORK,
+ * roll forward to the next configured network. */
+#define WIFI_RETRIES_PER_NETWORK 5
+static int s_net_current = 0;
+static int s_net_retries = 0;
+
+/* Push a network entry (SSID/password + per-network static IP) into the
+ * live esp_wifi + esp_netif config. Called once from wifi_init_sta()
+ * with idx=0, then again from the STA_DISCONNECTED handler when the
+ * rotation advances. */
+static void wifi_apply_network(int idx)
+{
+    wifi_network_t n;
+    if (!wifi_networks_get(idx, &n)) {
+        ESP_LOGW("WiFi Sta", "wifi_apply_network: no network at idx %d", idx);
+        return;
+    }
+
+    wifi_config_t cfg = {
+        .sta = {
+            .scan_method        = WIFI_ALL_CHANNEL_SCAN,
+            .failure_retry_cnt  = EXAMPLE_ESP_MAXIMUM_RETRY,
+            .threshold.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD,
+            .sae_pwe_h2e        = WPA3_SAE_PWE_BOTH,
+        },
+    };
+    strlcpy((char *)cfg.sta.ssid,     n.ssid,   sizeof cfg.sta.ssid);
+    strlcpy((char *)cfg.sta.password, n.passwd, sizeof cfg.sta.password);
+    esp_wifi_set_config(WIFI_IF_STA, &cfg);
+
+    /* Apply per-network static IP. All three fields must be non-empty
+     * for static mode; otherwise we revert to DHCP for this network. */
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (sta) {
+        esp_netif_dhcpc_stop(sta);
+        if (n.static_ip[0] && n.subnet[0] && n.gateway[0]) {
+            esp_netif_ip_info_t ip_info = {0};
+            ip4_addr_t a;
+            if (ip4addr_aton(n.static_ip, &a)) ip_info.ip.addr      = a.addr;
+            if (ip4addr_aton(n.subnet,    &a)) ip_info.netmask.addr = a.addr;
+            if (ip4addr_aton(n.gateway,   &a)) ip_info.gw.addr      = a.addr;
+            esp_netif_set_ip_info(sta, &ip_info);
+            ESP_LOGI("WiFi Sta", "wifi[%d] '%s' static %s/%s via %s",
+                     idx, n.ssid, n.static_ip, n.subnet, n.gateway);
+        } else {
+            esp_netif_dhcpc_start(sta);
+            ESP_LOGI("WiFi Sta", "wifi[%d] '%s' DHCP", idx, n.ssid);
+        }
+    }
+}
+
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
@@ -126,14 +179,26 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(TAG_STA, "Station started");
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         ap_connect = 0;
-        /* STA dropped (or failed to associate) — keep trying so the
-         * uplink comes back as soon as the upstream AP is reachable.
-         * Without this the example just gives up on first failure. */
+        /* Multi-network rotation: stay on the current SSID for
+         * WIFI_RETRIES_PER_NETWORK association attempts, then roll
+         * forward to the next configured slot. Single-network setups
+         * see no behaviour change because count<=1 skips the rotation. */
+        int total = wifi_networks_count();
+        if (total > 1) {
+            s_net_retries++;
+            if (s_net_retries >= WIFI_RETRIES_PER_NETWORK) {
+                s_net_current = (s_net_current + 1) % total;
+                s_net_retries = 0;
+                ESP_LOGW(TAG_STA, "rotating to network[%d] of %d", s_net_current, total);
+                wifi_apply_network(s_net_current);
+            }
+        }
         esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
         ESP_LOGI(TAG_STA, "Got IP:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
+        s_net_retries = 0;   /* successful association — clear the rotation counter */
         ap_connect = 1;
         /* Auto-spawn the Tailscale (microlink) connect task once STA has
          * an IP — same trigger point as the old repo. The task is
@@ -195,36 +260,51 @@ esp_netif_t *wifi_init_softap(void)
     return esp_netif_ap;
 }
 
-/* Initialize wifi station. NVS-prefer: read 'ssid' / 'passwd' from the
- * project namespace and fall back to the Kconfig defaults only when
- * neither key is set. This is what makes the Network-tab POST actually
- * take effect on the next reboot. */
+/* Initialize wifi station. Reads the network list (wifi_networks_init
+ * migrated the legacy single-network keys into slot 0 on first boot),
+ * applies slot 0, and falls back to the Kconfig defaults only when the
+ * list is completely empty (genuinely fresh device). */
 esp_netif_t *wifi_init_sta(void)
 {
     esp_netif_t *esp_netif_sta = esp_netif_create_default_wifi_sta();
 
-    char *nvs_ssid = nvs_param_get_str("ssid");
-    char *nvs_pw   = nvs_param_get_str("passwd");
-    const char *use_ssid = (nvs_ssid && nvs_ssid[0]) ? nvs_ssid : EXAMPLE_ESP_WIFI_STA_SSID;
-    const char *use_pw   = (nvs_pw   && nvs_pw[0])   ? nvs_pw   : EXAMPLE_ESP_WIFI_STA_PASSWD;
+    if (wifi_networks_count() > 0) {
+        ESP_LOGI(TAG_STA, "wifi_init_sta: %d network(s) configured, starting with slot 0",
+                 wifi_networks_count());
+        s_net_current = 0;
+        s_net_retries = 0;
+        wifi_apply_network(0);
+    } else {
+        /* Our list is empty — but esp_wifi keeps its own NVS-backed
+         * config under partition phy/nvs.net80211. Read it back and, if
+         * a real SSID is already cached there, migrate it into our list
+         * so we own it going forward. Otherwise fall through to the
+         * Kconfig default. Never blindly overwrite a working config. */
+        wifi_config_t cur;
+        if (esp_wifi_get_config(WIFI_IF_STA, &cur) == ESP_OK && cur.sta.ssid[0]) {
+            wifi_network_t n = {0};
+            strlcpy(n.ssid,   (const char *)cur.sta.ssid,     sizeof n.ssid);
+            strlcpy(n.passwd, (const char *)cur.sta.password, sizeof n.passwd);
+            n.valid = 1;
+            wifi_networks_set_all(&n, 1);
+            ESP_LOGI(TAG_STA, "wifi_init_sta: migrated esp_wifi cached SSID '%s' into slot 0",
+                     n.ssid);
+        } else {
+            wifi_config_t cfg = {
+                .sta = {
+                    .scan_method        = WIFI_ALL_CHANNEL_SCAN,
+                    .failure_retry_cnt  = EXAMPLE_ESP_MAXIMUM_RETRY,
+                    .threshold.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD,
+                    .sae_pwe_h2e        = WPA3_SAE_PWE_BOTH,
+                },
+            };
+            strlcpy((char *)cfg.sta.ssid,     EXAMPLE_ESP_WIFI_STA_SSID,     sizeof cfg.sta.ssid);
+            strlcpy((char *)cfg.sta.password, EXAMPLE_ESP_WIFI_STA_PASSWD, sizeof cfg.sta.password);
+            ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &cfg));
+            ESP_LOGI(TAG_STA, "wifi_init_sta: no networks saved, using Kconfig default");
+        }
+    }
 
-    wifi_config_t wifi_sta_config = {
-        .sta = {
-            .scan_method = WIFI_ALL_CHANNEL_SCAN,
-            .failure_retry_cnt = EXAMPLE_ESP_MAXIMUM_RETRY,
-            .threshold.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD,
-            .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,
-        },
-    };
-    strlcpy((char*)wifi_sta_config.sta.ssid,     use_ssid, sizeof wifi_sta_config.sta.ssid);
-    strlcpy((char*)wifi_sta_config.sta.password, use_pw,   sizeof wifi_sta_config.sta.password);
-
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_sta_config));
-    ESP_LOGI(TAG_STA, "wifi_init_sta: using SSID '%s' (from %s)",
-             use_ssid, (nvs_ssid && nvs_ssid[0]) ? "NVS" : "Kconfig");
-
-    free(nvs_ssid);
-    free(nvs_pw);
     return esp_netif_sta;
 }
 
@@ -347,6 +427,12 @@ void app_main(void)
      * drop denied traffic. Must run AFTER esp_wifi_start so the netifs
      * exist and have their default input/linkoutput function pointers. */
     netif_hooks_init();
+
+    /* Load the multi-network table BEFORE wifi_init_sta runs — that
+     * function reads it to set up the initial association. The init
+     * also migrates the legacy single-network NVS keys into slot 0
+     * on first boot. */
+    wifi_networks_init();
 
     /* PCAP-over-TCP capture (listens on port 19000 for Wireshark).
      * Mode is OFF on boot; operator enables it from /api/tools/pcap. */
