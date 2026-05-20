@@ -30,6 +30,7 @@ idf_component_register(SRCS "main.c"
                                   lwip microlink
                                   esp_http_client esp-tls mbedtls
                                   esp_http_server json esp_app_format
+                                  acl
                     INCLUDE_DIRS ".")
 
 # Phase 1.9k: wrap ip_napt_forward to skip NAPT for tailnet CGNAT
