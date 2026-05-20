@@ -1262,6 +1262,22 @@ static const httpd_uri_t uri_auth_change_password = {
     .uri = "/api/auth/change_password", .method = HTTP_POST, .handler = auth_change_password_handler,
 };
 
+static esp_err_t auth_clear_password_handler(httpd_req_t *req)
+{
+    /* Auth is required: only an already-logged-in operator can do this.
+     * Once cleared the device reverts to first-boot wizard mode. */
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    set_web_password_hashed("");
+    session_clear();
+    httpd_resp_set_hdr(req, "Set-Cookie", "ts_session=; Path=/; HttpOnly; Max-Age=0");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static const httpd_uri_t uri_auth_clear_password = {
+    .uri = "/api/auth/clear_password", .method = HTTP_POST, .handler = auth_clear_password_handler,
+};
+
 void web_ui_init(void)
 {
     static httpd_handle_t server = NULL;
@@ -1297,5 +1313,6 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_auth_logout);
     httpd_register_uri_handler(server, &uri_auth_setup);
     httpd_register_uri_handler(server, &uri_auth_change_password);
+    httpd_register_uri_handler(server, &uri_auth_clear_password);
     ESP_LOGI(TAG, "web UI listening on :%d", config.server_port);
 }

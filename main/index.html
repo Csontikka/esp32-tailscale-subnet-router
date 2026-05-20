@@ -1948,45 +1948,189 @@
     </div>
 
     <!-- =================================================================
-         SYSTEM PAGE (stub)
+         SYSTEM PAGE
          =============================================================== -->
     <div class="page-section" id="page-system">
       <div class="page-header">
         <div class="page-header-left">
           <h1 class="page-title">System</h1>
-          <p class="page-subtitle">Password, firmware OTA, backup/restore, factory reset</p>
+          <p class="page-subtitle">Firmware info, telemetry, syslog, password, danger zone</p>
+        </div>
+        <div class="page-header-actions">
+          <button class="btn btn-secondary btn-md" id="sys-reload">Refresh</button>
         </div>
       </div>
-      <div class="stub-page">
-        <div class="stub-notice">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          System page — prototype stub. Full page: web password, auth timeout, OTA firmware upload, config backup/restore, telemetry toggle, remote console, danger zone.
-        </div>
 
-        <!-- Danger zone sample -->
-        <div class="card card-stripe-danger mt-4">
-          <div class="card-header">
-            <div class="card-header-left">
-              <span class="card-title text-danger">⚠ Danger Zone</span>
+      <!-- ===== Device info ===== -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Device</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="stat-row"><span class="stat-label">Firmware version</span><span class="stat-value mono" id="sys-version">—</span></div>
+          <div class="stat-row"><span class="stat-label">Built</span>            <span class="stat-value mono" id="sys-build">—</span></div>
+          <div class="stat-row"><span class="stat-label">ESP-IDF</span>          <span class="stat-value mono" id="sys-idf">—</span></div>
+          <div class="stat-row"><span class="stat-label">Device hash</span>      <span class="stat-value mono" id="sys-dh">—</span></div>
+        </div>
+      </div>
+
+      <!-- ===== Telemetry ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Anonymous telemetry</span>
+          </div>
+          <span class="badge badge-neutral" id="sys-tlm-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">Sends a SHA-256 device hash + boot/flash counters + firmware version every 24 h. Never sends SSIDs, IP addresses, MAC addresses or peer information.</p>
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="sys-tlm-enabled"> Enable telemetry
+            </label>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="sys-tlm-url">Worker URL</label>
+              <input class="input mono" type="text" id="sys-tlm-url" placeholder="https://…/v1/event">
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="sys-tlm-key">X-Tlm-Key (write-only)</label>
+              <input class="input mono" type="password" id="sys-tlm-key" autocomplete="new-password" placeholder="Leave empty to keep current">
             </div>
           </div>
-          <div class="card-body">
-            <div class="flex items-center justify-between gap-3 mb-4">
-              <div>
-                <div class="text-secondary" style="font-size: var(--text-sm); font-weight: var(--weight-medium);">Factory Reset</div>
-                <div class="text-muted" style="font-size: var(--text-xs); margin-top: 2px;">Erases all NVS settings. The device will reboot into default state.</div>
-              </div>
-              <button class="btn btn-danger btn-sm" onclick="confirmFactory()">Factory Reset</button>
+          <div class="stat-row"><span class="stat-label">Boot count</span> <span class="stat-value mono" id="sys-tlm-boots">—</span></div>
+          <div class="stat-row"><span class="stat-label">Flash count</span><span class="stat-value mono" id="sys-tlm-flashes">—</span></div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Applies immediately on save.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-primary btn-md" id="sys-tlm-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Syslog ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Remote syslog (UDP)</span>
+          </div>
+          <span class="badge badge-neutral" id="sys-syslog-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">When enabled, every ESP_LOG line is mirrored to a syslog server via UDP. Useful for tailing the device from rsyslog / papertrail / a Wireshark filter.</p>
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="sys-syslog-enabled"> Enable syslog forwarder
+            </label>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="sys-syslog-server">Server (IPv4 or hostname)</label>
+              <input class="input mono" type="text" id="sys-syslog-server" placeholder="192.168.1.10">
             </div>
-            <div class="flex items-center justify-between gap-3">
-              <div>
-                <div class="text-secondary" style="font-size: var(--text-sm); font-weight: var(--weight-medium);">Disable Web UI</div>
-                <div class="text-muted" style="font-size: var(--text-xs); margin-top: 2px;">Can only be re-enabled via serial console.</div>
-              </div>
-              <button class="btn btn-danger btn-sm" onclick="confirmDisableUI()">Disable</button>
+            <div class="form-group">
+              <label class="form-label" for="sys-syslog-port">Port</label>
+              <input class="input" type="number" id="sys-syslog-port" min="1" max="65535" value="514">
             </div>
+          </div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Applies immediately on save.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-primary btn-md" id="sys-syslog-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Change password ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Change admin password</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <form id="sys-pw-form" autocomplete="on">
+            <input type="text" name="username" autocomplete="username" value="admin" hidden>
+            <div class="grid grid-cols-2">
+              <div class="form-group">
+                <label class="form-label" for="sys-pw-old">Current password</label>
+                <input class="input" type="password" id="sys-pw-old" name="current-password" autocomplete="current-password">
+              </div>
+            </div>
+            <div class="grid grid-cols-2">
+              <div class="form-group">
+                <label class="form-label" for="sys-pw-new">New password</label>
+                <input class="input" type="password" id="sys-pw-new" name="new-password" autocomplete="new-password" minlength="8">
+                <span class="form-hint">Min 8 chars, with a lowercase, uppercase, digit, and special character.</span>
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="sys-pw-new2">Confirm new password</label>
+                <input class="input" type="password" id="sys-pw-new2" name="confirm-password" autocomplete="new-password" minlength="8">
+              </div>
+            </div>
+            <div class="auth-error" id="sys-pw-error" style="display:none;"></div>
+            <div style="text-align:right;">
+              <button class="btn btn-primary btn-md" type="submit">Change password</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <!-- ===== Support ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Support the project</span>
+          </div>
+        </div>
+        <div class="card-body" style="text-align:center;">
+          <p style="margin:0 0 0.75rem 0; color:var(--text-secondary);">If this firmware saved you a router purchase or an afternoon of debugging, you can chip in:</p>
+          <a href="https://www.buymeacoffee.com/csontikka" target="_blank" rel="noopener" class="btn btn-secondary btn-md" style="text-decoration:none;">
+            ☕ Buy me a coffee
+          </a>
+        </div>
+      </div>
+
+      <!-- ===== Danger Zone ===== -->
+      <div class="card card-stripe-danger mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title text-danger">⚠ Danger Zone</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:0.6rem 0; border-bottom:1px solid var(--border);">
+            <div>
+              <div style="font-weight:500;">Reboot device</div>
+              <div class="text-muted" style="font-size:0.85rem;">Clean restart — applies pending NVS changes and re-establishes Tailscale.</div>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="sys-restart-btn">Reboot</button>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:0.6rem 0; border-bottom:1px solid var(--border);">
+            <div>
+              <div style="font-weight:500; color:var(--text-muted);">Disable web interface</div>
+              <div class="text-muted" style="font-size:0.85rem;">Not yet implemented — would require serial console to re-enable.</div>
+            </div>
+            <button class="btn btn-danger btn-sm" disabled>Disable</button>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:0.6rem 0; border-bottom:1px solid var(--border);">
+            <div>
+              <div style="font-weight:500;">Clear admin password</div>
+              <div class="text-muted" style="font-size:0.85rem;">Removes the web password and logs you out. The first-boot wizard will appear on next visit. Anyone on the network can reach the device until a new password is set.</div>
+            </div>
+            <button class="btn btn-danger btn-sm" id="sys-clear-pw-btn">Clear</button>
+          </div>
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:0.6rem 0;">
+            <div>
+              <div style="font-weight:500;">Factory reset</div>
+              <div class="text-muted" style="font-size:0.85rem;">Erases ALL NVS settings — WiFi, Tailscale, ACL rules, password, telemetry. Reboots into the first-boot wizard. This cannot be undone.</div>
+            </div>
+            <button class="btn btn-danger btn-sm" id="sys-factory-btn">Factory reset</button>
           </div>
         </div>
       </div>
@@ -2069,6 +2213,7 @@
           if (page === 'network'   && typeof loadNetwork   === 'function') loadNetwork();
           if (page === 'tailscale' && typeof loadTailscale === 'function') loadTailscale();
           if (page === 'firewall'  && typeof loadFirewall  === 'function') loadFirewall();
+          if (page === 'system'    && typeof loadSystem    === 'function') loadSystem();
           /* Tools tab is fully lazy — every card runs only on its own button. */
         });
       });
@@ -3304,6 +3449,161 @@
           body.innerHTML = '<div style="padding:1rem; color:var(--danger);">Scan failed.</div>';
         })
         .finally(function () { btn.disabled = false; btn.textContent = 'Run scan'; });
+    });
+
+    // =====================================================================
+    // SYSTEM PAGE
+    // =====================================================================
+    function loadSystem() {
+      apiFetch('/api/system')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          document.getElementById('sys-version').textContent = d.version || '—';
+          document.getElementById('sys-build').textContent   = (d.build_date || '') + ' ' + (d.build_time || '');
+          document.getElementById('sys-idf').textContent     = d.idf_ver || '—';
+
+          var tlm = d.telemetry || {};
+          document.getElementById('sys-dh').textContent       = tlm.device_hash || '—';
+          document.getElementById('sys-tlm-enabled').checked  = !!tlm.enabled;
+          document.getElementById('sys-tlm-url').value        = tlm.url || '';
+          document.getElementById('sys-tlm-key').value        = '';
+          document.getElementById('sys-tlm-boots').textContent   = (tlm.boot_count  != null) ? tlm.boot_count  : '—';
+          document.getElementById('sys-tlm-flashes').textContent = (tlm.flash_count != null) ? tlm.flash_count : '—';
+          var tlmBadge = document.getElementById('sys-tlm-badge');
+          tlmBadge.className   = tlm.enabled ? 'badge badge-success' : 'badge badge-neutral';
+          tlmBadge.textContent = tlm.enabled ? 'On' : 'Off';
+          document.getElementById('sys-tlm-save').disabled = true;
+
+          var sl = d.syslog || {};
+          document.getElementById('sys-syslog-enabled').checked = !!sl.enabled;
+          document.getElementById('sys-syslog-server').value    = sl.server || '';
+          document.getElementById('sys-syslog-port').value      = sl.port   || 514;
+          var slBadge = document.getElementById('sys-syslog-badge');
+          slBadge.className   = sl.enabled ? 'badge badge-success' : 'badge badge-neutral';
+          slBadge.textContent = sl.enabled ? 'On' : 'Off';
+          document.getElementById('sys-syslog-save').disabled = true;
+        }).catch(function () {});
+    }
+
+    ['sys-tlm-enabled', 'sys-tlm-url', 'sys-tlm-key'].forEach(function (id) {
+      var el = document.getElementById(id);
+      el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', function () {
+        document.getElementById('sys-tlm-save').disabled = false;
+      });
+    });
+    document.getElementById('sys-tlm-save').addEventListener('click', function () {
+      var body = {
+        telemetry: {
+          enabled: document.getElementById('sys-tlm-enabled').checked,
+          url:     document.getElementById('sys-tlm-url').value.trim()
+        }
+      };
+      var key = document.getElementById('sys-tlm-key').value;
+      if (key) body.telemetry.key = key;   /* omit-to-keep */
+      var btn = this;
+      btn.disabled = true;
+      apiFetch('/api/system', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body)
+      })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function () { showToast('success', 'Telemetry saved', '', 3000); loadSystem(); })
+        .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
+    });
+
+    ['sys-syslog-enabled', 'sys-syslog-server', 'sys-syslog-port'].forEach(function (id) {
+      var el = document.getElementById(id);
+      el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', function () {
+        document.getElementById('sys-syslog-save').disabled = false;
+      });
+    });
+    document.getElementById('sys-syslog-save').addEventListener('click', function () {
+      var enabled = document.getElementById('sys-syslog-enabled').checked;
+      var body = { syslog: { enabled: enabled } };
+      if (enabled) {
+        body.syslog.server = document.getElementById('sys-syslog-server').value.trim();
+        body.syslog.port   = parseInt(document.getElementById('sys-syslog-port').value, 10) || 514;
+        if (!body.syslog.server) {
+          showToast('error', 'Server required', 'Enter a syslog server hostname or IP.', 5000);
+          return;
+        }
+      }
+      var btn = this;
+      btn.disabled = true;
+      apiFetch('/api/system', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body)
+      })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function () { showToast('success', 'Syslog saved', '', 3000); loadSystem(); })
+        .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
+    });
+
+    document.getElementById('sys-reload').addEventListener('click', loadSystem);
+
+    /* Change password form. */
+    document.getElementById('sys-pw-form').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var err = document.getElementById('sys-pw-error');
+      err.style.display = 'none';
+      err.textContent   = '';
+      var oldPw  = document.getElementById('sys-pw-old').value;
+      var newPw  = document.getElementById('sys-pw-new').value;
+      var newPw2 = document.getElementById('sys-pw-new2').value;
+      var policy = checkPasswordPolicy(newPw);
+      if (policy)               { err.textContent = policy; err.style.display = ''; return; }
+      if (newPw !== newPw2)     { err.textContent = 'New passwords do not match.'; err.style.display = ''; return; }
+      if (!oldPw)               { err.textContent = 'Current password required.'; err.style.display = ''; return; }
+      apiFetch('/api/auth/change_password', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ old_password: oldPw, new_password: newPw })
+      })
+        .then(function (r) {
+          if (r.status === 401) { err.textContent = 'Current password is wrong.'; err.style.display = ''; throw new Error('wrong'); }
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function () {
+          showToast('success', 'Password changed', 'Sign in again with the new password.', 5000);
+          setTimeout(function () { showAuthOverlay('login'); }, 1500);
+        })
+        .catch(function (e) {
+          if (e.message !== 'wrong') { err.textContent = 'Change failed.'; err.style.display = ''; }
+        });
+    });
+
+    /* Danger Zone wiring. */
+    document.getElementById('sys-restart-btn').addEventListener('click', function () {
+      showConfirm('Reboot device?',
+                  'The device will restart and become reachable again in ~10 s.',
+                  function () {
+                    apiFetch('/api/system/restart', { method: 'POST' });
+                    showToast('info', 'Rebooting…', 'Reconnect in a few seconds.', 7000);
+                  });
+    });
+    document.getElementById('sys-clear-pw-btn').addEventListener('click', function () {
+      showConfirm('Clear admin password?',
+                  'The admin password will be removed and you will be logged out. Anyone with network access can reach the device until a new password is set via the wizard.',
+                  function () {
+                    apiFetch('/api/auth/clear_password', { method: 'POST' })
+                      .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); })
+                      .then(function () {
+                        showToast('success', 'Password cleared', 'Reloading…', 2500);
+                        setTimeout(function () { window.location.reload(); }, 1500);
+                      })
+                      .catch(function () { showToast('error', 'Clear failed', '', 5000); });
+                  });
+    });
+    document.getElementById('sys-factory-btn').addEventListener('click', function () {
+      showConfirm('Factory reset?',
+                  'This will ERASE ALL settings — WiFi, Tailscale, ACL, telemetry, password. The device will reboot into the first-boot wizard. This cannot be undone.',
+                  function () {
+                    apiFetch('/api/system/factory_reset', { method: 'POST' });
+                    showToast('info', 'Factory reset triggered', 'Device is rebooting into the wizard.', 8000);
+                  });
     });
 
     document.getElementById('tool-log-refresh').addEventListener('click', function () {
