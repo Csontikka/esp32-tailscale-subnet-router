@@ -483,6 +483,128 @@ static const httpd_uri_t uri_firewall = {
     .user_ctx = NULL,
 };
 
+/* Helper: pull a uint8 ACL list index out of the JSON body. */
+static int parse_acl_index(const cJSON *body)
+{
+    const cJSON *idx = body ? cJSON_GetObjectItem(body, "acl") : NULL;
+    if (!cJSON_IsNumber(idx)) return -1;
+    int n = (int)idx->valuedouble;
+    if (n < 0 || n >= MAX_ACL_LISTS) return -1;
+    return n;
+}
+
+static esp_err_t firewall_add_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char body_buf[512];
+    if (recv_body(req, body_buf, sizeof body_buf, NULL) != ESP_OK) return ESP_FAIL;
+
+    cJSON *body = cJSON_Parse(body_buf);
+    int acl_no = parse_acl_index(body);
+    const cJSON *src_j   = body ? cJSON_GetObjectItem(body, "src")   : NULL;
+    const cJSON *dest_j  = body ? cJSON_GetObjectItem(body, "dest")  : NULL;
+    if (acl_no < 0 || !cJSON_IsString(src_j) || !cJSON_IsString(dest_j)) {
+        cJSON_Delete(body);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing acl/src/dest");
+        return ESP_FAIL;
+    }
+
+    uint32_t src, s_mask, dest, d_mask;
+    if (!acl_parse_ip(src_j->valuestring,  &src,  &s_mask) ||
+        !acl_parse_ip(dest_j->valuestring, &dest, &d_mask)) {
+        cJSON_Delete(body);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad src/dest CIDR");
+        return ESP_FAIL;
+    }
+
+    /* Optional fields default to "any". */
+    const cJSON *pr = cJSON_GetObjectItem(body, "proto");
+    const cJSON *sp = cJSON_GetObjectItem(body, "s_port");
+    const cJSON *dp = cJSON_GetObjectItem(body, "d_port");
+    const cJSON *ac = cJSON_GetObjectItem(body, "action");
+    const cJSON *mn = cJSON_GetObjectItem(body, "monitor");
+
+    uint8_t  proto  = cJSON_IsNumber(pr) ? (uint8_t) pr->valuedouble : 0;
+    uint16_t s_port = cJSON_IsNumber(sp) ? (uint16_t)sp->valuedouble : 0;
+    uint16_t d_port = cJSON_IsNumber(dp) ? (uint16_t)dp->valuedouble : 0;
+    uint8_t  allow  = cJSON_IsNumber(ac) ? (uint8_t) ac->valuedouble : ACL_ALLOW;
+    if (cJSON_IsTrue(mn)) allow |= ACL_MONITOR;
+
+    bool ok = acl_add((uint8_t)acl_no, src, s_mask, dest, d_mask,
+                      proto, s_port, d_port, allow);
+    cJSON_Delete(body);
+    if (!ok) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "list full");
+        return ESP_FAIL;
+    }
+    save_acl_rules();
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static esp_err_t firewall_delete_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char body_buf[128];
+    if (recv_body(req, body_buf, sizeof body_buf, NULL) != ESP_OK) return ESP_FAIL;
+
+    cJSON *body = cJSON_Parse(body_buf);
+    int acl_no = parse_acl_index(body);
+    const cJSON *rule_j = body ? cJSON_GetObjectItem(body, "index") : NULL;
+    if (acl_no < 0 || !cJSON_IsNumber(rule_j)) {
+        cJSON_Delete(body);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing acl/index");
+        return ESP_FAIL;
+    }
+    int rule_idx = (int)rule_j->valuedouble;
+    cJSON_Delete(body);
+
+    if (rule_idx < 0 || rule_idx >= MAX_ACL_ENTRIES
+        || !acl_delete((uint8_t)acl_no, (uint8_t)rule_idx)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid index");
+        return ESP_FAIL;
+    }
+    save_acl_rules();
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static esp_err_t firewall_clear_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char body_buf[128];
+    if (recv_body(req, body_buf, sizeof body_buf, NULL) != ESP_OK) return ESP_FAIL;
+
+    cJSON *body = cJSON_Parse(body_buf);
+    int acl_no = parse_acl_index(body);
+    cJSON_Delete(body);
+    if (acl_no < 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing acl");
+        return ESP_FAIL;
+    }
+
+    acl_clear((uint8_t)acl_no);
+    save_acl_rules();
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static const httpd_uri_t uri_firewall_add = {
+    .uri = "/api/firewall/add",    .method = HTTP_POST, .handler = firewall_add_handler,
+};
+static const httpd_uri_t uri_firewall_delete = {
+    .uri = "/api/firewall/delete", .method = HTTP_POST, .handler = firewall_delete_handler,
+};
+static const httpd_uri_t uri_firewall_clear = {
+    .uri = "/api/firewall/clear",  .method = HTTP_POST, .handler = firewall_clear_handler,
+};
+
 /* Format a host-byte-order IPv4 as "a.b.c.d" — used for the accepted-
  * routes table where host order is the documented storage. */
 static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size)
@@ -1039,6 +1161,9 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_network_scan);
     httpd_register_uri_handler(server, &uri_tools_route);
     httpd_register_uri_handler(server, &uri_firewall);
+    httpd_register_uri_handler(server, &uri_firewall_add);
+    httpd_register_uri_handler(server, &uri_firewall_delete);
+    httpd_register_uri_handler(server, &uri_firewall_clear);
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_tailscale_save);
     httpd_register_uri_handler(server, &uri_system);
