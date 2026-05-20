@@ -41,6 +41,7 @@
 #include "acl.h"
 #include "netif_hooks.h"
 #include "syslog_client.h"
+#include "remote_console.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -257,6 +258,11 @@ void app_main(void)
      * vprintf hook if previously enabled. Waits for STA IP via
      * syslog_notify_connected (wired below in the IP event handler). */
     syslog_init();
+
+    /* Remote TCP REPL on a configurable port (default 2323). Starts the
+     * listener only when previously enabled in NVS — disabled by default
+     * for security. Auth-gated by the shared web_password hash. */
+    remote_console_init();
 
     /* Initialize event group */
     s_wifi_event_group = xEventGroupCreate();
