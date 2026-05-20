@@ -17,6 +17,7 @@
 #include "lwip/ip4_addr.h"
 #include "web_ui.h"
 #include "tailscale_config.h"
+#include "nvs_params.h"
 
 /* Globals owned by main.c — link status flags rendered in /api/status. */
 extern int ap_connect;
@@ -124,6 +125,66 @@ static const httpd_uri_t uri_status = {
     .user_ctx = NULL,
 };
 
+/* Helper: read NVS string and attach to obj if non-empty. Frees the buffer. */
+static void add_nvs_string(cJSON *obj, const char *json_key, const char *nvs_key)
+{
+    char *s = nvs_param_get_str(nvs_key);
+    if (s) {
+        if (s[0]) cJSON_AddStringToObject(obj, json_key, s);
+        free(s);
+    }
+}
+
+static esp_err_t network_handler(httpd_req_t *req)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    /* STA — upstream WiFi credentials live in NVS but the password is
+     * intentionally never serialised. Static IP fields stay empty for
+     * the DHCP case. */
+    cJSON *sta = cJSON_CreateObject();
+    add_nvs_string(sta, "ssid",     "ssid");
+    add_nvs_string(sta, "hostname", "hostname");
+
+    cJSON *static_ip = cJSON_CreateObject();
+    add_nvs_string(static_ip, "ip",   "static_ip");
+    add_nvs_string(static_ip, "mask", "subnet");
+    add_nvs_string(static_ip, "gw",   "gateway");
+    cJSON_AddItemToObject(sta, "static_ip", static_ip);
+    cJSON_AddItemToObject(root, "sta", sta);
+
+    /* AP — same exclusion for the password. */
+    cJSON *ap = cJSON_CreateObject();
+    add_nvs_string(ap, "ssid", "ap_ssid");
+    int32_t channel = 0;
+    if (nvs_param_get_int("ap_channel", &channel) == ESP_OK && channel > 0) {
+        cJSON_AddNumberToObject(ap, "channel", channel);
+    }
+    cJSON_AddItemToObject(root, "ap", ap);
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static const httpd_uri_t uri_network = {
+    .uri      = "/api/network",
+    .method   = HTTP_GET,
+    .handler  = network_handler,
+    .user_ctx = NULL,
+};
+
 void web_ui_init(void)
 {
     static httpd_handle_t server = NULL;
@@ -140,5 +201,6 @@ void web_ui_init(void)
     }
     httpd_register_uri_handler(server, &uri_index);
     httpd_register_uri_handler(server, &uri_status);
+    httpd_register_uri_handler(server, &uri_network);
     ESP_LOGI(TAG, "web UI listening on :%d", config.server_port);
 }
