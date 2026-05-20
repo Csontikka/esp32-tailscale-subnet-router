@@ -1,0 +1,45 @@
+# Secrets - DO NOT COMMIT
+secrets/
+secrets.h
+secrets.yaml
+*.key
+*.pem
+.cf-token
+.cf-account
+.dev.vars
+
+# Build artifacts
+build/
+build_eth/
+.pio/
+.pio*
+managed_components/
+dependencies.lock
+sdkconfig
+sdkconfig.old
+sdkconfig.esp32*
+*.bin
+*.elf
+*.map
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+
+# Keep these
+!sdkconfig.defaults
+!sdkconfig.defaults.*
+
+# Local-only working artifacts
+backup/
+design-prototype/.draft/
