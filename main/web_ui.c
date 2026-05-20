@@ -1201,7 +1201,7 @@ void web_ui_init(void)
 
     httpd_config_t config   = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn     = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 16;
+    config.max_uri_handlers = 32;   /* we have 21 today + room to grow */
     config.stack_size       = 8192;
 
     if (httpd_start(&server, &config) != ESP_OK) {

@@ -42,6 +42,7 @@
 #include "netif_hooks.h"
 #include "syslog_client.h"
 #include "remote_console.h"
+#include "nvs_params.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -103,6 +104,9 @@ static EventGroupHandle_t s_wifi_event_group;
 int ap_connect   = 0;
 int connect_count = 0;
 
+/* Forward declarations — definitions land further down in this file. */
+static void softap_set_dns_addr(esp_netif_t *esp_netif_ap, esp_netif_t *esp_netif_sta);
+
 static void wifi_event_handler(void *arg, esp_event_base_t event_base,
                                int32_t event_id, void *event_data)
 {
@@ -121,6 +125,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(TAG_STA, "Station started");
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED) {
         ap_connect = 0;
+        /* STA dropped (or failed to associate) — keep trying so the
+         * uplink comes back as soon as the upstream AP is reachable.
+         * Without this the example just gives up on first failure. */
+        esp_wifi_connect();
     } else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP) {
         ip_event_got_ip_t *event = (ip_event_got_ip_t *) event_data;
         ESP_LOGI(TAG_STA, "Got IP:" IPSTR, IP2STR(&event->ip_info.ip));
@@ -137,65 +145,85 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
          * the network is up — no-op if syslog isn't enabled. */
         syslog_notify_connected();
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
+
+        /* Copy the upstream DNS into the AP-side DHCP options so AP
+         * clients can resolve names through us. Runs every time we
+         * (re-)acquire an STA IP — DNS may have changed on the new
+         * uplink, and DHCP server restart is idempotent. */
+        esp_netif_t *ap = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+        esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+        if (ap && sta) softap_set_dns_addr(ap, sta);
     }
 }
 
-/* Initialize soft AP */
+/* Initialize soft AP. NVS-prefer: 'ap_ssid' / 'ap_passwd' / 'ap_channel'
+ * from the project namespace, falling back to Kconfig only on first
+ * boot before the operator runs the setup wizard. */
 esp_netif_t *wifi_init_softap(void)
 {
     esp_netif_t *esp_netif_ap = esp_netif_create_default_wifi_ap();
 
+    char *nvs_ssid = nvs_param_get_str("ap_ssid");
+    char *nvs_pw   = nvs_param_get_str("ap_passwd");
+    const char *use_ssid = (nvs_ssid && nvs_ssid[0]) ? nvs_ssid : EXAMPLE_ESP_WIFI_AP_SSID;
+    const char *use_pw   = (nvs_pw   && nvs_pw[0])   ? nvs_pw   : EXAMPLE_ESP_WIFI_AP_PASSWD;
+    int32_t channel = EXAMPLE_ESP_WIFI_CHANNEL;
+    nvs_param_get_int("ap_channel", &channel);
+    if (channel < 1 || channel > 13) channel = EXAMPLE_ESP_WIFI_CHANNEL;
+
     wifi_config_t wifi_ap_config = {
         .ap = {
-            .ssid = EXAMPLE_ESP_WIFI_AP_SSID,
-            .ssid_len = strlen(EXAMPLE_ESP_WIFI_AP_SSID),
-            .channel = EXAMPLE_ESP_WIFI_CHANNEL,
-            .password = EXAMPLE_ESP_WIFI_AP_PASSWD,
+            .ssid_len = strlen(use_ssid),
+            .channel = (uint8_t)channel,
             .max_connection = EXAMPLE_MAX_STA_CONN,
             .authmode = WIFI_AUTH_WPA2_PSK,
-            .pmf_cfg = {
-                .required = false,
-            },
+            .pmf_cfg = { .required = false },
         },
     };
-
-    if (strlen(EXAMPLE_ESP_WIFI_AP_PASSWD) == 0) {
-        wifi_ap_config.ap.authmode = WIFI_AUTH_OPEN;
-    }
+    strlcpy((char*)wifi_ap_config.ap.ssid,     use_ssid, sizeof wifi_ap_config.ap.ssid);
+    strlcpy((char*)wifi_ap_config.ap.password, use_pw,   sizeof wifi_ap_config.ap.password);
+    if (use_pw[0] == '\0') wifi_ap_config.ap.authmode = WIFI_AUTH_OPEN;
 
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_AP, &wifi_ap_config));
+    ESP_LOGI(TAG_AP, "wifi_init_softap: SSID '%s' channel %d (from %s)",
+             use_ssid, (int)channel,
+             (nvs_ssid && nvs_ssid[0]) ? "NVS" : "Kconfig");
 
-    ESP_LOGI(TAG_AP, "wifi_init_softap finished. SSID:%s password:%s channel:%d",
-             EXAMPLE_ESP_WIFI_AP_SSID, EXAMPLE_ESP_WIFI_AP_PASSWD, EXAMPLE_ESP_WIFI_CHANNEL);
-
+    free(nvs_ssid);
+    free(nvs_pw);
     return esp_netif_ap;
 }
 
-/* Initialize wifi station */
+/* Initialize wifi station. NVS-prefer: read 'ssid' / 'passwd' from the
+ * project namespace and fall back to the Kconfig defaults only when
+ * neither key is set. This is what makes the Network-tab POST actually
+ * take effect on the next reboot. */
 esp_netif_t *wifi_init_sta(void)
 {
     esp_netif_t *esp_netif_sta = esp_netif_create_default_wifi_sta();
 
+    char *nvs_ssid = nvs_param_get_str("ssid");
+    char *nvs_pw   = nvs_param_get_str("passwd");
+    const char *use_ssid = (nvs_ssid && nvs_ssid[0]) ? nvs_ssid : EXAMPLE_ESP_WIFI_STA_SSID;
+    const char *use_pw   = (nvs_pw   && nvs_pw[0])   ? nvs_pw   : EXAMPLE_ESP_WIFI_STA_PASSWD;
+
     wifi_config_t wifi_sta_config = {
         .sta = {
-            .ssid = EXAMPLE_ESP_WIFI_STA_SSID,
-            .password = EXAMPLE_ESP_WIFI_STA_PASSWD,
             .scan_method = WIFI_ALL_CHANNEL_SCAN,
             .failure_retry_cnt = EXAMPLE_ESP_MAXIMUM_RETRY,
-            /* Authmode threshold resets to WPA2 as default if password matches WPA2 standards (password len => 8).
-             * If you want to connect the device to deprecated WEP/WPA networks, Please set the threshold value
-             * to WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK and set the password with length and format matching to
-            * WIFI_AUTH_WEP/WIFI_AUTH_WPA_PSK standards.
-             */
             .threshold.authmode = ESP_WIFI_SCAN_AUTH_MODE_THRESHOLD,
             .sae_pwe_h2e = WPA3_SAE_PWE_BOTH,
         },
     };
+    strlcpy((char*)wifi_sta_config.sta.ssid,     use_ssid, sizeof wifi_sta_config.sta.ssid);
+    strlcpy((char*)wifi_sta_config.sta.password, use_pw,   sizeof wifi_sta_config.sta.password);
 
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_sta_config) );
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wifi_sta_config));
+    ESP_LOGI(TAG_STA, "wifi_init_sta: using SSID '%s' (from %s)",
+             use_ssid, (nvs_ssid && nvs_ssid[0]) ? "NVS" : "Kconfig");
 
-    ESP_LOGI(TAG_STA, "wifi_init_sta finished.");
-
+    free(nvs_ssid);
+    free(nvs_pw);
     return esp_netif_sta;
 }
 
@@ -296,32 +324,16 @@ void app_main(void)
     /* Start WiFi */
     ESP_ERROR_CHECK(esp_wifi_start() );
 
-    /*
-     * Wait until either the connection is established (WIFI_CONNECTED_BIT) or
-     * connection failed for the maximum number of re-tries (WIFI_FAIL_BIT).
-     * The bits are set by event_handler() (see above)
-     */
-    EventBits_t bits = xEventGroupWaitBits(s_wifi_event_group,
-                                           WIFI_CONNECTED_BIT | WIFI_FAIL_BIT,
-                                           pdFALSE,
-                                           pdFALSE,
-                                           portMAX_DELAY);
+    /* Bring the rest of the router up immediately. Earlier this code
+     * blocked on xEventGroupWaitBits until the STA either connected or
+     * gave up — but the AP-side services (web UI, NAPT, ACL hooks)
+     * shouldn't depend on the uplink being up. The operator may need
+     * the web UI precisely to configure the STA. The DNS-to-AP copy
+     * has moved into the IP_EVENT_STA_GOT_IP handler so it still
+     * runs whenever the uplink (re-)acquires an address. */
 
-    /* xEventGroupWaitBits() returns the bits before the call returned,
-     * hence we can test which event actually happened. */
-    if (bits & WIFI_CONNECTED_BIT) {
-        ESP_LOGI(TAG_STA, "connected to ap SSID:%s password:%s",
-                 EXAMPLE_ESP_WIFI_STA_SSID, EXAMPLE_ESP_WIFI_STA_PASSWD);
-        softap_set_dns_addr(esp_netif_ap,esp_netif_sta);
-    } else if (bits & WIFI_FAIL_BIT) {
-        ESP_LOGI(TAG_STA, "Failed to connect to SSID:%s, password:%s",
-                 EXAMPLE_ESP_WIFI_STA_SSID, EXAMPLE_ESP_WIFI_STA_PASSWD);
-    } else {
-        ESP_LOGE(TAG_STA, "UNEXPECTED EVENT");
-        return;
-    }
-
-    /* Set sta as the default interface */
+    /* STA is still the preferred default route for outgoing traffic
+     * once it has an address; before that, the AP netif stays default. */
     esp_netif_set_default_netif(esp_netif_sta);
 
     /* Enable napt on the AP netif */
