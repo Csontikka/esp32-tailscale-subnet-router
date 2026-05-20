@@ -22,6 +22,7 @@
 #include "lwip_route_hook.h"
 #include "acl.h"
 #include "syslog_client.h"
+#include "net_diag.h"
 #include "telemetry.h"
 #include "log_capture.h"
 #include "web_password.h"
@@ -485,6 +486,87 @@ static const httpd_uri_t uri_tools_route = {
     .method   = HTTP_GET,
     .handler  = tools_route_handler,
     .user_ctx = NULL,
+};
+
+/* Helper: read a single query param into a stack buffer. Returns ESP_OK
+ * on success or NOT_FOUND if the key is missing. */
+static esp_err_t tools_query_get(httpd_req_t *req, const char *key,
+                                 char *out, size_t out_size)
+{
+    char qs[160];
+    if (httpd_req_get_url_query_str(req, qs, sizeof qs) != ESP_OK) {
+        return ESP_ERR_NOT_FOUND;
+    }
+    return httpd_query_key_value(qs, key, out, out_size);
+}
+
+static esp_err_t tools_ping_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char target[80];
+    if (tools_query_get(req, "target", target, sizeof target) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing target");
+        return ESP_FAIL;
+    }
+    char count_str[8];
+    int count = 4;
+    if (tools_query_get(req, "count", count_str, sizeof count_str) == ESP_OK) {
+        count = atoi(count_str);
+        if (count < 1)  count = 1;
+        if (count > 10) count = 10;
+    }
+
+    /* net_diag writes plain text into the buffer; we expose it as text/plain
+     * so the SPA can render it in a <pre>. */
+    size_t buf_size = 2048;
+    char *buf = malloc(buf_size);
+    if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
+    buf[0] = '\0';
+
+    net_diag_ping(target, count, 1000, buf, buf_size);
+
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    esp_err_t err = httpd_resp_sendstr(req, buf);
+    free(buf);
+    return err;
+}
+
+static esp_err_t tools_trace_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char target[80];
+    if (tools_query_get(req, "target", target, sizeof target) != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing target");
+        return ESP_FAIL;
+    }
+    char hops_str[8];
+    int max_hops = 16;
+    if (tools_query_get(req, "max_hops", hops_str, sizeof hops_str) == ESP_OK) {
+        max_hops = atoi(hops_str);
+        if (max_hops < 1)  max_hops = 1;
+        if (max_hops > 30) max_hops = 30;
+    }
+
+    size_t buf_size = 2048;
+    char *buf = malloc(buf_size);
+    if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
+    buf[0] = '\0';
+
+    net_diag_trace(target, max_hops, 1500, buf, buf_size);
+
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    esp_err_t err = httpd_resp_sendstr(req, buf);
+    free(buf);
+    return err;
+}
+
+static const httpd_uri_t uri_tools_ping = {
+    .uri = "/api/tools/ping",  .method = HTTP_GET, .handler = tools_ping_handler,
+};
+static const httpd_uri_t uri_tools_trace = {
+    .uri = "/api/tools/trace", .method = HTTP_GET, .handler = tools_trace_handler,
 };
 
 static esp_err_t firewall_handler(httpd_req_t *req)
@@ -1306,6 +1388,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_network_save);
     httpd_register_uri_handler(server, &uri_network_scan);
     httpd_register_uri_handler(server, &uri_tools_route);
+    httpd_register_uri_handler(server, &uri_tools_ping);
+    httpd_register_uri_handler(server, &uri_tools_trace);
     httpd_register_uri_handler(server, &uri_firewall);
     httpd_register_uri_handler(server, &uri_firewall_add);
     httpd_register_uri_handler(server, &uri_firewall_delete);

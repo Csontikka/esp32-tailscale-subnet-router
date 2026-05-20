@@ -1920,6 +1920,46 @@
         </div>
       </div>
 
+      <!-- ===== Ping ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Ping</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">Send ICMP echo requests. Tailnet targets (100.64.0.0/10) go through the WG tunnel, everything else through STA.</p>
+          <div style="display:flex; gap:0.5rem;">
+            <input class="input mono" type="text" id="tool-ping-target" placeholder="8.8.8.8 or homeassistant" style="flex:1; min-width:0;">
+            <input class="input" type="number" id="tool-ping-count" value="4" min="1" max="10" style="width:5rem;">
+            <button class="btn btn-primary btn-md" id="tool-ping-run">Ping</button>
+          </div>
+        </div>
+        <div class="card-body" id="tool-ping-output" style="display:none; border-top:1px solid var(--border);">
+          <pre style="background:var(--bg-page); border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; max-height:18rem; overflow:auto; font-family:var(--font-mono); font-size:0.8rem; line-height:1.4; margin:0; white-space:pre-wrap; word-break:break-all;" id="tool-ping-text">—</pre>
+        </div>
+      </div>
+
+      <!-- ===== Traceroute ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Traceroute</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">TTL-incrementing ICMP probes. One per hop; stops at the destination or after max_hops.</p>
+          <div style="display:flex; gap:0.5rem;">
+            <input class="input mono" type="text" id="tool-trace-target" placeholder="8.8.8.8 or homeassistant" style="flex:1; min-width:0;">
+            <input class="input" type="number" id="tool-trace-hops" value="16" min="1" max="30" style="width:5rem;">
+            <button class="btn btn-primary btn-md" id="tool-trace-run">Trace</button>
+          </div>
+        </div>
+        <div class="card-body" id="tool-trace-output" style="display:none; border-top:1px solid var(--border);">
+          <pre style="background:var(--bg-page); border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; max-height:18rem; overflow:auto; font-family:var(--font-mono); font-size:0.8rem; line-height:1.4; margin:0; white-space:pre-wrap; word-break:break-all;" id="tool-trace-text">—</pre>
+        </div>
+      </div>
+
       <!-- ===== WiFi Scan ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -3413,6 +3453,62 @@
     });
     document.getElementById('tool-route-dst').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') document.getElementById('tool-route-run').click();
+    });
+
+    /* Shared runner for ping + traceroute. Both hit a text/plain endpoint
+     * and dump the response into a <pre>. */
+    function runDiagText(opts) {
+      var btn   = opts.btn;
+      var pre   = opts.pre;
+      var card  = opts.card;
+      var url   = opts.url;
+      var labelOriginal = opts.labelOriginal;
+      btn.disabled = true;
+      btn.textContent = opts.labelRunning;
+      card.style.display = '';
+      pre.textContent = 'Running…';
+      apiFetch(url)
+        .then(function (r) {
+          if (!r.ok) return r.text().then(function (t) { throw new Error(t || ('HTTP ' + r.status)); });
+          return r.text();
+        })
+        .then(function (text) { pre.textContent = text || '(empty response)'; pre.scrollTop = pre.scrollHeight; })
+        .catch(function (e) { pre.textContent = 'Failed: ' + (e.message || 'unknown error'); })
+        .finally(function () { btn.disabled = false; btn.textContent = labelOriginal; });
+    }
+
+    document.getElementById('tool-ping-run').addEventListener('click', function () {
+      var target = document.getElementById('tool-ping-target').value.trim();
+      var count  = parseInt(document.getElementById('tool-ping-count').value, 10) || 4;
+      if (!target) { showToast('error', 'Target required', 'Enter a hostname or IP.', 4000); return; }
+      runDiagText({
+        btn: this,
+        pre: document.getElementById('tool-ping-text'),
+        card: document.getElementById('tool-ping-output'),
+        url: '/api/tools/ping?target=' + encodeURIComponent(target) + '&count=' + count,
+        labelOriginal: 'Ping',
+        labelRunning:  'Pinging…'
+      });
+    });
+    document.getElementById('tool-ping-target').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') document.getElementById('tool-ping-run').click();
+    });
+
+    document.getElementById('tool-trace-run').addEventListener('click', function () {
+      var target = document.getElementById('tool-trace-target').value.trim();
+      var hops   = parseInt(document.getElementById('tool-trace-hops').value, 10) || 16;
+      if (!target) { showToast('error', 'Target required', 'Enter a hostname or IP.', 4000); return; }
+      runDiagText({
+        btn: this,
+        pre: document.getElementById('tool-trace-text'),
+        card: document.getElementById('tool-trace-output'),
+        url: '/api/tools/trace?target=' + encodeURIComponent(target) + '&max_hops=' + hops,
+        labelOriginal: 'Trace',
+        labelRunning:  'Tracing…'
+      });
+    });
+    document.getElementById('tool-trace-target').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') document.getElementById('tool-trace-run').click();
     });
 
     document.getElementById('tool-scan-run').addEventListener('click', function () {
