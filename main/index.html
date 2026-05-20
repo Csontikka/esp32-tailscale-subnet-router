@@ -1751,85 +1751,122 @@
     </div>
 
     <!-- =================================================================
-         TAILSCALE PAGE (stub)
+         TAILSCALE PAGE
          =============================================================== -->
     <div class="page-section" id="page-tailscale">
       <div class="page-header">
         <div class="page-header-left">
           <h1 class="page-title">Tailscale</h1>
-          <p class="page-subtitle">VPN configuration, peers, exit node, DERP region</p>
+          <p class="page-subtitle">VPN configuration, peers, exit node, advertised routes</p>
         </div>
         <div class="page-header-actions">
-          <span class="badge badge-success">
-            <span class="badge-dot badge-dot-pulse"></span>
-            Connected
-          </span>
+          <span class="badge badge-neutral" id="ts-page-badge">—</span>
         </div>
       </div>
-      <div class="stub-page">
-        <div class="stub-notice">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          Tailscale page — prototype stub. Full page: service toggle, auth key, hostname, login server, subnet routes, exit node picker, live peer table, DERP region selector.
+
+      <!-- ===== Configuration ===== -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Configuration</span>
+          </div>
         </div>
-        <div class="card">
-          <div class="card-header">
-            <div class="card-header-left">
-              <span class="card-title">Configuration</span>
+        <div class="card-body">
+          <div class="stat-row">
+            <span class="stat-label">Tailnet IP</span>
+            <span class="stat-value mono" id="ts-tunnel-ip">—</span>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Service</label>
+            <div style="display:flex; gap:1rem; padding:0.25rem 0;">
+              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
+                <input type="radio" name="ts_enabled" id="ts_enabled_on" value="1"> Enabled
+              </label>
+              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
+                <input type="radio" name="ts_enabled" id="ts_enabled_off" value="0" checked> Disabled
+              </label>
             </div>
           </div>
-          <div class="card-body">
+
+          <div class="form-group">
+            <label class="form-label" for="ts-auth-key">Auth Key</label>
+            <div style="display:flex; gap:0.5rem;">
+              <input class="input" type="password" id="ts-auth-key" autocomplete="new-password" placeholder="Leave empty to keep current" style="flex:1; min-width:0;">
+              <button class="btn btn-secondary btn-md" type="button" id="ts-auth-show" title="Show / hide">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
+                  <circle cx="12" cy="12" r="3"/>
+                </svg>
+              </button>
+            </div>
+            <span class="form-hint">tskey-auth-… (Tailscale SaaS) or hskey-auth-… (Headscale).</span>
+          </div>
+
+          <div class="grid grid-cols-2">
             <div class="form-group">
-              <label class="form-label">Service</label>
-              <div class="flex gap-3">
-                <label class="radio-group"><input type="radio" name="ts_enabled" checked><label>Enabled</label></label>
-                <label class="radio-group"><input type="radio" name="ts_enabled"><label>Disabled</label></label>
-              </div>
+              <label class="form-label" for="ts-hostname">Hostname</label>
+              <input class="input" type="text" id="ts-hostname" placeholder="esp32-tailscale">
             </div>
             <div class="form-group">
-              <label class="form-label">Auth Key</label>
-              <div class="input-with-icon">
-                <input class="input" type="password" placeholder="tskey-auth-…">
-                <button class="input-icon-right" type="button">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/>
-                    <circle cx="12" cy="12" r="3"/>
-                  </svg>
-                </button>
-              </div>
+              <label class="form-label" for="ts-login">Login Server (Headscale)</label>
+              <input class="input" type="text" id="ts-login" placeholder="https://headscale.example.com">
+              <span class="form-hint">Empty = Tailscale SaaS.</span>
             </div>
-            <div class="grid grid-cols-2">
-              <div class="form-group">
-                <label class="form-label">Hostname</label>
-                <input class="input" type="text" value="esp32-router">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Login Server (Headscale)</label>
-                <input class="input" type="text" placeholder="https://headscale.example.com">
-              </div>
-            </div>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label" for="ts-routes">Advertised Subnet Routes</label>
+            <textarea class="textarea input" id="ts-routes" placeholder="192.168.4.0/24" style="min-height:5rem; font-family:var(--font-mono); font-size:0.9rem;"></textarea>
+            <span class="form-hint">One CIDR per line.</span>
+          </div>
+
+          <div class="grid grid-cols-2">
             <div class="form-group">
-              <label class="form-label">Advertised Subnet Routes</label>
-              <textarea class="textarea input" placeholder="192.168.4.0/24&#10;10.0.0.0/8">192.168.4.0/24</textarea>
-              <span class="form-hint">One CIDR per line.</span>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Exit Node</label>
-              <select class="select">
-                <option>None</option>
-                <option>vpn-exit-de (100.64.0.14)</option>
+              <label class="form-label" for="ts-exit-node">Exit Node</label>
+              <select class="select" id="ts-exit-node">
+                <option value="">None</option>
               </select>
+              <span class="form-hint">Picks from peers advertising 0.0.0.0/0.</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="ts-max-peers">Max peers</label>
+              <input class="input" type="number" id="ts-max-peers" min="1" max="64" value="16">
             </div>
           </div>
-          <div class="form-footer">
-            <span class="form-footer-hint">Changes require a reboot to take effect.</span>
-            <div class="form-footer-actions">
-              <button class="btn btn-secondary btn-md">Cancel</button>
-              <button class="btn btn-primary btn-md">Save &amp; Reboot</button>
-            </div>
+
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="ts-accept-routes"> Accept peer subnet routes
+            </label>
+            <span class="form-hint">Honour CIDRs other peers advertise (e.g. another LAN).</span>
+          </div>
+
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="ts-lan-bypass" checked> LAN bypass when using an exit node
+            </label>
+            <span class="form-hint">RFC1918 destinations stay on the local LAN even when an exit node is selected.</span>
           </div>
         </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Changes require a reboot to take effect.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-secondary btn-md" id="ts-reload">Reload</button>
+            <button class="btn btn-primary btn-md" id="ts-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Peers ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Peers</span>
+          </div>
+          <span class="badge badge-neutral" id="ts-peers-badge">—</span>
+        </div>
+        <div class="card-body-flush" id="ts-peers-body" style="min-height:3rem;"></div>
       </div>
     </div>
 
@@ -2040,7 +2077,8 @@
 
           /* Lazy-load page contents the first time the operator switches
            * to a tab that has its own data fetcher. */
-          if (page === 'network' && typeof loadNetwork === 'function') loadNetwork();
+          if (page === 'network'   && typeof loadNetwork   === 'function') loadNetwork();
+          if (page === 'tailscale' && typeof loadTailscale === 'function') loadTailscale();
         });
       });
     })();
@@ -2843,6 +2881,163 @@
       var body = { ap: { ssid: ssid, channel: channel } };
       if (pw) body.ap.password = pw;
       saveNetwork(this, body);
+    });
+
+    // =====================================================================
+    // TAILSCALE PAGE
+    // =====================================================================
+    function loadTailscale() {
+      apiFetch('/api/tailscale')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var s = (d && d.settings) || {};
+          var r = (d && d.runtime)  || {};
+          var peers = (d && d.peers) || [];
+
+          /* Settings form. */
+          document.getElementById('ts_enabled_on').checked  = !!s.enabled;
+          document.getElementById('ts_enabled_off').checked = !s.enabled;
+          document.getElementById('ts-auth-key').value      = '';
+          document.getElementById('ts-hostname').value      = s.hostname     || '';
+          document.getElementById('ts-login').value         = s.login_server || '';
+          document.getElementById('ts-routes').value        = s.advertise_routes || '';
+          document.getElementById('ts-max-peers').value     = s.max_peers   || 16;
+          document.getElementById('ts-accept-routes').checked = !!s.accept_routes;
+          document.getElementById('ts-lan-bypass').checked    = !!s.lan_bypass;
+
+          /* Exit-node picker — populated from peers that advertise 0/0. */
+          var sel = document.getElementById('ts-exit-node');
+          sel.innerHTML = '<option value="">None</option>';
+          peers.filter(function (p) { return p.is_exit_node; }).forEach(function (p) {
+            var o = document.createElement('option');
+            o.value = p.vpn_ip || '';
+            o.textContent = (p.hostname || '?') + ' (' + (p.vpn_ip || '') + ')';
+            sel.appendChild(o);
+          });
+          if (s.exit_node_ip) {
+            var found = false;
+            Array.prototype.forEach.call(sel.options, function (o) {
+              if (o.value === s.exit_node_ip) found = true;
+            });
+            if (!found) {
+              var o = document.createElement('option');
+              o.value = s.exit_node_ip;
+              o.textContent = '(offline) ' + s.exit_node_ip;
+              sel.appendChild(o);
+            }
+            sel.value = s.exit_node_ip;
+          }
+
+          /* Tailnet IP + header badge. */
+          document.getElementById('ts-tunnel-ip').textContent = r.tunnel_ip || '—';
+          var badge = document.getElementById('ts-page-badge');
+          if (r.connected) {
+            badge.className = 'badge badge-success';
+            badge.innerHTML = '<span class="badge-dot badge-dot-pulse"></span> Connected';
+          } else if (s.enabled) {
+            badge.className = 'badge badge-warning';
+            badge.innerHTML = '<span class="badge-dot"></span> Registering…';
+          } else {
+            badge.className = 'badge badge-neutral';
+            badge.textContent = 'Off';
+          }
+
+          /* Peers table. */
+          var body = document.getElementById('ts-peers-body');
+          var pBadge = document.getElementById('ts-peers-badge');
+          var onlineCount = peers.filter(function (p) { return p.online; }).length;
+          pBadge.textContent = onlineCount + ' / ' + peers.length + ' online';
+          pBadge.className   = 'badge ' + (peers.length === 0 ? 'badge-neutral' : (onlineCount > 0 ? 'badge-success' : 'badge-warning'));
+          if (!peers.length) {
+            body.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">No peers — enable Tailscale and complete auth to see your tailnet.</div>';
+          } else {
+            var html = '<div class="table-wrap"><table class="table"><thead><tr>'
+                     + '<th>Status</th><th>Hostname</th><th>Tailnet IP</th><th>Path</th><th>Subnet routes</th>'
+                     + '</tr></thead><tbody>';
+            peers.forEach(function (p) {
+              var statusHtml = p.online
+                ? '<span class="peer-online-dot on"></span> online'
+                : '<span class="peer-online-dot off"></span> <span class="text-muted">offline</span>';
+              var pathHtml = !p.online
+                ? '<span class="text-muted">—</span>'
+                : (p.direct_path ? '<span class="text-success">direct</span>'
+                                 : '<span class="text-warning">DERP</span>');
+              var routes = (p.subnet_routes || []).map(function (r) {
+                return escapeHtml(r.network) + '/' + r.prefix_len;
+              }).join(', ') || '—';
+              var exitBadge = p.is_exit_node ? ' <span class="badge badge-info">exit</span>' : '';
+              html += '<tr>'
+                + '<td>' + statusHtml + '</td>'
+                + '<td>' + escapeHtml(p.hostname || '?') + exitBadge + '</td>'
+                + '<td class="mono">' + escapeHtml(p.vpn_ip || '') + '</td>'
+                + '<td>' + pathHtml + '</td>'
+                + '<td class="mono">' + routes + '</td>'
+                + '</tr>';
+            });
+            html += '</tbody></table></div>';
+            body.innerHTML = html;
+          }
+
+          document.getElementById('ts-save').disabled = true;
+        }).catch(function () {});
+    }
+
+    /* Dirty-track and wiring. */
+    ['ts_enabled_on', 'ts_enabled_off', 'ts-auth-key', 'ts-hostname', 'ts-login',
+     'ts-routes', 'ts-max-peers', 'ts-accept-routes', 'ts-lan-bypass', 'ts-exit-node'
+    ].forEach(function (id) {
+      var el = document.getElementById(id);
+      var ev = (el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio')
+               ? 'change' : 'input';
+      el.addEventListener(ev, function () {
+        document.getElementById('ts-save').disabled = false;
+      });
+    });
+    document.getElementById('ts-reload').addEventListener('click', loadTailscale);
+    document.getElementById('ts-auth-show').addEventListener('click', function () {
+      var inp = document.getElementById('ts-auth-key');
+      inp.type = (inp.type === 'password') ? 'text' : 'password';
+    });
+    document.getElementById('ts-save').addEventListener('click', function () {
+      var enabled = document.getElementById('ts_enabled_on').checked;
+      var body = {
+        settings: {
+          enabled:           enabled,
+          hostname:          document.getElementById('ts-hostname').value.trim(),
+          login_server:      document.getElementById('ts-login').value.trim(),
+          advertise_routes:  document.getElementById('ts-routes').value,
+          max_peers:         parseInt(document.getElementById('ts-max-peers').value, 10) || 16,
+          accept_routes:     document.getElementById('ts-accept-routes').checked,
+          lan_bypass:        document.getElementById('ts-lan-bypass').checked,
+          exit_node_ip:      document.getElementById('ts-exit-node').value
+        }
+      };
+      var authKey = document.getElementById('ts-auth-key').value;
+      if (authKey) body.settings.auth_key = authKey;   /* omit-to-keep */
+
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Saving…';
+      apiFetch('/api/tailscale', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body)
+      })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function (resp) {
+          btn.textContent = 'Save';
+          showToast('success', 'Saved', 'Tailscale settings written to NVS.', 4000);
+          if (resp.restart_required) {
+            showConfirm('Reboot now?',
+                        'Tailscale changes only take effect after a reboot. Reboot now?',
+                        function () { apiFetch('/api/system/restart', { method: 'POST' }); });
+          }
+        })
+        .catch(function (e) {
+          btn.disabled = false;
+          btn.textContent = 'Save';
+          showToast('error', 'Save failed', e && e.message ? e.message : 'unknown error', 6000);
+        });
     });
 
     // =====================================================================
