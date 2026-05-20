@@ -21,6 +21,8 @@
 #include "microlink.h"
 #include "telemetry.h"
 #include "log_capture.h"
+#include "web_password.h"
+#include "esp_random.h"
 
 /* Globals owned by main.c — link status flags rendered in /api/status. */
 extern int ap_connect;
@@ -356,6 +358,133 @@ static const httpd_uri_t uri_system = {
     .user_ctx = NULL,
 };
 
+/* ---- Session management -------------------------------------------------
+ * Single in-memory session, like the OLD repo. 32-byte random token hex-
+ * encoded into a cookie that expires after 30 min of inactivity. The
+ * token never touches NVS — reboot logs everyone out, which is the
+ * intended fail-safe for a router that may be repurposed. */
+#define WEB_UI_SESSION_TOKEN_LEN  32
+#define WEB_UI_SESSION_TIMEOUT_S  (30 * 60)
+
+static char     s_session_token[WEB_UI_SESSION_TOKEN_LEN * 2 + 1] = {0};
+static uint64_t s_session_expires_us = 0;
+
+static void hex_encode(const uint8_t *src, size_t len, char *out)
+{
+    for (size_t i = 0; i < len; i++) sprintf(out + i * 2, "%02x", src[i]);
+    out[len * 2] = '\0';
+}
+
+static bool session_alive(void)
+{
+    return s_session_token[0] && (uint64_t)esp_timer_get_time() < s_session_expires_us;
+}
+
+static void session_clear(void)
+{
+    s_session_token[0]   = '\0';
+    s_session_expires_us = 0;
+}
+
+static void session_create(void)
+{
+    uint8_t raw[WEB_UI_SESSION_TOKEN_LEN];
+    esp_fill_random(raw, sizeof raw);
+    hex_encode(raw, sizeof raw, s_session_token);
+    s_session_expires_us = (uint64_t)esp_timer_get_time()
+                         + (uint64_t)WEB_UI_SESSION_TIMEOUT_S * 1000000ULL;
+}
+
+static bool request_authenticated(httpd_req_t *req)
+{
+    /* No password set → entire UI is open. Mirrors the OLD repo's
+     * behaviour and lets first-boot show the password wizard. */
+    if (!is_web_password_set()) return true;
+    if (!session_alive())       return false;
+
+    char hdr[160];
+    if (httpd_req_get_hdr_value_str(req, "Cookie", hdr, sizeof hdr) != ESP_OK) {
+        return false;
+    }
+    const char *p = strstr(hdr, "ts_session=");
+    if (!p) return false;
+    p += strlen("ts_session=");
+    size_t n = strlen(s_session_token);
+    return strncmp(p, s_session_token, n) == 0 && (p[n] == '\0' || p[n] == ';');
+}
+
+static esp_err_t auth_status_handler(httpd_req_t *req)
+{
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject(root, "auth_required", is_web_password_set());
+    cJSON_AddBoolToObject(root, "authenticated", request_authenticated(req));
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static esp_err_t auth_login_handler(httpd_req_t *req)
+{
+    /* Cap the body at a sane size so a misbehaving client can't make us
+     * allocate megabytes for a password field. */
+    char buf[256];
+    int total = req->content_len < (int)sizeof buf ? req->content_len : (int)sizeof buf - 1;
+    int n = httpd_req_recv(req, buf, total);
+    if (n <= 0) {
+        if (n == HTTPD_SOCK_ERR_TIMEOUT) httpd_resp_send_408(req);
+        return ESP_FAIL;
+    }
+    buf[n] = '\0';
+
+    cJSON *body = cJSON_Parse(buf);
+    cJSON *pw   = body ? cJSON_GetObjectItem(body, "password") : NULL;
+    if (!cJSON_IsString(pw)) {
+        cJSON_Delete(body);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing password");
+        return ESP_FAIL;
+    }
+
+    bool ok = verify_web_password(pw->valuestring);
+    cJSON_Delete(body);
+
+    if (!ok) {
+        /* Don't leak whether a password is set or just wrong — same 401
+         * either way. */
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "unauthorised");
+        return ESP_FAIL;
+    }
+
+    session_create();
+    char cookie[160];
+    snprintf(cookie, sizeof cookie,
+             "ts_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d",
+             s_session_token, WEB_UI_SESSION_TIMEOUT_S);
+    httpd_resp_set_hdr(req, "Set-Cookie", cookie);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static esp_err_t auth_logout_handler(httpd_req_t *req)
+{
+    session_clear();
+    httpd_resp_set_hdr(req, "Set-Cookie", "ts_session=; Path=/; HttpOnly; Max-Age=0");
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static const httpd_uri_t uri_auth_status = {
+    .uri = "/api/auth/status", .method = HTTP_GET,  .handler = auth_status_handler,
+};
+static const httpd_uri_t uri_auth_login = {
+    .uri = "/api/auth/login",  .method = HTTP_POST, .handler = auth_login_handler,
+};
+static const httpd_uri_t uri_auth_logout = {
+    .uri = "/api/auth/logout", .method = HTTP_POST, .handler = auth_logout_handler,
+};
+
 void web_ui_init(void)
 {
     static httpd_handle_t server = NULL;
@@ -375,5 +504,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_network);
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_system);
+    httpd_register_uri_handler(server, &uri_auth_status);
+    httpd_register_uri_handler(server, &uri_auth_login);
+    httpd_register_uri_handler(server, &uri_auth_logout);
     ESP_LOGI(TAG, "web UI listening on :%d", config.server_port);
 }
