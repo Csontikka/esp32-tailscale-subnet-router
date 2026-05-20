@@ -278,6 +278,7 @@ static esp_err_t network_handler(httpd_req_t *req)
         if (n.static_ip[0]) cJSON_AddStringToObject(sip, "ip",   n.static_ip);
         if (n.subnet[0])    cJSON_AddStringToObject(sip, "mask", n.subnet);
         if (n.gateway[0])   cJSON_AddStringToObject(sip, "gw",   n.gateway);
+        if (n.dns[0])       cJSON_AddStringToObject(sip, "dns",  n.dns);
         cJSON_AddItemToObject(e, "static_ip", sip);
         cJSON_AddItemToArray(nets, e);
     }
@@ -293,6 +294,9 @@ static esp_err_t network_handler(httpd_req_t *req)
     if (nvs_param_get_int("ap_channel", &channel) == ESP_OK && channel > 0) {
         cJSON_AddNumberToObject(ap, "channel", channel);
     }
+    /* AP-side IP override — empty / unset means the default 192.168.4.1/24. */
+    add_nvs_string(ap, "ip",   "ap_ip");
+    add_nvs_string(ap, "mask", "ap_mask");
     cJSON_AddItemToObject(root, "ap", ap);
 
     char *body = cJSON_PrintUnformatted(root);
@@ -411,9 +415,11 @@ static esp_err_t network_save_handler(httpd_req_t *req)
                 const cJSON *ip   = cJSON_GetObjectItem(sip, "ip");
                 const cJSON *mask = cJSON_GetObjectItem(sip, "mask");
                 const cJSON *gw   = cJSON_GetObjectItem(sip, "gw");
+                const cJSON *dns  = cJSON_GetObjectItem(sip, "dns");
                 if (cJSON_IsString(ip))   strlcpy(n->static_ip, ip->valuestring,   sizeof n->static_ip);
                 if (cJSON_IsString(mask)) strlcpy(n->subnet,    mask->valuestring, sizeof n->subnet);
                 if (cJSON_IsString(gw))   strlcpy(n->gateway,   gw->valuestring,   sizeof n->gateway);
+                if (cJSON_IsString(dns))  strlcpy(n->dns,       dns->valuestring,  sizeof n->dns);
             }
 
             n->valid = 1;
@@ -442,9 +448,11 @@ static esp_err_t network_save_handler(httpd_req_t *req)
                 const cJSON *ip   = cJSON_GetObjectItem(sip, "ip");
                 const cJSON *mask = cJSON_GetObjectItem(sip, "mask");
                 const cJSON *gw   = cJSON_GetObjectItem(sip, "gw");
+                const cJSON *dns  = cJSON_GetObjectItem(sip, "dns");
                 if (cJSON_IsString(ip))   strlcpy(one.static_ip, ip->valuestring,   sizeof one.static_ip);
                 if (cJSON_IsString(mask)) strlcpy(one.subnet,    mask->valuestring, sizeof one.subnet);
                 if (cJSON_IsString(gw))   strlcpy(one.gateway,   gw->valuestring,   sizeof one.gateway);
+                if (cJSON_IsString(dns))  strlcpy(one.dns,       dns->valuestring,  sizeof one.dns);
             }
             one.valid = 1;
             wifi_networks_set_all(&one, 1);
@@ -461,6 +469,8 @@ static esp_err_t network_save_handler(httpd_req_t *req)
         save_str_if_present(ap, "ssid",     "ap_ssid");
         save_str_if_present(ap, "password", "ap_passwd");
         save_int_if_present(ap, "channel",  "ap_channel");
+        save_str_if_present(ap, "ip",       "ap_ip");
+        save_str_if_present(ap, "mask",     "ap_mask");
     }
 
     cJSON_Delete(root);
@@ -1182,6 +1192,84 @@ static const httpd_uri_t uri_dhcp_leases = {
     .user_ctx = NULL,
 };
 
+/* POST /api/dhcp/kick — body { "mac": "aa:bb:cc:dd:ee:ff" } — deauths
+ * the station so it must re-associate, which also triggers a fresh DHCP
+ * exchange. Useful right after changing a reservation: clients normally
+ * hold their current lease until expiry. */
+
+static esp_err_t dhcp_kick_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char body_buf[128];
+    if (recv_body(req, body_buf, sizeof body_buf, NULL) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_Parse(body_buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+    cJSON *mac_j = cJSON_GetObjectItem(root, "mac");
+    if (!cJSON_IsString(mac_j)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing mac");
+        return ESP_FAIL;
+    }
+
+    uint8_t target_mac[6];
+    if (!parse_mac_str(mac_j->valuestring, target_mac)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad mac");
+        return ESP_FAIL;
+    }
+    cJSON_Delete(root);
+
+    /* Look up the AID by walking the station list — esp_wifi_deauth_sta
+     * wants an AID rather than a MAC. AID 0 means "every station". */
+    wifi_sta_list_t sta_list;
+    memset(&sta_list, 0, sizeof sta_list);
+    if (esp_wifi_ap_get_sta_list(&sta_list) != ESP_OK) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    int matched_aid = -1;
+    for (int i = 0; i < sta_list.num; i++) {
+        if (memcmp(sta_list.sta[i].mac, target_mac, 6) == 0) {
+            /* AID indices in this struct are 1-based from the order the
+             * station joined. The wifi driver exposes them via
+             * esp_wifi_ap_get_sta_aid; falling back on the array index
+             * works for the common case but the API is the canonical
+             * source. */
+            uint16_t aid = 0;
+            if (esp_wifi_ap_get_sta_aid(target_mac, &aid) == ESP_OK && aid > 0) {
+                matched_aid = aid;
+            }
+            break;
+        }
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    if (matched_aid < 0) {
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"reason\":\"not connected\"}");
+    }
+
+    esp_err_t err = esp_wifi_deauth_sta((uint16_t)matched_aid);
+    if (err != ESP_OK) {
+        char resp[96];
+        snprintf(resp, sizeof resp, "{\"ok\":false,\"reason\":\"%s\"}", esp_err_to_name(err));
+        return httpd_resp_sendstr(req, resp);
+    }
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static const httpd_uri_t uri_dhcp_kick = {
+    .uri      = "/api/dhcp/kick",
+    .method   = HTTP_POST,
+    .handler  = dhcp_kick_handler,
+    .user_ctx = NULL,
+};
+
 /* Format a host-byte-order IPv4 as "a.b.c.d" — used for the accepted-
  * routes table where host order is the documented storage. */
 static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size)
@@ -1851,6 +1939,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_dhcp_reservations);
     httpd_register_uri_handler(server, &uri_dhcp_reservations_save);
     httpd_register_uri_handler(server, &uri_dhcp_leases);
+    httpd_register_uri_handler(server, &uri_dhcp_kick);
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_tailscale_save);
     httpd_register_uri_handler(server, &uri_system);

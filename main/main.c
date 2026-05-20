@@ -153,8 +153,24 @@ static void wifi_apply_network(int idx)
             if (ip4addr_aton(n.subnet,    &a)) ip_info.netmask.addr = a.addr;
             if (ip4addr_aton(n.gateway,   &a)) ip_info.gw.addr      = a.addr;
             esp_netif_set_ip_info(sta, &ip_info);
-            ESP_LOGI("WiFi Sta", "wifi[%d] '%s' static %s/%s via %s",
-                     idx, n.ssid, n.static_ip, n.subnet, n.gateway);
+
+            /* Static mode disables the DHCP client, which means no DNS
+             * lands on the netif automatically. Apply the per-network
+             * DNS when one is configured; without it the resolver stays
+             * empty until somebody sets it manually. */
+            if (n.dns[0]) {
+                ip4_addr_t da;
+                if (ip4addr_aton(n.dns, &da)) {
+                    esp_netif_dns_info_t dns = {0};
+                    dns.ip.type = ESP_IPADDR_TYPE_V4;
+                    dns.ip.u_addr.ip4.addr = da.addr;
+                    esp_netif_set_dns_info(sta, ESP_NETIF_DNS_MAIN, &dns);
+                }
+            }
+
+            ESP_LOGI("WiFi Sta", "wifi[%d] '%s' static %s/%s via %s%s%s",
+                     idx, n.ssid, n.static_ip, n.subnet, n.gateway,
+                     n.dns[0] ? " dns=" : "", n.dns[0] ? n.dns : "");
         } else {
             esp_netif_dhcpc_start(sta);
             ESP_LOGI("WiFi Sta", "wifi[%d] '%s' DHCP", idx, n.ssid);
@@ -229,6 +245,34 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
 esp_netif_t *wifi_init_softap(void)
 {
     esp_netif_t *esp_netif_ap = esp_netif_create_default_wifi_ap();
+
+    /* Optional AP-side IP override. Empty NVS keys → keep the default
+     * 192.168.4.1/24. When both are set and parse cleanly we stop the
+     * DHCP server, re-install the IP/mask/gateway (gw == AP IP), then
+     * restart DHCP so the new pool range is computed from the new IP. */
+    char *nvs_ap_ip   = nvs_param_get_str("ap_ip");
+    char *nvs_ap_mask = nvs_param_get_str("ap_mask");
+    if (nvs_ap_ip && nvs_ap_ip[0] && nvs_ap_mask && nvs_ap_mask[0]) {
+        ip4_addr_t ip_a, mask_a;
+        if (ip4addr_aton(nvs_ap_ip,   &ip_a)
+            && ip4addr_aton(nvs_ap_mask, &mask_a)
+            && ip_a.addr != 0 && mask_a.addr != 0) {
+            esp_netif_ip_info_t ip_info = {
+                .ip      = { .addr = ip_a.addr },
+                .netmask = { .addr = mask_a.addr },
+                .gw      = { .addr = ip_a.addr },  /* AP is its own gw */
+            };
+            ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_stop(esp_netif_ap));
+            ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_set_ip_info(esp_netif_ap, &ip_info));
+            ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_start(esp_netif_ap));
+            ESP_LOGI(TAG_AP, "wifi_init_softap: custom AP %s/%s",
+                     nvs_ap_ip, nvs_ap_mask);
+        } else {
+            ESP_LOGW(TAG_AP, "wifi_init_softap: bad ap_ip/ap_mask in NVS, using default");
+        }
+    }
+    free(nvs_ap_ip);
+    free(nvs_ap_mask);
 
     char *nvs_ssid = nvs_param_get_str("ap_ssid");
     char *nvs_pw   = nvs_param_get_str("ap_passwd");

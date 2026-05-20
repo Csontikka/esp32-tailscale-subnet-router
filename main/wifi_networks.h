@@ -33,6 +33,8 @@ typedef struct {
     char    static_ip[16];   /* Dotted-quad string. Empty = DHCP for this network. */
     char    subnet[16];
     char    gateway[16];
+    char    dns[16];         /* DNS server for this network. Empty = inherit
+                              * from DHCP, or fall back to a public resolver. */
     uint8_t valid;           /* 1 = slot in use, 0 = empty (ignored). */
     uint8_t _reserved[7];    /* Padding so the on-flash layout doesn't shift
                               * when we add fields later. */
