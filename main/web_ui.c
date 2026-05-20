@@ -63,8 +63,9 @@ static void ip4_to_str(uint32_t ip_nbo, char *out, size_t out_size)
     snprintf(out, out_size, IPSTR, IP2STR(&a));
 }
 
-/* Forward decl — definition lives further down with the session block. */
+/* Forward decls — definitions live further down. */
 static bool request_authenticated(httpd_req_t *req);
+static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size);
 
 static esp_err_t require_auth(httpd_req_t *req)
 {
@@ -171,7 +172,7 @@ static esp_err_t status_handler(httpd_req_t *req)
     }
     if (tailscale_exit_node_ip) {
         char buf[16];
-        ip4_to_str(tailscale_exit_node_ip, buf, sizeof buf);
+        ip4_hbo_to_str(tailscale_exit_node_ip, buf, sizeof buf);
         cJSON_AddStringToObject(ts, "exit_node_ip", buf);
     }
     /* Peer count summary — full peer table lives at /api/tailscale. */
@@ -708,8 +709,9 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
     cJSON_AddBoolToObject  (settings, "lan_bypass",              tailscale_lan_bypass != 0);
     cJSON_AddBoolToObject  (settings, "accept_routes",           tailscale_accept_routes != 0);
     if (tailscale_exit_node_ip) {
+        /* tailscale_exit_node_ip is documented as host byte order. */
         char buf[16];
-        ip4_to_str(tailscale_exit_node_ip, buf, sizeof buf);
+        ip4_hbo_to_str(tailscale_exit_node_ip, buf, sizeof buf);
         cJSON_AddStringToObject(settings, "exit_node_ip", buf);
     }
     cJSON_AddItemToObject(root, "settings", settings);
@@ -737,8 +739,9 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
             cJSON_AddBoolToObject  (p, "online",       pi.online);
             cJSON_AddBoolToObject  (p, "direct_path",  pi.direct_path);
             cJSON_AddBoolToObject  (p, "is_exit_node", pi.is_exit_node);
+            /* microlink_peer_info_t.vpn_ip is host byte order. */
             char buf[16];
-            ip4_to_str(pi.vpn_ip, buf, sizeof buf);
+            ip4_hbo_to_str(pi.vpn_ip, buf, sizeof buf);
             cJSON_AddStringToObject(p, "vpn_ip", buf);
             cJSON *routes = cJSON_CreateArray();
             for (int r = 0; r < pi.subnet_route_count; r++) {
