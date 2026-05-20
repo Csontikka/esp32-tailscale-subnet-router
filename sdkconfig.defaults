@@ -1,0 +1,97 @@
+# Project-wide defaults. PlatformIO + ESP-IDF both honour this file.
+#
+# Most of the values here were tuned by trial and error on the previous
+# private fork; the comments mark which knob mattered and why so that
+# anyone reading the config later doesn't have to repeat the discovery.
+
+# --- Flash / partitions -----------------------------------------------------
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+CONFIG_PARTITION_TABLE_FILENAME="partitions.csv"
+
+# --- CPU / PSRAM (ESP32-S3 N16R8 reference board) ---------------------------
+CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_240=y
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_MODE_OCT=y
+CONFIG_SPIRAM_SPEED_80M=y
+CONFIG_SPIRAM_BOOT_HW_INIT=y
+
+# --- Main task: more stack than the default 3584 ----------------------------
+# Several boot-time init paths (microlink_init, http_server start, NAPT
+# setup) push into the same task. 7 KB keeps the canary intact.
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=7168
+
+# --- Bootloader verbosity ---------------------------------------------------
+CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
+CONFIG_BOOTLOADER_LOG_LEVEL=2
+
+# --- LWIP: NAPT, IP forwarding, socket budget -------------------------------
+CONFIG_LWIP_IP_FORWARD=y
+CONFIG_LWIP_IPV4_NAPT=y
+CONFIG_LWIP_L2_TO_L3_COPY=y
+# 10 (default) gets eaten by http_server + microlink + remote console + DNS
+# + ping; the next consumer's socket() fails with EMFILE. Bump to 16.
+CONFIG_LWIP_MAX_SOCKETS=16
+# Bigger TCP window/buffer so a single stream can fill the link before the
+# encryption itself becomes the limit.
+CONFIG_LWIP_TCP_WND_DEFAULT=32768
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
+
+# --- DHCP server ------------------------------------------------------------
+CONFIG_LWIP_DHCPS_MAX_STATION_NUM=16
+
+# --- WiFi tuning ------------------------------------------------------------
+CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=48
+CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=48
+CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=y
+CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
+CONFIG_ESP_WIFI_TX_BA_WIN=32
+# AMSDU TX aggregation cuts per-frame overhead on the AP-to-client leg
+CONFIG_ESP_WIFI_AMSDU_TX_ENABLED=y
+
+# --- mbedTLS: cert bundle + PSRAM allocator ---------------------------------
+# Cert bundle is needed to validate *.workers.dev (and any other public
+# HTTPS endpoint) without shipping the certificates ourselves.
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE=y
+CONFIG_MBEDTLS_CERTIFICATE_BUNDLE_DEFAULT_FULL=y
+# mbedTLS allocations target internal RAM by default; with microlink +
+# wireguard running, each SSL session's ~20 KB IN+OUT buffers fail to
+# find a contiguous block (MBEDTLS_ERR_SSL_ALLOC_FAILED, -0x7F00).
+# Spill to PSRAM — 8 MB of headroom solves it.
+CONFIG_MBEDTLS_EXTERNAL_MEM_ALLOC=y
+# microlink's Noise handshake needs ChaCha20-Poly1305.
+CONFIG_MBEDTLS_CHACHA20_C=y
+CONFIG_MBEDTLS_POLY1305_C=y
+CONFIG_MBEDTLS_CHACHAPOLY_C=y
+
+# --- ESP-IDF v5.5 sys_evt task stack ----------------------------------------
+# Default 2304 B overflows on the STA reconnect path (chained callbacks
+# through syslog/tailscale/AP-event handlers); bump to match TCPIP
+# task headroom.
+CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=6144
+
+# --- Coredump to flash ------------------------------------------------------
+# After a PANIC/WDT the kernel writes a full backtrace + task state to
+# the dedicated "coredump" partition so the next boot can surface it
+# via esp_core_dump_image_get + summary.
+# CONFIG_ESP_COREDUMP_ENABLE_TO_NONE is not set
+CONFIG_ESP_COREDUMP_ENABLE_TO_FLASH=y
+CONFIG_ESP_COREDUMP_DATA_FORMAT_ELF=y
+CONFIG_ESP_COREDUMP_CHECKSUM_CRC32=y
+
+# --- Compiler ---------------------------------------------------------------
+# Perf opt buys ~10-15% tunnel throughput on the WG userspace stack
+# (ChaCha20-Poly1305 is CPU-bound on S3) at the cost of ~50-100 KB
+# binary growth — fine within 4 MB flash.
+# CONFIG_COMPILER_OPTIMIZATION_SIZE is not set
+CONFIG_COMPILER_OPTIMIZATION_PERF=y
+
+# --- OTA --------------------------------------------------------------------
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
+
+# --- FreeRTOS extras for the 'tasks' CLI command ---------------------------
+CONFIG_FREERTOS_USE_TRACE_FACILITY=y
+CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
