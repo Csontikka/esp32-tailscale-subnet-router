@@ -1424,6 +1424,10 @@
               <span class="stat-label">Channel</span>
               <span class="stat-value" id="uplink-channel">6 (2.4 GHz)</span>
             </div>
+            <div class="stat-row">
+              <span class="stat-label">Traffic</span>
+              <span class="stat-value mono" id="uplink-traffic">—</span>
+            </div>
           </div>
         </div>
 
@@ -1456,6 +1460,10 @@
             <div class="stat-row">
               <span class="stat-label">Channel</span>
               <span class="stat-value" id="ap-channel">6</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Traffic</span>
+              <span class="stat-value mono" id="ap-traffic">—</span>
             </div>
           </div>
         </div>
@@ -2609,6 +2617,20 @@
     /* Apply /api/status payload to the dashboard DOM. Field names match
      * what status_handler emits — designer mock fields like data.uplink
      * and data.heap_free are intentionally NOT what we read. */
+    /* Bytes → human-readable. Counters are doubles in JSON (cJSON can't
+     * emit u64) — work in floating point so we don't truncate at 2 GB. */
+    function formatBytes(n) {
+      if (typeof n !== 'number' || !isFinite(n) || n < 0) return '—';
+      if (n < 1024)              return n.toFixed(0) + ' B';
+      if (n < 1024 * 1024)       return (n / 1024).toFixed(1) + ' KB';
+      if (n < 1024 * 1024 * 1024)return (n / (1024 * 1024)).toFixed(1) + ' MB';
+      return (n / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+    }
+    function formatTraffic(bin, bout) {
+      if (typeof bin !== 'number' && typeof bout !== 'number') return '—';
+      return '↓ ' + formatBytes(bin || 0) + '   ↑ ' + formatBytes(bout || 0);
+    }
+
     function applyStatus(data) {
       // STA (uplink)
       var ul = data.sta || {};
@@ -2616,6 +2638,7 @@
       document.getElementById('uplink-ip').textContent      = ul.ip   || '—';
       document.getElementById('uplink-rssi').textContent    = (ul.rssi != null ? ul.rssi + ' dBm' : '—');
       document.getElementById('uplink-channel').textContent = ul.channel != null ? String(ul.channel) : '—';
+      document.getElementById('uplink-traffic').textContent = formatTraffic(ul.bytes_in, ul.bytes_out);
       renderSignalBars('uplink-signal-bars', ul.rssi != null ? ul.rssi : -90);
 
       var uplinkBadge = document.getElementById('uplink-status-badge');
@@ -2637,6 +2660,7 @@
       document.getElementById('ap-ip').textContent      = ap.ip      || '—';
       document.getElementById('ap-mac').textContent     = ap.mac     || '—';
       document.getElementById('ap-channel').textContent = ap.channel || '—';
+      document.getElementById('ap-traffic').textContent = formatTraffic(ap.bytes_in, ap.bytes_out);
       document.getElementById('ap-clients-badge').textContent = (ap.clients != null ? ap.clients + ' client' + (ap.clients !== 1 ? 's' : '') : '—');
 
       // Heap — backend reports free_heap + heap_total (in bytes).

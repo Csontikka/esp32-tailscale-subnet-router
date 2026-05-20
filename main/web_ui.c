@@ -30,6 +30,7 @@
 #include "portmap.h"
 #include "telemetry.h"
 #include "log_capture.h"
+#include "netif_hooks.h"
 #include "web_password.h"
 #include "esp_random.h"
 #include "esp_system.h"
@@ -161,6 +162,8 @@ static esp_err_t status_handler(httpd_req_t *req)
         ip4_to_str(ip.ip.addr, buf, sizeof buf);
         cJSON_AddStringToObject(sta, "ip", buf);
     }
+    cJSON_AddNumberToObject(sta, "bytes_in",  (double)netif_hooks_get_sta_bytes_in());
+    cJSON_AddNumberToObject(sta, "bytes_out", (double)netif_hooks_get_sta_bytes_out());
     cJSON_AddItemToObject(root, "sta", sta);
 
     /* AP (downlink) — SSID + channel from live wifi_config, MAC, clients, IP. */
@@ -182,6 +185,8 @@ static esp_err_t status_handler(httpd_req_t *req)
         ip4_to_str(ip.ip.addr, buf, sizeof buf);
         cJSON_AddStringToObject(ap, "ip", buf);
     }
+    cJSON_AddNumberToObject(ap, "bytes_in",  (double)netif_hooks_get_ap_bytes_in());
+    cJSON_AddNumberToObject(ap, "bytes_out", (double)netif_hooks_get_ap_bytes_out());
     cJSON_AddItemToObject(root, "ap", ap);
 
     /* Tailscale (microlink) — runtime state from tailscale_config.h.

@@ -25,6 +25,19 @@ static netif_linkoutput_fn  original_sta_linkoutput  = NULL;
 static netif_input_fn       original_ap_input        = NULL;
 static netif_linkoutput_fn  original_ap_linkoutput   = NULL;
 
+/* Wire-byte counters. Updated on the LWIP TCPIP task, read from the
+ * HTTP server task. Display-only — torn reads at the 32-bit boundary
+ * are tolerable for a UI gauge. */
+static volatile uint64_t s_sta_bytes_in  = 0;
+static volatile uint64_t s_sta_bytes_out = 0;
+static volatile uint64_t s_ap_bytes_in   = 0;
+static volatile uint64_t s_ap_bytes_out  = 0;
+
+uint64_t netif_hooks_get_sta_bytes_in (void) { return s_sta_bytes_in;  }
+uint64_t netif_hooks_get_sta_bytes_out(void) { return s_sta_bytes_out; }
+uint64_t netif_hooks_get_ap_bytes_in  (void) { return s_ap_bytes_in;   }
+uint64_t netif_hooks_get_ap_bytes_out (void) { return s_ap_bytes_out;  }
+
 /* ACL check + PCAP feed in one pass. Returns the raw acl_check_packet
  * result so the caller can act on the deny/allow bit; we side-effect
  * pcap_capture_packet here when either the ACL rule asked for it
@@ -44,24 +57,28 @@ static inline bool acl_drops(uint8_t action)
 
 static err_t sta_input_hook(struct pbuf *p, struct netif *netif)
 {
+    if (p) s_sta_bytes_in += p->tot_len;
     if (acl_drops(acl_check_and_tap(ACL_TO_ESP, p, false))) { pbuf_free(p); return ERR_OK; }
     return original_sta_input ? original_sta_input(p, netif) : ERR_VAL;
 }
 
 static err_t sta_linkoutput_hook(struct netif *netif, struct pbuf *p)
 {
+    if (p) s_sta_bytes_out += p->tot_len;
     if (acl_drops(acl_check_and_tap(ACL_FROM_ESP, p, false))) { return ERR_OK; }
     return original_sta_linkoutput ? original_sta_linkoutput(netif, p) : ERR_VAL;
 }
 
 static err_t ap_input_hook(struct pbuf *p, struct netif *netif)
 {
+    if (p) s_ap_bytes_in += p->tot_len;
     if (acl_drops(acl_check_and_tap(ACL_TO_AP, p, true))) { pbuf_free(p); return ERR_OK; }
     return original_ap_input ? original_ap_input(p, netif) : ERR_VAL;
 }
 
 static err_t ap_linkoutput_hook(struct netif *netif, struct pbuf *p)
 {
+    if (p) s_ap_bytes_out += p->tot_len;
     if (acl_drops(acl_check_and_tap(ACL_FROM_AP, p, true))) { return ERR_OK; }
     return original_ap_linkoutput ? original_ap_linkoutput(netif, p) : ERR_VAL;
 }
