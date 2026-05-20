@@ -24,6 +24,7 @@
 #include "syslog_client.h"
 #include "net_diag.h"
 #include "pcap_capture.h"
+#include "wifi_networks.h"
 #include "telemetry.h"
 #include "log_capture.h"
 #include "web_password.h"
@@ -261,21 +262,29 @@ static esp_err_t network_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    /* STA — upstream WiFi credentials live in NVS but the password is
-     * intentionally never serialised. Static IP fields stay empty for
-     * the DHCP case. */
-    cJSON *sta = cJSON_CreateObject();
-    add_nvs_string(sta, "ssid",     "ssid");
-    add_nvs_string(sta, "hostname", "hostname");
+    /* networks[] — priority-ordered uplink list. Passwords are NEVER
+     * serialised. Static IP block is included as a sub-object per
+     * network; empty fields mean DHCP for that entry. */
+    cJSON *nets = cJSON_CreateArray();
+    int count = wifi_networks_count();
+    for (int i = 0; i < count; i++) {
+        wifi_network_t n;
+        if (!wifi_networks_get(i, &n)) continue;
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "ssid", n.ssid);
+        cJSON *sip = cJSON_CreateObject();
+        if (n.static_ip[0]) cJSON_AddStringToObject(sip, "ip",   n.static_ip);
+        if (n.subnet[0])    cJSON_AddStringToObject(sip, "mask", n.subnet);
+        if (n.gateway[0])   cJSON_AddStringToObject(sip, "gw",   n.gateway);
+        cJSON_AddItemToObject(e, "static_ip", sip);
+        cJSON_AddItemToArray(nets, e);
+    }
+    cJSON_AddItemToObject(root, "networks", nets);
 
-    cJSON *static_ip = cJSON_CreateObject();
-    add_nvs_string(static_ip, "ip",   "static_ip");
-    add_nvs_string(static_ip, "mask", "subnet");
-    add_nvs_string(static_ip, "gw",   "gateway");
-    cJSON_AddItemToObject(sta, "static_ip", static_ip);
-    cJSON_AddItemToObject(root, "sta", sta);
+    /* Hostname is a device-wide setting (not per-network). */
+    add_nvs_string(root, "hostname", "hostname");
 
-    /* AP — same exclusion for the password. */
+    /* AP — same omit-rule on the password. */
     cJSON *ap = cJSON_CreateObject();
     add_nvs_string(ap, "ssid", "ap_ssid");
     int32_t channel = 0;
@@ -336,11 +345,27 @@ static void save_int_if_present(const cJSON *obj, const char *json_key, const ch
     if (cJSON_IsNumber(v)) nvs_param_set_int(nvs_key, (int32_t)v->valuedouble);
 }
 
+/* Look up the saved password for an SSID we already know about. Used
+ * to honour omit-to-keep when the SPA sends an entry without a
+ * password field (or with an empty one). Returns true if found. */
+static bool lookup_existing_password(const char *ssid, char *out, size_t out_size)
+{
+    int count = wifi_networks_count();
+    for (int j = 0; j < count; j++) {
+        wifi_network_t n;
+        if (wifi_networks_get(j, &n) && strcmp(n.ssid, ssid) == 0) {
+            strlcpy(out, n.passwd, out_size);
+            return true;
+        }
+    }
+    return false;
+}
+
 static esp_err_t network_save_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
 
-    char buf[1024];
+    char buf[4096];   /* bigger budget — up to 5 networks with full creds */
     if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
 
     cJSON *root = cJSON_Parse(buf);
@@ -349,16 +374,81 @@ static esp_err_t network_save_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    /* STA — { ssid, password (only when changing), hostname }. The SPA
-     * omits the password field when leaving it unchanged. */
+    /* networks[] — preferred shape. Replaces the WHOLE list. Each entry
+     * may omit `password` (or leave it empty) to keep the stored
+     * credential — matched by SSID against the existing table. */
+    cJSON *nets_j = cJSON_GetObjectItem(root, "networks");
+    if (cJSON_IsArray(nets_j)) {
+        wifi_network_t arr[WIFI_NETWORKS_MAX];
+        memset(arr, 0, sizeof arr);
+        int n_in    = cJSON_GetArraySize(nets_j);
+        int n_out   = 0;
+        for (int i = 0; i < n_in && n_out < WIFI_NETWORKS_MAX; i++) {
+            cJSON *e = cJSON_GetArrayItem(nets_j, i);
+            if (!cJSON_IsObject(e)) continue;
+            cJSON *ssid_j = cJSON_GetObjectItem(e, "ssid");
+            if (!cJSON_IsString(ssid_j) || !ssid_j->valuestring[0]) continue;
+
+            wifi_network_t *n = &arr[n_out];
+            strlcpy(n->ssid, ssid_j->valuestring, sizeof n->ssid);
+
+            cJSON *pw_j = cJSON_GetObjectItem(e, "password");
+            if (cJSON_IsString(pw_j) && pw_j->valuestring[0]) {
+                strlcpy(n->passwd, pw_j->valuestring, sizeof n->passwd);
+            } else {
+                lookup_existing_password(n->ssid, n->passwd, sizeof n->passwd);
+            }
+
+            cJSON *sip = cJSON_GetObjectItem(e, "static_ip");
+            if (cJSON_IsObject(sip)) {
+                const cJSON *ip   = cJSON_GetObjectItem(sip, "ip");
+                const cJSON *mask = cJSON_GetObjectItem(sip, "mask");
+                const cJSON *gw   = cJSON_GetObjectItem(sip, "gw");
+                if (cJSON_IsString(ip))   strlcpy(n->static_ip, ip->valuestring,   sizeof n->static_ip);
+                if (cJSON_IsString(mask)) strlcpy(n->subnet,    mask->valuestring, sizeof n->subnet);
+                if (cJSON_IsString(gw))   strlcpy(n->gateway,   gw->valuestring,   sizeof n->gateway);
+            }
+
+            n->valid = 1;
+            n_out++;
+        }
+        wifi_networks_set_all(arr, n_out);
+    }
+
+    /* Backward-compat path: pre-multi-network SPA clients still POST
+     * { sta:{ ssid, password, hostname }, static_ip:{...} } — when
+     * they do, treat it as a single-entry write to slot 0. */
     cJSON *sta = cJSON_GetObjectItem(root, "sta");
-    if (cJSON_IsObject(sta)) {
-        save_str_if_present(sta, "ssid",     "ssid");
-        save_str_if_present(sta, "password", "passwd");
+    if (cJSON_IsObject(sta) && !cJSON_IsArray(nets_j)) {
+        wifi_network_t one = {0};
+        const cJSON *ssid_j = cJSON_GetObjectItem(sta, "ssid");
+        if (cJSON_IsString(ssid_j) && ssid_j->valuestring[0]) {
+            strlcpy(one.ssid, ssid_j->valuestring, sizeof one.ssid);
+            const cJSON *pw_j = cJSON_GetObjectItem(sta, "password");
+            if (cJSON_IsString(pw_j) && pw_j->valuestring[0]) {
+                strlcpy(one.passwd, pw_j->valuestring, sizeof one.passwd);
+            } else {
+                lookup_existing_password(one.ssid, one.passwd, sizeof one.passwd);
+            }
+            cJSON *sip = cJSON_GetObjectItem(root, "static_ip");
+            if (cJSON_IsObject(sip)) {
+                const cJSON *ip   = cJSON_GetObjectItem(sip, "ip");
+                const cJSON *mask = cJSON_GetObjectItem(sip, "mask");
+                const cJSON *gw   = cJSON_GetObjectItem(sip, "gw");
+                if (cJSON_IsString(ip))   strlcpy(one.static_ip, ip->valuestring,   sizeof one.static_ip);
+                if (cJSON_IsString(mask)) strlcpy(one.subnet,    mask->valuestring, sizeof one.subnet);
+                if (cJSON_IsString(gw))   strlcpy(one.gateway,   gw->valuestring,   sizeof one.gateway);
+            }
+            one.valid = 1;
+            wifi_networks_set_all(&one, 1);
+        }
         save_str_if_present(sta, "hostname", "hostname");
     }
 
-    /* AP — same omit-to-keep rule for the password. */
+    /* Hostname (device-wide) and AP block are still saved via the same
+     * legacy NVS keys regardless of which write shape the client used. */
+    save_str_if_present(root, "hostname", "hostname");
+
     cJSON *ap = cJSON_GetObjectItem(root, "ap");
     if (cJSON_IsObject(ap)) {
         save_str_if_present(ap, "ssid",     "ap_ssid");
@@ -366,19 +456,8 @@ static esp_err_t network_save_handler(httpd_req_t *req)
         save_int_if_present(ap, "channel",  "ap_channel");
     }
 
-    /* Static IP — passing an empty string for any of the three fields
-     * clears that key, which the STA init path interprets as DHCP. */
-    cJSON *static_ip = cJSON_GetObjectItem(root, "static_ip");
-    if (cJSON_IsObject(static_ip)) {
-        save_str_if_present(static_ip, "ip",   "static_ip");
-        save_str_if_present(static_ip, "mask", "subnet");
-        save_str_if_present(static_ip, "gw",   "gateway");
-    }
-
     cJSON_Delete(root);
 
-    /* Network changes need a reboot to apply — the SPA shows the user
-     * the prompt; we just signal it here. */
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true,\"restart_required\":true}");
 }
