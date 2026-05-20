@@ -1889,21 +1889,60 @@
     </div>
 
     <!-- =================================================================
-         TOOLS PAGE (stub)
+         TOOLS PAGE
          =============================================================== -->
     <div class="page-section" id="page-tools">
       <div class="page-header">
         <div class="page-header-left">
           <h1 class="page-title">Tools</h1>
-          <p class="page-subtitle">WiFi scan, ping, traceroute, PCAP, live log, diagnostics</p>
+          <p class="page-subtitle">Diagnostics — route explain, scan, log viewer</p>
         </div>
       </div>
-      <div class="stub-page">
-        <div class="stub-notice">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/>
-          </svg>
-          Tools page — prototype stub. Full page: WiFi scan table, ping/traceroute console, PCAP capture controls, live log viewer, diagnostics dump.
+
+      <!-- ===== Route Explain ===== -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Route explain</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">Ask the router which interface (and rule) a packet for a given destination would take. Same code path real packets exercise.</p>
+          <div style="display:flex; gap:0.5rem;">
+            <input class="input mono" type="text" id="tool-route-dst" placeholder="8.8.8.8 or 100.64.0.1" style="flex:1; min-width:0;">
+            <button class="btn btn-primary btn-md" id="tool-route-run">Trace</button>
+          </div>
+          <div id="tool-route-result" style="margin-top:0.75rem; display:none;">
+            <div class="stat-row"><span class="stat-label">Destination</span><span class="stat-value mono" id="tool-route-out-dst">—</span></div>
+            <div class="stat-row"><span class="stat-label">Egress netif</span><span class="stat-value mono" id="tool-route-out-netif">—</span></div>
+            <div class="stat-row"><span class="stat-label">Reason</span><span class="stat-value" id="tool-route-out-reason">—</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== WiFi Scan ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">WiFi scan</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="tool-scan-run">Run scan</button>
+        </div>
+        <div class="card-body-flush" id="tool-scan-body">
+          <div style="padding:1rem; color:var(--text-muted);">No scan yet — click <strong>Run scan</strong>.</div>
+        </div>
+      </div>
+
+      <!-- ===== Log Viewer ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Log buffer (last 4 KB)</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" id="tool-log-refresh">Refresh</button>
+        </div>
+        <div class="card-body">
+          <pre id="tool-log-body" style="background:var(--bg-page); border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; max-height:24rem; overflow:auto; font-family:var(--font-mono); font-size:0.8rem; line-height:1.4; margin:0; white-space:pre-wrap; word-break:break-all;">— no log loaded yet —</pre>
         </div>
       </div>
     </div>
@@ -2030,6 +2069,7 @@
           if (page === 'network'   && typeof loadNetwork   === 'function') loadNetwork();
           if (page === 'tailscale' && typeof loadTailscale === 'function') loadTailscale();
           if (page === 'firewall'  && typeof loadFirewall  === 'function') loadFirewall();
+          /* Tools tab is fully lazy — every card runs only on its own button. */
         });
       });
     })();
@@ -3202,6 +3242,85 @@
     }
 
     document.getElementById('fw-reload').addEventListener('click', loadFirewall);
+
+    // =====================================================================
+    // TOOLS PAGE — route explain / scan / log
+    // =====================================================================
+    document.getElementById('tool-route-run').addEventListener('click', function () {
+      var dst = document.getElementById('tool-route-dst').value.trim();
+      if (!dst) { showToast('error', 'Destination required', 'Enter an IPv4 to trace.', 4000); return; }
+      var btn = this;
+      btn.disabled = true;
+      btn.textContent = 'Tracing…';
+      apiFetch('/api/tools/route?dst=' + encodeURIComponent(dst))
+        .then(function (r) {
+          if (!r.ok) return r.json().then(function (b) { throw new Error(b.message || ('HTTP ' + r.status)); });
+          return r.json();
+        })
+        .then(function (d) {
+          document.getElementById('tool-route-result').style.display = '';
+          document.getElementById('tool-route-out-dst').textContent    = d.dst   || dst;
+          document.getElementById('tool-route-out-netif').textContent  = d.netif || '—';
+          document.getElementById('tool-route-out-reason').textContent = d.reason || '—';
+        })
+        .catch(function (e) { showToast('error', 'Trace failed', e.message || '', 5000); })
+        .finally(function () { btn.disabled = false; btn.textContent = 'Trace'; });
+    });
+    document.getElementById('tool-route-dst').addEventListener('keydown', function (e) {
+      if (e.key === 'Enter') document.getElementById('tool-route-run').click();
+    });
+
+    document.getElementById('tool-scan-run').addEventListener('click', function () {
+      var btn = this;
+      var body = document.getElementById('tool-scan-body');
+      btn.disabled = true;
+      btn.textContent = 'Scanning…';
+      body.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">Scanning… (~3 s)</div>';
+      apiFetch('/api/network/scan')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var nets = (d && d.networks) || [];
+          nets.sort(function (a, b) { return b.rssi - a.rssi; });
+          if (!nets.length) {
+            body.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">No networks found.</div>';
+            return;
+          }
+          var html = '<div class="table-wrap"><table class="table"><thead><tr>'
+                   + '<th>Signal</th><th>SSID</th><th>Channel</th><th>RSSI</th><th>Auth</th>'
+                   + '</tr></thead><tbody>';
+          nets.forEach(function (n) {
+            html += '<tr>'
+              + '<td style="font-family:var(--font-mono); color:var(--accent);">' + rssiBars(n.rssi) + '</td>'
+              + '<td>' + escapeHtml(n.ssid || '(hidden)') + '</td>'
+              + '<td>' + n.channel + '</td>'
+              + '<td>' + n.rssi + ' dBm</td>'
+              + '<td>' + escapeHtml(n.auth || '?') + '</td>'
+              + '</tr>';
+          });
+          html += '</tbody></table></div>';
+          body.innerHTML = html;
+        })
+        .catch(function () {
+          body.innerHTML = '<div style="padding:1rem; color:var(--danger);">Scan failed.</div>';
+        })
+        .finally(function () { btn.disabled = false; btn.textContent = 'Run scan'; });
+    });
+
+    document.getElementById('tool-log-refresh').addEventListener('click', function () {
+      var btn = this;
+      var pre = document.getElementById('tool-log-body');
+      btn.disabled = true;
+      btn.textContent = 'Loading…';
+      apiFetch('/api/system')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          pre.textContent = d.log_tail || '— empty —';
+          /* Scroll to bottom — that's where the latest lines are. */
+          pre.scrollTop = pre.scrollHeight;
+        })
+        .catch(function () { pre.textContent = '— fetch failed —'; })
+        .finally(function () { btn.disabled = false; btn.textContent = 'Refresh'; });
+    });
 
     // =====================================================================
     // INITIAL LOAD — auth gate
