@@ -33,6 +33,11 @@
 #include "lwip/err.h"
 #include "lwip/sys.h"
 
+#include "tailscale_config.h"
+#include "tailscale_mtu.h"
+#include "telemetry.h"
+#include "lwip_route_hook.h"
+
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
    If you'd rather not, just change the below entries to strings with
@@ -208,6 +213,26 @@ void app_main(void)
      * the /log page (live ring) and from /diag after a PANIC/WDT
      * (the pre-crash slice in slow RTC RAM survives reboot). */
     log_capture_init(0);
+
+    /* Tailscale (microlink) settings — separate NVS keys (ts_*); loader
+     * lives in tailscale_manager.c. Microlink lifecycle wires in later
+     * once WiFi STA has an IP. */
+    tailscale_init();
+
+    /* MTU / MSS clamp / PMTU manager. Owns the wg netif MTU plus the AP
+     * hook clamp values. Loads NVS now; the 30 s poll timer takes over
+     * once microlink + the wg netif exist. */
+    tailscale_mtu_init();
+
+    /* Anonymous telemetry — privacy-respecting flash/boot/heartbeat
+     * reporter. Spawns a low-priority task that waits for ap_connect
+     * before its first send. */
+    telemetry_init();
+
+    /* Exit-node default-route supervisor. Background task flips
+     * netif_default between STA and the WireGuard netif depending on
+     * tailscale_exit_node_ip. Self-paces until netifs exist. */
+    lwip_route_hook_init();
 
     /* Initialize event group */
     s_wifi_event_group = xEventGroupCreate();
