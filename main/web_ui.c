@@ -20,6 +20,7 @@
 #include "nvs_params.h"
 #include "microlink.h"
 #include "lwip_route_hook.h"
+#include "acl.h"
 #include "telemetry.h"
 #include "log_capture.h"
 #include "web_password.h"
@@ -410,6 +411,75 @@ static const httpd_uri_t uri_tools_route = {
     .uri      = "/api/tools/route",
     .method   = HTTP_GET,
     .handler  = tools_route_handler,
+    .user_ctx = NULL,
+};
+
+static esp_err_t firewall_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root  = cJSON_CreateObject();
+    cJSON *lists = cJSON_CreateArray();
+
+    acl_lock();
+    for (int i = 0; i < MAX_ACL_LISTS; i++) {
+        cJSON *list = cJSON_CreateObject();
+        cJSON_AddNumberToObject(list, "index", i);
+        cJSON_AddStringToObject(list, "name",  acl_get_name(i));
+        cJSON_AddStringToObject(list, "desc",  acl_get_desc(i));
+
+        acl_stats_t *st = acl_get_stats(i);
+        cJSON *stats = cJSON_CreateObject();
+        cJSON_AddNumberToObject(stats, "allowed", st ? st->packets_allowed : 0);
+        cJSON_AddNumberToObject(stats, "denied",  st ? st->packets_denied  : 0);
+        cJSON_AddNumberToObject(stats, "nomatch", st ? st->packets_nomatch : 0);
+        cJSON_AddItemToObject(list, "stats", stats);
+
+        cJSON *rules = cJSON_CreateArray();
+        acl_entry_t *entries = acl_get_rules(i);
+        if (entries) {
+            for (int j = 0; j < MAX_ACL_ENTRIES; j++) {
+                if (!entries[j].valid) break;   /* list is compacted */
+
+                cJSON *r = cJSON_CreateObject();
+                cJSON_AddNumberToObject(r, "index", j);
+                char buf[28];
+                acl_format_ip(entries[j].src,  entries[j].s_mask, buf, sizeof buf);
+                cJSON_AddStringToObject(r, "src",  buf);
+                acl_format_ip(entries[j].dest, entries[j].d_mask, buf, sizeof buf);
+                cJSON_AddStringToObject(r, "dest", buf);
+                cJSON_AddNumberToObject(r, "proto",  entries[j].proto);
+                cJSON_AddNumberToObject(r, "s_port", entries[j].s_port);
+                cJSON_AddNumberToObject(r, "d_port", entries[j].d_port);
+                cJSON_AddNumberToObject(r, "action", entries[j].allow & 0x01);
+                cJSON_AddBoolToObject  (r, "monitor", (entries[j].allow & ACL_MONITOR) != 0);
+                cJSON_AddNumberToObject(r, "hits",   entries[j].hit_count);
+                cJSON_AddItemToArray(rules, r);
+            }
+        }
+        cJSON_AddItemToObject(list, "rules", rules);
+        cJSON_AddItemToArray(lists, list);
+    }
+    acl_unlock();
+
+    cJSON_AddItemToObject(root, "lists", lists);
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static const httpd_uri_t uri_firewall = {
+    .uri      = "/api/firewall",
+    .method   = HTTP_GET,
+    .handler  = firewall_handler,
     .user_ctx = NULL,
 };
 
@@ -968,6 +1038,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_network_save);
     httpd_register_uri_handler(server, &uri_network_scan);
     httpd_register_uri_handler(server, &uri_tools_route);
+    httpd_register_uri_handler(server, &uri_firewall);
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_tailscale_save);
     httpd_register_uri_handler(server, &uri_system);
