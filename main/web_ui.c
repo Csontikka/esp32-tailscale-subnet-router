@@ -204,6 +204,93 @@ static const httpd_uri_t uri_network = {
     .user_ctx = NULL,
 };
 
+/* Read up to (buf_size - 1) bytes of the POST body into buf and NUL-
+ * terminate. Returns ESP_OK on success or after sending the appropriate
+ * error response on failure. */
+static esp_err_t recv_body(httpd_req_t *req, char *buf, size_t buf_size, int *out_len)
+{
+    if (req->content_len <= 0 || (size_t)req->content_len >= buf_size) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "body too large or empty");
+        return ESP_FAIL;
+    }
+    int n = httpd_req_recv(req, buf, req->content_len);
+    if (n <= 0) {
+        if (n == HTTPD_SOCK_ERR_TIMEOUT) httpd_resp_send_408(req);
+        return ESP_FAIL;
+    }
+    buf[n] = '\0';
+    if (out_len) *out_len = n;
+    return ESP_OK;
+}
+
+/* Write an NVS string key only when the JSON object carries a string
+ * value for the given json_key. Empty string is accepted as "clear". */
+static void save_str_if_present(const cJSON *obj, const char *json_key, const char *nvs_key)
+{
+    const cJSON *v = cJSON_GetObjectItem(obj, json_key);
+    if (cJSON_IsString(v)) nvs_param_set_str(nvs_key, v->valuestring);
+}
+
+static void save_int_if_present(const cJSON *obj, const char *json_key, const char *nvs_key)
+{
+    const cJSON *v = cJSON_GetObjectItem(obj, json_key);
+    if (cJSON_IsNumber(v)) nvs_param_set_int(nvs_key, (int32_t)v->valuedouble);
+}
+
+static esp_err_t network_save_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char buf[1024];
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+
+    /* STA — { ssid, password (only when changing), hostname }. The SPA
+     * omits the password field when leaving it unchanged. */
+    cJSON *sta = cJSON_GetObjectItem(root, "sta");
+    if (cJSON_IsObject(sta)) {
+        save_str_if_present(sta, "ssid",     "ssid");
+        save_str_if_present(sta, "password", "passwd");
+        save_str_if_present(sta, "hostname", "hostname");
+    }
+
+    /* AP — same omit-to-keep rule for the password. */
+    cJSON *ap = cJSON_GetObjectItem(root, "ap");
+    if (cJSON_IsObject(ap)) {
+        save_str_if_present(ap, "ssid",     "ap_ssid");
+        save_str_if_present(ap, "password", "ap_passwd");
+        save_int_if_present(ap, "channel",  "ap_channel");
+    }
+
+    /* Static IP — passing an empty string for any of the three fields
+     * clears that key, which the STA init path interprets as DHCP. */
+    cJSON *static_ip = cJSON_GetObjectItem(root, "static_ip");
+    if (cJSON_IsObject(static_ip)) {
+        save_str_if_present(static_ip, "ip",   "static_ip");
+        save_str_if_present(static_ip, "mask", "subnet");
+        save_str_if_present(static_ip, "gw",   "gateway");
+    }
+
+    cJSON_Delete(root);
+
+    /* Network changes need a reboot to apply — the SPA shows the user
+     * the prompt; we just signal it here. */
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true,\"restart_required\":true}");
+}
+
+static const httpd_uri_t uri_network_save = {
+    .uri      = "/api/network",
+    .method   = HTTP_POST,
+    .handler  = network_save_handler,
+    .user_ctx = NULL,
+};
+
 /* Format a host-byte-order IPv4 as "a.b.c.d" — used for the accepted-
  * routes table where host order is the documented storage. */
 static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size)
@@ -573,6 +660,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_index);
     httpd_register_uri_handler(server, &uri_status);
     httpd_register_uri_handler(server, &uri_network);
+    httpd_register_uri_handler(server, &uri_network_save);
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_system);
     httpd_register_uri_handler(server, &uri_auth_status);
