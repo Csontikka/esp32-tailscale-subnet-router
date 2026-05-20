@@ -3524,18 +3524,51 @@
         return;
       }
       var html = '<div class="table-wrap"><table class="table"><thead><tr>'
-               + '<th>MAC</th><th>IP</th><th>Hostname</th><th>Remaining</th>'
+               + '<th>MAC</th><th>IP</th><th>Hostname</th><th>Remaining</th><th></th>'
                + '</tr></thead><tbody>';
       leases.forEach(function (l) {
+        /* Reservation check is client-side: cross-reference the cached
+         * reservation list rather than re-querying the backend. The two
+         * fetches run in parallel from loadNetwork, so by the time the
+         * table renders, s_dhcp_res_list is current. */
+        var macLower = (l.mac || '').toLowerCase();
+        var isReserved = s_dhcp_res_list.some(function (r) {
+          return (r.mac || '').toLowerCase() === macLower;
+        });
         html += '<tr>'
               + '<td class="mono">' + escapeHtml(l.mac || '') + '</td>'
               + '<td class="mono">' + escapeHtml(l.ip  || '') + '</td>'
               + '<td>' + escapeHtml(l.hostname || '') + '</td>'
               + '<td class="mono">' + formatLeaseRemaining(l.lease_remaining) + '</td>'
+              + '<td style="text-align:right;">'
+              + (isReserved
+                  ? '<span class="badge badge-success">reserved</span>'
+                  : '<button class="btn btn-secondary btn-sm dhcp-reserve-from" data-mac="' + escapeHtml(l.mac) + '" data-ip="' + escapeHtml(l.ip) + '" data-name="' + escapeHtml(l.hostname || '') + '" type="button">Reserve</button>')
+              + '</td>'
               + '</tr>';
       });
       html += '</tbody></table></div>';
       body.innerHTML = html;
+      /* Same click handler as the Connected-clients table — the
+       * .dhcp-reserve-from class is shared so the wiring already exists
+       * above; just re-bind for the newly-rendered nodes here. */
+      document.querySelectorAll('#dhcp-leases-body .dhcp-reserve-from').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          if (s_dhcp_res_list.length >= s_dhcp_res_max) {
+            showToast('error', 'List full', 'Max ' + s_dhcp_res_max + ' reservations. Remove one first.', 4000);
+            return;
+          }
+          snapshotDhcpResListFromDOM();
+          s_dhcp_res_list.push({
+            mac:  this.dataset.mac,
+            ip:   this.dataset.ip,
+            name: this.dataset.name || ''
+          });
+          renderDhcpResList();
+          markDhcpDirty();
+          showToast('success', 'Row added', 'Edit the name if you like, then click Save.', 3500);
+        });
+      });
     }
 
     document.getElementById('dhcp-res-reload')      .addEventListener('click', loadDhcpReservations);
