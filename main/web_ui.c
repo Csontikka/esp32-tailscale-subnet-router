@@ -503,6 +503,59 @@ static const httpd_uri_t uri_auth_logout = {
     .uri = "/api/auth/logout", .method = HTTP_POST, .handler = auth_logout_handler,
 };
 
+#define WEB_UI_PASSWORD_MIN_LEN 6
+
+static esp_err_t auth_setup_handler(httpd_req_t *req)
+{
+    /* First-boot wizard endpoint — only accessible while no password is
+     * set. Once one exists, the client must use change_password (with
+     * auth + the old password) instead. */
+    if (is_web_password_set()) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "password already set");
+        return ESP_FAIL;
+    }
+
+    char buf[256];
+    int total = req->content_len < (int)sizeof buf ? req->content_len : (int)sizeof buf - 1;
+    int n = httpd_req_recv(req, buf, total);
+    if (n <= 0) {
+        if (n == HTTPD_SOCK_ERR_TIMEOUT) httpd_resp_send_408(req);
+        return ESP_FAIL;
+    }
+    buf[n] = '\0';
+
+    cJSON *body = cJSON_Parse(buf);
+    cJSON *pw   = body ? cJSON_GetObjectItem(body, "password") : NULL;
+    if (!cJSON_IsString(pw) || strlen(pw->valuestring) < WEB_UI_PASSWORD_MIN_LEN) {
+        cJSON_Delete(body);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                            "password must be at least 6 characters");
+        return ESP_FAIL;
+    }
+
+    esp_err_t err = set_web_password_hashed(pw->valuestring);
+    cJSON_Delete(body);
+    if (err != ESP_OK) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    /* Log the new operator in straight away so the SPA can transition
+     * from the wizard into the normal dashboard without a second POST. */
+    session_create();
+    char cookie[160];
+    snprintf(cookie, sizeof cookie,
+             "ts_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d",
+             s_session_token, WEB_UI_SESSION_TIMEOUT_S);
+    httpd_resp_set_hdr(req, "Set-Cookie", cookie);
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static const httpd_uri_t uri_auth_setup = {
+    .uri = "/api/auth/setup", .method = HTTP_POST, .handler = auth_setup_handler,
+};
+
 void web_ui_init(void)
 {
     static httpd_handle_t server = NULL;
@@ -525,5 +578,6 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_auth_status);
     httpd_register_uri_handler(server, &uri_auth_login);
     httpd_register_uri_handler(server, &uri_auth_logout);
+    httpd_register_uri_handler(server, &uri_auth_setup);
     ESP_LOGI(TAG, "web UI listening on :%d", config.server_port);
 }
