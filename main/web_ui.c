@@ -27,6 +27,7 @@
 #include "wifi_networks.h"
 #include "dhcp_reservations.h"
 #include "dhcps_ext.h"
+#include "portmap.h"
 #include "telemetry.h"
 #include "log_capture.h"
 #include "web_password.h"
@@ -1270,6 +1271,152 @@ static const httpd_uri_t uri_dhcp_kick = {
     .user_ctx = NULL,
 };
 
+/* ───────────────────────── Port forwarding ─────────────────────────
+ * GET  /api/portmap  → { mappings:[{proto,ext_port,int_ip,int_port,name}...], max }
+ * POST /api/portmap  → same shape, replaces the whole table. */
+
+static const char *portmap_proto_str(uint8_t p)
+{
+    if (p == PORTMAP_PROTO_TCP) return "tcp";
+    if (p == PORTMAP_PROTO_UDP) return "udp";
+    return "?";
+}
+
+static uint8_t portmap_proto_from_str(const char *s)
+{
+    if (!s) return 0;
+    if (!strcasecmp(s, "tcp")) return PORTMAP_PROTO_TCP;
+    if (!strcasecmp(s, "udp")) return PORTMAP_PROTO_UDP;
+    return 0;
+}
+
+static esp_err_t portmap_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON *arr  = cJSON_CreateArray();
+    if (!root || !arr) {
+        cJSON_Delete(root); cJSON_Delete(arr);
+        httpd_resp_send_500(req); return ESP_FAIL;
+    }
+
+    for (int i = 0; i < PORTMAP_MAX; i++) {
+        portmap_entry_t e;
+        if (!portmap_get(i, &e)) continue;
+
+        ip4_addr_t a = { .addr = e.int_ip };
+        char ip_str[16];
+        snprintf(ip_str, sizeof ip_str, IPSTR, IP2STR(&a));
+
+        cJSON *j = cJSON_CreateObject();
+        cJSON_AddStringToObject(j, "proto",    portmap_proto_str(e.proto));
+        cJSON_AddNumberToObject(j, "ext_port", e.ext_port);
+        cJSON_AddStringToObject(j, "int_ip",   ip_str);
+        cJSON_AddNumberToObject(j, "int_port", e.int_port);
+        cJSON_AddStringToObject(j, "name",     e.name);
+        cJSON_AddItemToArray(arr, j);
+    }
+    cJSON_AddItemToObject(root, "mappings", arr);
+    cJSON_AddNumberToObject(root, "max", PORTMAP_MAX);
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static esp_err_t portmap_save_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    size_t buf_size = 4096;
+    char *buf = malloc(buf_size);
+    if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
+    if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *arr = cJSON_GetObjectItem(root, "mappings");
+    if (!cJSON_IsArray(arr)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing mappings[]");
+        return ESP_FAIL;
+    }
+
+    portmap_entry_t out[PORTMAP_MAX];
+    memset(out, 0, sizeof out);
+    int n_in  = cJSON_GetArraySize(arr);
+    int n_out = 0;
+
+    for (int i = 0; i < n_in && n_out < PORTMAP_MAX; i++) {
+        cJSON *e = cJSON_GetArrayItem(arr, i);
+        if (!cJSON_IsObject(e)) continue;
+
+        const cJSON *proto_j = cJSON_GetObjectItem(e, "proto");
+        const cJSON *ep_j    = cJSON_GetObjectItem(e, "ext_port");
+        const cJSON *iip_j   = cJSON_GetObjectItem(e, "int_ip");
+        const cJSON *ip_j    = cJSON_GetObjectItem(e, "int_port");
+        const cJSON *name_j  = cJSON_GetObjectItem(e, "name");
+
+        if (!cJSON_IsString(proto_j) || !cJSON_IsNumber(ep_j)
+            || !cJSON_IsString(iip_j) || !cJSON_IsNumber(ip_j)) continue;
+
+        portmap_entry_t *r = &out[n_out];
+        r->proto = portmap_proto_from_str(proto_j->valuestring);
+        if (!r->proto) continue;
+
+        int ep = (int)ep_j->valuedouble;
+        int ip = (int)ip_j->valuedouble;
+        if (ep <= 0 || ep > 65535 || ip <= 0 || ip > 65535) continue;
+        r->ext_port = (uint16_t)ep;
+        r->int_port = (uint16_t)ip;
+
+        ip4_addr_t a;
+        if (!ip4addr_aton(iip_j->valuestring, &a) || a.addr == 0) continue;
+        r->int_ip = a.addr;
+
+        if (cJSON_IsString(name_j)) {
+            strlcpy(r->name, name_j->valuestring, sizeof r->name);
+        }
+        r->valid = 1;
+        n_out++;
+    }
+    cJSON_Delete(root);
+
+    esp_err_t err = portmap_set_all(out, n_out);
+
+    httpd_resp_set_type(req, "application/json");
+    if (err == ESP_OK) {
+        char resp[64];
+        snprintf(resp, sizeof resp, "{\"ok\":true,\"count\":%d}", n_out);
+        return httpd_resp_sendstr(req, resp);
+    }
+    return httpd_resp_sendstr(req, "{\"ok\":false}");
+}
+
+static const httpd_uri_t uri_portmap = {
+    .uri      = "/api/portmap",
+    .method   = HTTP_GET,
+    .handler  = portmap_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t uri_portmap_save = {
+    .uri      = "/api/portmap",
+    .method   = HTTP_POST,
+    .handler  = portmap_save_handler,
+    .user_ctx = NULL,
+};
+
 /* Format a host-byte-order IPv4 as "a.b.c.d" — used for the accepted-
  * routes table where host order is the documented storage. */
 static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size)
@@ -1940,6 +2087,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_dhcp_reservations_save);
     httpd_register_uri_handler(server, &uri_dhcp_leases);
     httpd_register_uri_handler(server, &uri_dhcp_kick);
+    httpd_register_uri_handler(server, &uri_portmap);
+    httpd_register_uri_handler(server, &uri_portmap_save);
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_tailscale_save);
     httpd_register_uri_handler(server, &uri_system);
