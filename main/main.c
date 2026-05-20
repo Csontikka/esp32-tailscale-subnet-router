@@ -327,6 +327,18 @@ esp_netif_t *wifi_init_sta(void)
 {
     esp_netif_t *esp_netif_sta = esp_netif_create_default_wifi_sta();
 
+    /* Propagate the device-wide hostname into the STA netif so it lands
+     * in DHCP Option 12 — upstream routers / DNS servers use this to
+     * label the lease (e.g. "esp32-tailscale-dev" in the home router's
+     * client table instead of an opaque MAC). Set before esp_wifi_start
+     * so the first DISCOVER carries it. */
+    char *nvs_hostname = nvs_param_get_str("hostname");
+    if (nvs_hostname && nvs_hostname[0]) {
+        esp_netif_set_hostname(esp_netif_sta, nvs_hostname);
+        ESP_LOGI(TAG_STA, "STA hostname → '%s'", nvs_hostname);
+    }
+    free(nvs_hostname);
+
     if (wifi_networks_count() > 0) {
         ESP_LOGI(TAG_STA, "wifi_init_sta: %d network(s) configured, starting with slot 0",
                  wifi_networks_count());
