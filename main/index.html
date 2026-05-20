@@ -1644,6 +1644,30 @@
         </div>
       </div>
 
+      <!-- ===== Device hostname (device-wide, shown to all uplinks) ===== -->
+      <div class="card">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Device hostname</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <div class="grid grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="net-hostname">Hostname</label>
+              <input class="input" type="text" id="net-hostname" placeholder="esp32-tailscale" maxlength="63">
+              <span class="form-hint">Used as DHCP Option 12 on every uplink and as the default Tailscale machine name.</span>
+            </div>
+          </div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Saved to NVS immediately; applied at next reboot.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-primary btn-md" id="net-hostname-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ===== Uplink networks (priority list, up to 5) ===== -->
       <div class="card">
         <div class="card-header">
@@ -1664,15 +1688,6 @@
           <div id="net-list"></div>
           <div style="margin-top:0.75rem;">
             <button class="btn btn-secondary btn-md" id="net-add-btn" type="button">+ Add network</button>
-          </div>
-
-          <hr style="border:none; border-top:1px solid var(--border); margin:1.25rem 0 0.75rem 0;">
-
-          <div class="grid grid-cols-2">
-            <div class="form-group">
-              <label class="form-label" for="net-hostname">Hostname (device-wide)</label>
-              <input class="input" type="text" id="net-hostname" placeholder="esp32-tailscale">
-            </div>
           </div>
         </div>
         <div class="form-footer">
@@ -1727,9 +1742,21 @@
               </select>
             </div>
           </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="net-ap-ip">AP IP address</label>
+              <input class="input mono" type="text" id="net-ap-ip" placeholder="192.168.4.1">
+              <span class="form-hint">Also serves as DHCP server, default gateway, and DNS for connected clients.</span>
+            </div>
+            <div class="form-group">
+              <label class="form-label" for="net-ap-mask">Subnet mask</label>
+              <input class="input mono" type="text" id="net-ap-mask" placeholder="255.255.255.0">
+              <span class="form-hint">The DHCP pool is derived from this. /24 gives ~100 leases.</span>
+            </div>
+          </div>
         </div>
         <div class="form-footer">
-          <span class="form-footer-hint">Changing the AP SSID/password will disconnect any clients (including this browser) at next reboot.</span>
+          <span class="form-footer-hint">Changing the AP SSID/password or IP will disconnect any clients (including this browser) at next reboot.</span>
           <div class="form-footer-actions">
             <button class="btn btn-secondary btn-md" id="net-ap-reload">Reload</button>
             <button class="btn btn-primary btn-md" id="net-ap-save" disabled>Save</button>
@@ -2948,7 +2975,8 @@
           n.static_ip = {
             ip:   row.querySelector('.net-ip').value,
             mask: row.querySelector('.net-mask').value,
-            gw:   row.querySelector('.net-gw').value
+            gw:   row.querySelector('.net-gw').value,
+            dns:  row.querySelector('.net-dns').value
           };
         } else {
           n.static_ip = {};
@@ -2997,7 +3025,8 @@
               +     '<div class="form-group"><label class="form-label">Subnet mask</label><input class="input mono net-mask" type="text" placeholder="255.255.255.0" value="' + escapeHtml(sip.mask || '') + '"></div>'
               +   '</div>'
               +   '<div class="grid grid-cols-2">'
-              +     '<div class="form-group"><label class="form-label">Gateway</label>    <input class="input mono net-gw"   type="text" placeholder="192.168.1.1"   value="' + escapeHtml(sip.gw   || '') + '"></div>'
+              +     '<div class="form-group"><label class="form-label">Gateway</label>    <input class="input mono net-gw"   type="text" placeholder="192.168.1.1"   value="' + escapeHtml(sip.gw  || '') + '"></div>'
+              +     '<div class="form-group"><label class="form-label">DNS server</label> <input class="input mono net-dns"  type="text" placeholder="1.1.1.1"       value="' + escapeHtml(sip.dns || '') + '"></div>'
               +   '</div>'
               + '</div>'
               + '</div>';
@@ -3041,6 +3070,7 @@
           s_net_list.forEach(function (n) { if (!n.static_ip) n.static_ip = {}; });
           renderNetList();
           document.getElementById('net-hostname').value     = d.hostname || '';
+          document.getElementById('net-hostname-save').disabled = true;
           document.getElementById('net-sta-save').disabled  = true;
 
           var ap = (d && d.ap) || {};
@@ -3049,6 +3079,8 @@
           if (typeof ap.channel === 'number' && ap.channel >= 1 && ap.channel <= 13) {
             document.getElementById('net-ap-channel').value = String(ap.channel);
           }
+          document.getElementById('net-ap-ip').value        = ap.ip   || '';
+          document.getElementById('net-ap-mask').value      = ap.mask || '';
           document.getElementById('net-ap-save').disabled   = true;
         }).catch(function () {});
 
@@ -3086,7 +3118,6 @@
 
     /* Top-level network-list buttons. */
     document.getElementById('net-sta-reload').addEventListener('click', loadNetwork);
-    document.getElementById('net-hostname').addEventListener('input', markNetDirty);
     document.getElementById('net-add-btn').addEventListener('click', function () {
       if (s_net_list.length >= 5) {
         showToast('error', 'List full', 'Max 5 networks. Remove one first.', 4000);
@@ -3131,14 +3162,24 @@
         if (sip.ip)   e.static_ip.ip   = (sip.ip   || '').trim();
         if (sip.mask) e.static_ip.mask = (sip.mask || '').trim();
         if (sip.gw)   e.static_ip.gw   = (sip.gw   || '').trim();
+        if (sip.dns)  e.static_ip.dns  = (sip.dns  || '').trim();
         return e;
       }).filter(function (e) { return e.ssid.length > 0; });
       if (!nets.length) {
         showToast('error', 'No networks', 'Add at least one network with an SSID.', 5000);
         return;
       }
-      var body = { networks: nets, hostname: document.getElementById('net-hostname').value.trim() };
+      var body = { networks: nets };
       saveNetwork(this, body);
+    });
+
+    /* Hostname is a device-wide setting — its own little save handler so
+     * the operator can update it without touching the WiFi list. */
+    document.getElementById('net-hostname').addEventListener('input', function () {
+      document.getElementById('net-hostname-save').disabled = false;
+    });
+    document.getElementById('net-hostname-save').addEventListener('click', function () {
+      saveNetwork(this, { hostname: document.getElementById('net-hostname').value.trim() });
     });
 
     /* SSID scan picker — opens the scan modal, fetches /api/network/scan,
@@ -3208,7 +3249,7 @@
     });
 
     /* AP — same dirty-track + save pattern. */
-    ['net-ap-ssid', 'net-ap-pw', 'net-ap-channel'].forEach(function (id) {
+    ['net-ap-ssid', 'net-ap-pw', 'net-ap-channel', 'net-ap-ip', 'net-ap-mask'].forEach(function (id) {
       var el = document.getElementById(id);
       var ev = (el.tagName === 'SELECT') ? 'change' : 'input';
       el.addEventListener(ev, function () {
@@ -3220,8 +3261,14 @@
       var ssid    = document.getElementById('net-ap-ssid').value.trim();
       var pw      = document.getElementById('net-ap-pw').value;
       var channel = parseInt(document.getElementById('net-ap-channel').value, 10);
+      var ip      = document.getElementById('net-ap-ip')  .value.trim();
+      var mask    = document.getElementById('net-ap-mask').value.trim();
       if (!ssid) { showToast('error', 'AP SSID required', 'Enter an SSID for the access point.', 5000); return; }
-      var body = { ap: { ssid: ssid, channel: channel } };
+      if ((ip && !mask) || (mask && !ip)) {
+        showToast('error', 'IP + mask both required', 'Set both fields, or leave both empty for the default 192.168.4.1/24.', 5000);
+        return;
+      }
+      var body = { ap: { ssid: ssid, channel: channel, ip: ip, mask: mask } };
       if (pw) body.ap.password = pw;
       saveNetwork(this, body);
     });
@@ -3339,10 +3386,11 @@
               + '<td>' + escapeHtml(name) + resBadge + '</td>'
               + '<td>' + escapeHtml(c.hostname || '') + '</td>'
               + '<td class="mono">' + rssi + '</td>'
-              + '<td style="text-align:right;">'
+              + '<td style="text-align:right; white-space:nowrap;">'
               + (canReserve
-                  ? '<button class="btn btn-secondary btn-sm dhcp-reserve-from" data-mac="' + escapeHtml(c.mac) + '" data-ip="' + escapeHtml(c.ip) + '" data-name="' + escapeHtml(c.hostname || '') + '" type="button">Reserve</button>'
+                  ? '<button class="btn btn-secondary btn-sm dhcp-reserve-from" data-mac="' + escapeHtml(c.mac) + '" data-ip="' + escapeHtml(c.ip) + '" data-name="' + escapeHtml(c.hostname || '') + '" type="button">Reserve</button> '
                   : '')
+              + '<button class="btn btn-ghost btn-sm text-danger dhcp-kick" data-mac="' + escapeHtml(c.mac) + '" type="button" title="Force reconnect — useful after changing the reservation">Kick</button>'
               + '</td>'
               + '</tr>';
       });
@@ -3363,6 +3411,31 @@
           renderDhcpResList();
           markDhcpDirty();
           showToast('success', 'Row added', 'Edit the name if you like, then click Save.', 3500);
+        });
+      });
+      document.querySelectorAll('.dhcp-kick').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var mac = this.dataset.mac;
+          if (!confirm('Kick client ' + mac + '?\nIt will be deauthed and have to reconnect — that re-runs DHCP so any new reservation takes effect.')) return;
+          var b = this;
+          b.disabled = true; b.textContent = 'Kicking…';
+          apiFetch('/api/dhcp/kick', {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify({ mac: mac })
+          }).then(function (r) { return r.json(); })
+            .then(function (d) {
+              if (d.ok) {
+                showToast('success', 'Kicked', mac + ' — waiting for it to reconnect.', 4000);
+                setTimeout(loadDhcpLeases, 2500);
+              } else {
+                showToast('error', 'Kick failed', d.reason || 'unknown', 5000);
+                b.disabled = false; b.textContent = 'Kick';
+              }
+            }).catch(function () {
+              showToast('error', 'Kick failed', 'Network error.', 5000);
+              b.disabled = false; b.textContent = 'Kick';
+            });
         });
       });
     }
