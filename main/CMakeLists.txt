@@ -28,7 +28,7 @@ idf_component_register(SRCS "main.c"
                     PRIV_REQUIRES esp_wifi nvs_flash esp_event esp_netif esp_timer
                                   lwip microlink
                                   esp_http_client esp-tls mbedtls
-                                  esp_http_server
+                                  esp_http_server json esp_app_format
                     INCLUDE_DIRS ".")
 
 # Phase 1.9k: wrap ip_napt_forward to skip NAPT for tailnet CGNAT
