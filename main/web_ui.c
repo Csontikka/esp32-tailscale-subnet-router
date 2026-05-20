@@ -294,6 +294,78 @@ static const httpd_uri_t uri_network_save = {
     .user_ctx = NULL,
 };
 
+static const char *wifi_authmode_str(wifi_auth_mode_t m)
+{
+    switch (m) {
+        case WIFI_AUTH_OPEN:            return "open";
+        case WIFI_AUTH_WEP:             return "wep";
+        case WIFI_AUTH_WPA_PSK:         return "wpa";
+        case WIFI_AUTH_WPA2_PSK:        return "wpa2";
+        case WIFI_AUTH_WPA_WPA2_PSK:    return "wpa/wpa2";
+        case WIFI_AUTH_ENTERPRISE:      return "wpa2-ent";
+        case WIFI_AUTH_WPA3_PSK:        return "wpa3";
+        case WIFI_AUTH_WPA2_WPA3_PSK:   return "wpa2/wpa3";
+        case WIFI_AUTH_WAPI_PSK:        return "wapi";
+        default:                        return "unknown";
+    }
+}
+
+static esp_err_t network_scan_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    wifi_scan_config_t cfg = {
+        .ssid = NULL, .bssid = NULL, .channel = 0, .show_hidden = false,
+        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
+        .scan_time = { .active = { .min = 100, .max = 200 } },
+    };
+    if (esp_wifi_scan_start(&cfg, true) != ESP_OK) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    if (n > 32) n = 32;
+
+    wifi_ap_record_t *recs = NULL;
+    if (n) {
+        recs = calloc(n, sizeof *recs);
+        if (!recs) {
+            httpd_resp_send_500(req);
+            return ESP_FAIL;
+        }
+        esp_wifi_scan_get_ap_records(&n, recs);
+    }
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON *arr  = cJSON_CreateArray();
+    for (uint16_t i = 0; i < n; i++) {
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "ssid",    (const char *)recs[i].ssid);
+        cJSON_AddNumberToObject(e, "rssi",    recs[i].rssi);
+        cJSON_AddNumberToObject(e, "channel", recs[i].primary);
+        cJSON_AddStringToObject(e, "auth",    wifi_authmode_str(recs[i].authmode));
+        cJSON_AddItemToArray(arr, e);
+    }
+    free(recs);
+    cJSON_AddItemToObject(root, "networks", arr);
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static const httpd_uri_t uri_network_scan = {
+    .uri      = "/api/network/scan",
+    .method   = HTTP_GET,
+    .handler  = network_scan_handler,
+    .user_ctx = NULL,
+};
+
 /* Format a host-byte-order IPv4 as "a.b.c.d" — used for the accepted-
  * routes table where host order is the documented storage. */
 static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size)
@@ -847,6 +919,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_status);
     httpd_register_uri_handler(server, &uri_network);
     httpd_register_uri_handler(server, &uri_network_save);
+    httpd_register_uri_handler(server, &uri_network_scan);
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_tailscale_save);
     httpd_register_uri_handler(server, &uri_system);
