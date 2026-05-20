@@ -2219,27 +2219,34 @@
 
     // Map reset reason codes to badge classes and display strings
     function resetReasonDisplay(reason) {
+      /* Map from esp_reset_reason()-style strings to badge style + label. */
       var map = {
-        'POWER_ON':    { cls: 'badge-neutral',  label: 'Power-on' },
-        'SW_RESET':    { cls: 'badge-neutral',  label: 'SW Reset' },
-        'PANIC':       { cls: 'badge-danger',   label: 'PANIC' },
-        'WDT':         { cls: 'badge-warning',  label: 'Watchdog' },
-        'BROWNOUT':    { cls: 'badge-warning',  label: 'Brownout' },
-        'FLASH':       { cls: 'badge-info',     label: 'Flash/OTA' },
-        'DEEP_SLEEP':  { cls: 'badge-neutral',  label: 'Deep sleep' }
+        'POWERON':   { cls: 'badge-neutral',  label: 'Power-on' },
+        'EXT':       { cls: 'badge-neutral',  label: 'External pin' },
+        'SW':        { cls: 'badge-neutral',  label: 'SW Reset' },
+        'PANIC':     { cls: 'badge-danger',   label: 'PANIC' },
+        'INT_WDT':   { cls: 'badge-warning',  label: 'Interrupt WDT' },
+        'TASK_WDT':  { cls: 'badge-warning',  label: 'Task WDT' },
+        'WDT':       { cls: 'badge-warning',  label: 'Watchdog' },
+        'DEEPSLEEP': { cls: 'badge-neutral',  label: 'Deep sleep' },
+        'BROWNOUT':  { cls: 'badge-warning',  label: 'Brownout' },
+        'SDIO':      { cls: 'badge-neutral',  label: 'SDIO wake' },
+        'UNKNOWN':   { cls: 'badge-neutral',  label: 'Unknown' }
       };
-      return map[reason] || { cls: 'badge-neutral', label: reason };
+      return map[reason] || { cls: 'badge-neutral', label: reason || '—' };
     }
 
-    // Apply status data to the DOM
+    /* Apply /api/status payload to the dashboard DOM. Field names match
+     * what status_handler emits — designer mock fields like data.uplink
+     * and data.heap_free are intentionally NOT what we read. */
     function applyStatus(data) {
-      // Uplink
-      var ul = data.uplink || {};
+      // STA (uplink)
+      var ul = data.sta || {};
       document.getElementById('uplink-ssid').textContent    = ul.ssid || '—';
       document.getElementById('uplink-ip').textContent      = ul.ip   || '—';
       document.getElementById('uplink-rssi').textContent    = (ul.rssi != null ? ul.rssi + ' dBm' : '—');
-      document.getElementById('uplink-channel').textContent = ul.channel ? ul.channel + ' (' + (ul.band || '?') + ')' : '—';
-      renderSignalBars('uplink-signal-bars', ul.rssi || -90);
+      document.getElementById('uplink-channel').textContent = ul.channel != null ? String(ul.channel) : '—';
+      renderSignalBars('uplink-signal-bars', ul.rssi != null ? ul.rssi : -90);
 
       var uplinkBadge = document.getElementById('uplink-status-badge');
       if (ul.connected) {
@@ -2262,9 +2269,9 @@
       document.getElementById('ap-channel').textContent = ap.channel || '—';
       document.getElementById('ap-clients-badge').textContent = (ap.clients != null ? ap.clients + ' client' + (ap.clients !== 1 ? 's' : '') : '—');
 
-      // Heap
-      var heapFree  = data.heap_free  || 0;
-      var heapTotal = data.heap_total || 1;
+      // Heap — backend reports free_heap + heap_total (in bytes).
+      var heapFree  = data.free_heap  || 0;
+      var heapTotal = data.heap_total || (heapFree || 1);
       var heapKB    = Math.round(heapFree / 1024);
       var heapPct   = Math.round(heapFree / heapTotal * 100);
       document.getElementById('heap-value').textContent = heapKB + ' KB';
@@ -2288,9 +2295,11 @@
       }
 
       // Uptime
-      document.getElementById('uptime-value').textContent = formatUptime(data.uptime_sec || 0);
-      if (data.last_reboot) {
-        var d = new Date(data.last_reboot);
+      document.getElementById('uptime-value').textContent = formatUptime(data.uptime_s || 0);
+      /* last_reboot is computed client-side: now - uptime. Avoids needing
+       * the device to know wallclock at boot. */
+      if (typeof data.uptime_s === 'number') {
+        var d = new Date(Date.now() - data.uptime_s * 1000);
         document.getElementById('last-reboot').textContent = d.toLocaleString('sv-SE', {
           year:'numeric', month:'2-digit', day:'2-digit',
           hour:'2-digit', minute:'2-digit'
@@ -2316,44 +2325,63 @@
         tsBadge.className = 'badge badge-neutral';
         tsBadge.textContent = 'Off';
       }
-      document.getElementById('ts-ip').textContent       = ts.ip       || '—';
-      document.getElementById('ts-hostname').textContent  = ts.hostname || '—';
-      document.getElementById('ts-peers').textContent     = (ts.peers_online != null ? ts.peers_online + ' / ' + (ts.peers_total || '?') : '—');
-      document.getElementById('ts-routes').textContent    = (ts.routes && ts.routes.length ? ts.routes.join(', ') : '—');
-      document.getElementById('ts-exit').textContent      = ts.exit_node || 'None';
+      document.getElementById('ts-ip').textContent       = ts.tunnel_ip || '—';
+      document.getElementById('ts-hostname').textContent = ts.hostname  || '—';
+      document.getElementById('ts-peers').textContent    = (ts.peers_total != null ? ts.peers_online + ' / ' + ts.peers_total : '—');
+      document.getElementById('ts-routes').textContent   = ts.advertise_routes || '—';
+      document.getElementById('ts-exit').textContent     = ts.exit_node_ip || 'None';
 
-      // Peer list
-      if (ts.peers && ts.peers.length) {
-        var peerList = document.getElementById('ts-peer-list');
-        peerList.innerHTML = ts.peers.map(function (p) {
-          var pathCls = !p.path ? 'text-muted' : (p.path === 'direct' ? 'text-success' : 'text-warning');
-          return '<div class="peer-row">'
-            + '<span class="peer-online-dot ' + (p.online ? 'on' : 'off') + '"></span>'
-            + '<span class="peer-name' + (p.online ? '' : ' text-muted') + '">' + p.name + '</span>'
-            + '<span class="peer-ip">' + p.ip + '</span>'
-            + '<span class="peer-path ' + pathCls + '">' + (p.path || '—') + '</span>'
-            + '</div>';
-        }).join('');
-      }
+      /* Peer list is fed by /api/tailscale (it carries the full peer
+       * array); /api/status only carries summary counts. Lazy-fetch
+       * once per status refresh so the list stays current without
+       * adding payload to the hot /api/status response. */
+      fetchTailscalePeers();
 
       // Telemetry
       var tlm = data.telemetry || {};
       var tlmBadge = document.getElementById('telemetry-badge');
       if (tlm.status === 'ok') {
         tlmBadge.className = 'badge badge-success';
-        tlmBadge.textContent = 'OK';
-      } else if (tlm.status === 'initializing') {
+        tlmBadge.textContent = 'On';
+      } else if (tlm.status === 'off') {
+        tlmBadge.className = 'badge badge-neutral';
+        tlmBadge.textContent = 'Off';
+      } else {
         tlmBadge.className = 'badge badge-warning';
         tlmBadge.textContent = 'Init…';
-      } else {
-        tlmBadge.className = 'badge badge-danger';
-        tlmBadge.textContent = 'Not OK';
       }
       document.getElementById('tlm-boots').textContent   = tlm.boot_count  != null ? tlm.boot_count  : '—';
       document.getElementById('tlm-flashes').textContent = tlm.flash_count != null ? tlm.flash_count : '—';
 
       // Timestamp
       document.getElementById('status-updated').textContent = 'Last updated ' + new Date().toLocaleTimeString();
+    }
+
+    /* Pull the live peer list from /api/tailscale and render it on the
+     * Status-page peer mini-table. Replaces the designer-prototype
+     * hardcoded sample peers the first time it runs. */
+    function fetchTailscalePeers() {
+      apiFetch('/api/tailscale')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var peerList = document.getElementById('ts-peer-list');
+          var peers = (d && d.peers) || [];
+          if (!peers.length) {
+            peerList.innerHTML = '<div class="peer-row text-muted" style="padding:0.4rem 0;">No peers</div>';
+            return;
+          }
+          peerList.innerHTML = peers.map(function (p) {
+            var pathLabel = !p.online ? '—' : (p.direct_path ? 'direct' : 'DERP');
+            var pathCls   = !p.online ? 'text-muted' : (p.direct_path ? 'text-success' : 'text-warning');
+            return '<div class="peer-row">'
+              + '<span class="peer-online-dot ' + (p.online ? 'on' : 'off') + '"></span>'
+              + '<span class="peer-name' + (p.online ? '' : ' text-muted') + '">' + (p.hostname || '?') + '</span>'
+              + '<span class="peer-ip">' + (p.vpn_ip || '') + '</span>'
+              + '<span class="peer-path ' + pathCls + '">' + pathLabel + '</span>'
+              + '</div>';
+          }).join('');
+        })
+        .catch(function () {});
     }
 
     // Fetch with fallback to sample data; 401 → login overlay
