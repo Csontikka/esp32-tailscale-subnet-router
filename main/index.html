@@ -1359,8 +1359,7 @@
         <div class="pending-reboot-banner-title">Pending changes — reboot required</div>
         <div class="pending-reboot-banner-sub">WiFi and Tailscale changes only take effect after the device restarts.</div>
       </div>
-      <button class="btn btn-secondary btn-sm" id="pendingDismiss" type="button">Dismiss</button>
-      <button class="btn btn-primary btn-sm"   id="pendingReboot"  type="button">Reboot now</button>
+      <button class="btn btn-primary btn-sm" id="pendingReboot" type="button">Reboot now</button>
     </div>
 
 
@@ -3916,9 +3915,6 @@
     try {
       if (localStorage.getItem('pending_reboot') === '1') setPendingReboot(true);
     } catch (e) {}
-    document.getElementById('pendingDismiss').addEventListener('click', function () {
-      setPendingReboot(false);
-    });
     document.getElementById('pendingReboot').addEventListener('click', function () {
       showConfirm('Reboot now?',
                   'The device will restart and become reachable again in ~10 s.',
