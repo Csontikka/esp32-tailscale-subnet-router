@@ -9,13 +9,50 @@
 #include "esp_err.h"
 #include "esp_random.h"
 #include "mbedtls/sha256.h"
+#include "nvs.h"
 
-#include "nvs_params.h"
 #include "web_password.h"
 
-#define PW_NVS_KEY  "web_password"
-#define PW_SALT_LEN 16
-#define PW_HASH_LEN 32  /* SHA-256 output */
+/* Must match the NVS_NAMESPACE define in main/nvs_params.h. Duplicated
+ * here so web_password can live as its own component and be required
+ * by both main and remote_console without a cycle. */
+#define PW_NVS_NAMESPACE "tsr"
+#define PW_NVS_KEY       "web_password"
+#define PW_SALT_LEN      16
+#define PW_HASH_LEN      32  /* SHA-256 output */
+
+/* Local helpers — raw NVS instead of nvs_params.h to avoid pulling a
+ * cross-component dep on main. */
+static char *nvs_dup_str(const char *key)
+{
+    nvs_handle_t h;
+    if (nvs_open(PW_NVS_NAMESPACE, NVS_READONLY, &h) != ESP_OK) return NULL;
+    size_t len = 0;
+    if (nvs_get_str(h, key, NULL, &len) != ESP_OK || len == 0) {
+        nvs_close(h);
+        return NULL;
+    }
+    char *buf = malloc(len);
+    if (!buf) { nvs_close(h); return NULL; }
+    if (nvs_get_str(h, key, buf, &len) != ESP_OK) {
+        free(buf);
+        nvs_close(h);
+        return NULL;
+    }
+    nvs_close(h);
+    return buf;
+}
+
+static esp_err_t nvs_write_str(const char *key, const char *value)
+{
+    nvs_handle_t h;
+    esp_err_t err = nvs_open(PW_NVS_NAMESPACE, NVS_READWRITE, &h);
+    if (err != ESP_OK) return err;
+    err = nvs_set_str(h, key, value);
+    if (err == ESP_OK) err = nvs_commit(h);
+    nvs_close(h);
+    return err;
+}
 
 static void bytes_to_hex(const uint8_t *src, size_t len, char *out)
 {
@@ -49,7 +86,7 @@ static void compute_hash(const uint8_t *salt, size_t salt_len,
 
 bool is_web_password_set(void)
 {
-    char *s = nvs_param_get_str(PW_NVS_KEY);
+    char *s = nvs_dup_str(PW_NVS_KEY);
     if (!s) return false;
     bool set = (s[0] != '\0');
     free(s);
@@ -58,7 +95,7 @@ bool is_web_password_set(void)
 
 bool verify_web_password(const char *plaintext)
 {
-    char *stored = nvs_param_get_str(PW_NVS_KEY);
+    char *stored = nvs_dup_str(PW_NVS_KEY);
     if (!stored) return false;
 
     /* Expected format: "salt_hex:hash_hex" — 32 + 1 + 64 chars. */
@@ -88,7 +125,7 @@ bool verify_web_password(const char *plaintext)
 esp_err_t set_web_password_hashed(const char *plaintext)
 {
     if (plaintext[0] == '\0') {
-        return nvs_param_set_str(PW_NVS_KEY, "");
+        return nvs_write_str(PW_NVS_KEY, "");
     }
 
     uint8_t salt[PW_SALT_LEN], hash[PW_HASH_LEN];
@@ -100,5 +137,5 @@ esp_err_t set_web_password_hashed(const char *plaintext)
     buf[PW_SALT_LEN * 2] = ':';
     bytes_to_hex(hash, PW_HASH_LEN, buf + PW_SALT_LEN * 2 + 1);
 
-    return nvs_param_set_str(PW_NVS_KEY, buf);
+    return nvs_write_str(PW_NVS_KEY, buf);
 }
