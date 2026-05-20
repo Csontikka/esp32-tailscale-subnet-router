@@ -19,6 +19,7 @@
 #include "tailscale_config.h"
 #include "nvs_params.h"
 #include "microlink.h"
+#include "lwip_route_hook.h"
 #include "telemetry.h"
 #include "log_capture.h"
 #include "web_password.h"
@@ -363,6 +364,52 @@ static const httpd_uri_t uri_network_scan = {
     .uri      = "/api/network/scan",
     .method   = HTTP_GET,
     .handler  = network_scan_handler,
+    .user_ctx = NULL,
+};
+
+static esp_err_t tools_route_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    /* Parse ?dst=<ipv4>. The querystring is read into a stack buffer so
+     * we don't drag malloc into this hot debug path. */
+    char query[64];
+    char dst_str[32];
+    if (httpd_req_get_url_query_str(req, query, sizeof query) != ESP_OK
+        || httpd_query_key_value(query, "dst", dst_str, sizeof dst_str) != ESP_OK)
+    {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing dst");
+        return ESP_FAIL;
+    }
+
+    ip4_addr_t a;
+    if (!ip4addr_aton(dst_str, &a)) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid IPv4");
+        return ESP_FAIL;
+    }
+    /* route_explain takes host byte order. */
+    uint32_t dst_hbo = lwip_ntohl(a.addr);
+
+    char netif_name[16] = {0};
+    char reason[160]    = {0};
+    route_explain(dst_hbo, netif_name, sizeof netif_name, reason, sizeof reason);
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "dst",    dst_str);
+    cJSON_AddStringToObject(root, "netif",  netif_name);
+    cJSON_AddStringToObject(root, "reason", reason);
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static const httpd_uri_t uri_tools_route = {
+    .uri      = "/api/tools/route",
+    .method   = HTTP_GET,
+    .handler  = tools_route_handler,
     .user_ctx = NULL,
 };
 
@@ -920,6 +967,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_network);
     httpd_register_uri_handler(server, &uri_network_save);
     httpd_register_uri_handler(server, &uri_network_scan);
+    httpd_register_uri_handler(server, &uri_tools_route);
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_tailscale_save);
     httpd_register_uri_handler(server, &uri_system);
