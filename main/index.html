@@ -1200,7 +1200,7 @@
           <circle cx="12" cy="17.5" r="1"/>
         </svg>
       </div>
-      <span class="nav-brand-name">ESP32 Router</span>
+      <span class="nav-brand-name" id="brandName">ESP32 Router</span>
     </div>
 
     <div class="nav-tabs" role="tablist">
@@ -1303,6 +1303,7 @@
         </svg>
       </div>
       <div class="auth-title" id="login-title">ESP32 Router</div>
+      <!-- updateBrandName() also rewrites #login-title with the operator label. -->
       <div class="auth-subtitle">Enter your admin password to continue.</div>
       <div class="auth-error" id="login-error"></div>
       <!-- Hidden username so password managers anchor the credential to "admin". -->
@@ -1973,6 +1974,54 @@
         </div>
       </div>
 
+      <!-- ===== PCAP Capture ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">PCAP capture</span>
+          </div>
+          <span class="badge badge-neutral" id="tool-pcap-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">
+            Streams captured frames over TCP for Wireshark. Connect Wireshark with
+            <code class="mono">tcp://&lt;device-ip&gt;:19000</code> first, then choose a mode below.
+          </p>
+          <div class="form-group">
+            <label class="form-label">Mode</label>
+            <div style="display:flex; gap:1rem; flex-wrap:wrap;">
+              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
+                <input type="radio" name="pcap-mode" value="off" id="pcap-mode-off" checked> Off
+              </label>
+              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
+                <input type="radio" name="pcap-mode" value="acl_monitor" id="pcap-mode-acl"> ACL monitor (only ACL_MONITOR rules)
+              </label>
+              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
+                <input type="radio" name="pcap-mode" value="promiscuous" id="pcap-mode-promisc"> Promiscuous (AP interface)
+              </label>
+            </div>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="pcap-snaplen">Snaplen (max bytes/packet)</label>
+              <input class="input" type="number" id="pcap-snaplen" min="64" max="1600" value="1500">
+            </div>
+          </div>
+          <div class="stat-row"><span class="stat-label">Client connected</span><span class="stat-value mono" id="pcap-client">—</span></div>
+          <div class="stat-row"><span class="stat-label">Captured</span>        <span class="stat-value mono" id="pcap-captured">—</span></div>
+          <div class="stat-row"><span class="stat-label">Dropped (buffer full)</span><span class="stat-value mono" id="pcap-dropped">—</span></div>
+          <div class="stat-row"><span class="stat-label">Buffer usage</span>    <span class="stat-value mono" id="pcap-buf">—</span></div>
+          <div class="stat-row"><span class="stat-label">Listening on</span>    <span class="stat-value mono" id="pcap-port">tcp:&lt;ip&gt;:19000</span></div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint text-warning">Apply currently hangs on the device — backend handler under investigation. Status display works.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-secondary btn-md" id="pcap-refresh">Refresh</button>
+            <button class="btn btn-primary btn-md" id="pcap-apply" disabled>Apply</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ===== Log Viewer ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -2009,10 +2058,23 @@
           </div>
         </div>
         <div class="card-body">
+          <div class="grid grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="sys-device-name">Friendly name</label>
+              <input class="input" type="text" id="sys-device-name" placeholder="ESP32 Router" maxlength="32">
+              <span class="form-hint">Shown in the nav and on the login screen. Helps tell multiple routers apart.</span>
+            </div>
+          </div>
           <div class="stat-row"><span class="stat-label">Firmware version</span><span class="stat-value mono" id="sys-version">—</span></div>
           <div class="stat-row"><span class="stat-label">Built</span>            <span class="stat-value mono" id="sys-build">—</span></div>
           <div class="stat-row"><span class="stat-label">ESP-IDF</span>          <span class="stat-value mono" id="sys-idf">—</span></div>
           <div class="stat-row"><span class="stat-label">Device hash</span>      <span class="stat-value mono" id="sys-dh">—</span></div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Friendly-name change applies immediately.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-primary btn-md" id="sys-device-name-save" disabled>Save name</button>
+          </div>
         </div>
       </div>
 
@@ -2031,16 +2093,8 @@
               <input type="checkbox" id="sys-tlm-enabled"> Enable telemetry
             </label>
           </div>
-          <div class="grid grid-cols-2">
-            <div class="form-group">
-              <label class="form-label" for="sys-tlm-url">Worker URL</label>
-              <input class="input mono" type="text" id="sys-tlm-url" placeholder="https://…/v1/event">
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="sys-tlm-key">X-Tlm-Key (write-only)</label>
-              <input class="input mono" type="password" id="sys-tlm-key" autocomplete="new-password" placeholder="Leave empty to keep current">
-            </div>
-          </div>
+          <!-- Worker URL + X-Tlm-Key intentionally fixed in firmware. -->
+
           <div class="stat-row"><span class="stat-label">Boot count</span> <span class="stat-value mono" id="sys-tlm-boots">—</span></div>
           <div class="stat-row"><span class="stat-label">Flash count</span><span class="stat-value mono" id="sys-tlm-flashes">—</span></div>
         </div>
@@ -2254,7 +2308,10 @@
           if (page === 'tailscale' && typeof loadTailscale === 'function') loadTailscale();
           if (page === 'firewall'  && typeof loadFirewall  === 'function') loadFirewall();
           if (page === 'system'    && typeof loadSystem    === 'function') loadSystem();
-          /* Tools tab is fully lazy — every card runs only on its own button. */
+          /* Tools tab is fully lazy except for the PCAP card, which
+           * auto-loads its status so the operator sees the current mode
+           * without clicking Refresh first. */
+          if (page === 'tools'     && typeof pcapRefresh   === 'function') pcapRefresh();
         });
       });
     })();
@@ -3554,6 +3611,8 @@
       apiFetch('/api/system')
         .then(function (r) { return r.json(); })
         .then(function (d) {
+          document.getElementById('sys-device-name').value   = d.device_name || '';
+          document.getElementById('sys-device-name-save').disabled = true;
           document.getElementById('sys-version').textContent = d.version || '—';
           document.getElementById('sys-build').textContent   = (d.build_date || '') + ' ' + (d.build_time || '');
           document.getElementById('sys-idf').textContent     = d.idf_ver || '—';
@@ -3561,8 +3620,6 @@
           var tlm = d.telemetry || {};
           document.getElementById('sys-dh').textContent       = tlm.device_hash || '—';
           document.getElementById('sys-tlm-enabled').checked  = !!tlm.enabled;
-          document.getElementById('sys-tlm-url').value        = tlm.url || '';
-          document.getElementById('sys-tlm-key').value        = '';
           document.getElementById('sys-tlm-boots').textContent   = (tlm.boot_count  != null) ? tlm.boot_count  : '—';
           document.getElementById('sys-tlm-flashes').textContent = (tlm.flash_count != null) ? tlm.flash_count : '—';
           var tlmBadge = document.getElementById('sys-tlm-badge');
@@ -3581,21 +3638,34 @@
         }).catch(function () {});
     }
 
-    ['sys-tlm-enabled', 'sys-tlm-url', 'sys-tlm-key'].forEach(function (id) {
-      var el = document.getElementById(id);
-      el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', function () {
-        document.getElementById('sys-tlm-save').disabled = false;
-      });
+    /* Friendly-name dirty-track + save. */
+    document.getElementById('sys-device-name').addEventListener('input', function () {
+      document.getElementById('sys-device-name-save').disabled = false;
+    });
+    document.getElementById('sys-device-name-save').addEventListener('click', function () {
+      var name = document.getElementById('sys-device-name').value.trim();
+      var btn  = this;
+      btn.disabled = true;
+      apiFetch('/api/system', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ device_name: name })
+      })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function () {
+          updateBrandName(name);
+          showToast('success', 'Name saved', 'Now showing "' + (name || 'ESP32 Router') + '".', 3000);
+        })
+        .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
+    });
+
+    document.getElementById('sys-tlm-enabled').addEventListener('change', function () {
+      document.getElementById('sys-tlm-save').disabled = false;
     });
     document.getElementById('sys-tlm-save').addEventListener('click', function () {
       var body = {
-        telemetry: {
-          enabled: document.getElementById('sys-tlm-enabled').checked,
-          url:     document.getElementById('sys-tlm-url').value.trim()
-        }
+        telemetry: { enabled: document.getElementById('sys-tlm-enabled').checked }
       };
-      var key = document.getElementById('sys-tlm-key').value;
-      if (key) body.telemetry.key = key;   /* omit-to-keep */
       var btn = this;
       btn.disabled = true;
       apiFetch('/api/system', {
@@ -3702,6 +3772,52 @@
                   });
     });
 
+    /* PCAP — fetch status + apply mode. */
+    function pcapApplyStatus(d) {
+      var modeStr = d.mode || 'off';
+      document.getElementById('pcap-mode-off').checked     = (modeStr === 'off');
+      document.getElementById('pcap-mode-acl').checked     = (modeStr === 'acl_monitor');
+      document.getElementById('pcap-mode-promisc').checked = (modeStr === 'promiscuous');
+      var badge = document.getElementById('pcap-pcap-badge') || document.getElementById('tool-pcap-badge');
+      if (badge) {
+        if (modeStr === 'off') {
+          badge.className = 'badge badge-neutral'; badge.textContent = 'Off';
+        } else {
+          badge.className = 'badge badge-success'; badge.textContent = modeStr;
+        }
+      }
+      document.getElementById('pcap-snaplen').value = d.snaplen != null ? d.snaplen : 1500;
+      document.getElementById('pcap-client').textContent   = d.client_connected ? 'yes' : 'no';
+      document.getElementById('pcap-captured').textContent = d.captured;
+      document.getElementById('pcap-dropped').textContent  = d.dropped;
+      document.getElementById('pcap-buf').textContent      = d.buf_used + ' / ' + d.buf_total + ' B';
+      document.getElementById('pcap-port').textContent     = 'tcp://<device-ip>:' + (d.tcp_port || 19000);
+    }
+    function pcapRefresh() {
+      apiFetch('/api/tools/pcap')
+        .then(function (r) { return r.json(); })
+        .then(pcapApplyStatus)
+        .catch(function () {});
+    }
+    document.getElementById('pcap-refresh').addEventListener('click', pcapRefresh);
+    document.getElementById('pcap-apply').addEventListener('click', function () {
+      var mode = document.querySelector('input[name="pcap-mode"]:checked').value;
+      var snap = parseInt(document.getElementById('pcap-snaplen').value, 10) || 1500;
+      var btn = this;
+      btn.disabled = true;
+      apiFetch('/api/tools/pcap', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ mode: mode, snaplen: snap })
+      })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function () { showToast('success', 'PCAP', 'mode applied', 3000); pcapRefresh(); })
+        .catch(function () { showToast('error', 'Save failed', '', 5000); })
+        .finally(function () { btn.disabled = false; });
+    });
+    /* Auto-load PCAP status on first Tools-tab open — piggy-back on the
+     * tab nav hook below. */
+
     document.getElementById('tool-log-refresh').addEventListener('click', function () {
       var btn = this;
       var pre = document.getElementById('tool-log-body');
@@ -3721,17 +3837,34 @@
     // =====================================================================
     // INITIAL LOAD — auth gate
     // =====================================================================
+    /* Centralised brand-name updater. Called on every /api/auth/status
+     * fetch + after the operator saves a new name from the System tab. */
+    function updateBrandName(name) {
+      var n = (name && name.length) ? name : 'ESP32 Router';
+      document.title = n;
+      var brand = document.getElementById('brandName');
+      var login = document.getElementById('login-title');
+      if (brand) brand.textContent = n;
+      if (login) login.textContent = n;
+    }
+
     fetch('/api/auth/status', { credentials: 'same-origin' })
       .then(function (r) { return r.json(); })
       .then(function (s) {
-        if (s.authenticated) {
+        updateBrandName(s.device_name);
+        /* When no password is set the device is wide open. Don't drop
+         * into the dashboard — force the operator through the setup
+         * wizard so the next thing they do is define a password.
+         * Cleared-then-logged-off was landing on the dashboard here
+         * because request_authenticated() returns true with no
+         * password, and the wizard branch only fired when authenticated
+         * was already false. */
+        if (!s.auth_required) {
+          showAuthOverlay('setup');
+        } else if (s.authenticated) {
           showAuthOverlay(null);
           loadDashboard();
-        } else if (!s.auth_required) {
-          // No password set yet — first boot wizard
-          showAuthOverlay('setup');
         } else {
-          // Password set, not authenticated
           showAuthOverlay('login');
         }
       })

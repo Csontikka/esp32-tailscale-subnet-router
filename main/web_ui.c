@@ -23,6 +23,7 @@
 #include "acl.h"
 #include "syslog_client.h"
 #include "net_diag.h"
+#include "pcap_capture.h"
 #include "telemetry.h"
 #include "log_capture.h"
 #include "web_password.h"
@@ -65,8 +66,9 @@ static void ip4_to_str(uint32_t ip_nbo, char *out, size_t out_size)
 }
 
 /* Forward decls — definitions live further down. */
-static bool request_authenticated(httpd_req_t *req);
-static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size);
+static bool  request_authenticated(httpd_req_t *req);
+static void  ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size);
+static char *device_name_dup(void);
 
 static esp_err_t require_auth(httpd_req_t *req)
 {
@@ -569,6 +571,64 @@ static const httpd_uri_t uri_tools_trace = {
     .uri = "/api/tools/trace", .method = HTTP_GET, .handler = tools_trace_handler,
 };
 
+static esp_err_t tools_pcap_status_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "mode",            pcap_mode_to_string(pcap_get_mode()));
+    cJSON_AddNumberToObject(root, "mode_value",      pcap_get_mode());
+    cJSON_AddBoolToObject  (root, "client_connected", pcap_client_connected());
+    cJSON_AddNumberToObject(root, "captured",        pcap_get_captured_count());
+    cJSON_AddNumberToObject(root, "dropped",         pcap_get_dropped_count());
+    cJSON_AddNumberToObject(root, "snaplen",         pcap_get_snaplen());
+    size_t used = 0, total = 0;
+    pcap_get_buffer_usage(&used, &total);
+    cJSON_AddNumberToObject(root, "buf_used",  used);
+    cJSON_AddNumberToObject(root, "buf_total", total);
+    cJSON_AddNumberToObject(root, "tcp_port",  19000);   /* hardcoded in pcap_capture.c */
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static esp_err_t tools_pcap_save_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char buf[128];
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+
+    cJSON *body = cJSON_Parse(buf);
+    if (!body) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+    const cJSON *m = cJSON_GetObjectItem(body, "mode");
+    if (cJSON_IsString(m)) {
+        if      (!strcmp(m->valuestring, "off"))         pcap_set_mode(PCAP_MODE_OFF);
+        else if (!strcmp(m->valuestring, "acl_monitor")) pcap_set_mode(PCAP_MODE_ACL_MONITOR);
+        else if (!strcmp(m->valuestring, "promiscuous")) pcap_set_mode(PCAP_MODE_PROMISCUOUS);
+    }
+    const cJSON *s = cJSON_GetObjectItem(body, "snaplen");
+    if (cJSON_IsNumber(s)) pcap_set_snaplen((uint16_t)s->valuedouble);
+    cJSON_Delete(body);
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static const httpd_uri_t uri_tools_pcap_get = {
+    .uri = "/api/tools/pcap", .method = HTTP_GET,  .handler = tools_pcap_status_handler,
+};
+static const httpd_uri_t uri_tools_pcap_set = {
+    .uri = "/api/tools/pcap", .method = HTTP_POST, .handler = tools_pcap_save_handler,
+};
+
 static esp_err_t firewall_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -962,6 +1022,12 @@ static esp_err_t system_handler(httpd_req_t *req)
         cJSON_AddStringToObject(root, "idf_ver",    desc->idf_ver);
     }
 
+    /* Device label (the friendly name shown in the nav). */
+    {
+        char *name = device_name_dup();
+        if (name) { cJSON_AddStringToObject(root, "device_name", name); free(name); }
+    }
+
     /* Telemetry status — the API key is intentionally not exposed. */
     telemetry_state_t tm = telemetry_get_state();
     cJSON *t = cJSON_CreateObject();
@@ -1035,16 +1101,21 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    /* Telemetry block — { enabled, url, key }. Empty key is allowed and
-     * means "keep the default key" inside telemetry_set_key. */
+    /* Device-name update — operator-defined label persisted under
+     * NVS "dev_name", surfaced everywhere the SPA reads /api/auth/status
+     * or /api/system. */
+    const cJSON *dn = cJSON_GetObjectItem(root, "device_name");
+    if (cJSON_IsString(dn)) {
+        nvs_param_set_str("dev_name", dn->valuestring);
+    }
+
+    /* Telemetry block — only the enabled toggle is editable from the UI.
+     * The worker URL + X-Tlm-Key live in the firmware to keep them off
+     * the operator's editable surface. */
     const cJSON *t = cJSON_GetObjectItem(root, "telemetry");
     if (cJSON_IsObject(t)) {
         const cJSON *en = cJSON_GetObjectItem(t, "enabled");
         if (cJSON_IsBool(en))  telemetry_set_enabled(cJSON_IsTrue(en));
-        const cJSON *url = cJSON_GetObjectItem(t, "url");
-        if (cJSON_IsString(url)) telemetry_set_url(url->valuestring);
-        const cJSON *key = cJSON_GetObjectItem(t, "key");
-        if (cJSON_IsString(key)) telemetry_set_key(key->valuestring);
     }
 
     /* Syslog block — { enabled, server, port }. Toggling enabled fires
@@ -1153,11 +1224,24 @@ static bool request_authenticated(httpd_req_t *req)
     return strncmp(p, s_session_token, n) == 0 && (p[n] == '\0' || p[n] == ';');
 }
 
+/* Read the operator-defined device label out of NVS, falling back to a
+ * generic 'ESP32 Router' name. Caller frees the returned buffer. */
+static char *device_name_dup(void)
+{
+    char *s = nvs_param_get_str("dev_name");
+    if (s && s[0]) return s;
+    free(s);
+    return strdup("ESP32 Router");
+}
+
 static esp_err_t auth_status_handler(httpd_req_t *req)
 {
     cJSON *root = cJSON_CreateObject();
     cJSON_AddBoolToObject(root, "auth_required", is_web_password_set());
     cJSON_AddBoolToObject(root, "authenticated", request_authenticated(req));
+    /* Device name is fine to expose pre-auth — it's a label, not a secret. */
+    char *name = device_name_dup();
+    if (name) { cJSON_AddStringToObject(root, "device_name", name); free(name); }
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     httpd_resp_set_type(req, "application/json");
@@ -1390,6 +1474,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_tools_route);
     httpd_register_uri_handler(server, &uri_tools_ping);
     httpd_register_uri_handler(server, &uri_tools_trace);
+    httpd_register_uri_handler(server, &uri_tools_pcap_get);
+    httpd_register_uri_handler(server, &uri_tools_pcap_set);
     httpd_register_uri_handler(server, &uri_firewall);
     httpd_register_uri_handler(server, &uri_firewall_add);
     httpd_register_uri_handler(server, &uri_firewall_delete);
