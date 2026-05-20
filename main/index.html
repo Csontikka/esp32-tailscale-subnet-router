@@ -1268,7 +1268,7 @@
 
   <!-- First-boot setup wizard -->
   <div class="auth-overlay" id="authSetup" style="display:none" role="dialog" aria-modal="true" aria-labelledby="setup-title">
-    <div class="auth-card">
+    <form class="auth-card" id="setupForm" autocomplete="on">
       <div class="auth-icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
@@ -1278,22 +1278,24 @@
       <div class="auth-title" id="setup-title">Set up admin password</div>
       <div class="auth-subtitle">Protect the router web interface. You can change this later from the System tab.</div>
       <div class="auth-error" id="setup-error"></div>
+      <!-- Hidden username so password managers anchor the credential to "admin". -->
+      <input type="text" name="username" autocomplete="username" value="admin" hidden>
       <div class="form-group">
         <label class="form-label" for="setup-pw">Password</label>
-        <input class="input" type="password" id="setup-pw" autocomplete="new-password" placeholder="Enter password" minlength="8">
+        <input class="input" type="password" id="setup-pw" name="new-password" autocomplete="new-password" placeholder="Enter password" minlength="8">
         <span class="auth-hint">Min 8 chars, with a lowercase, uppercase, digit, and special character.</span>
       </div>
       <div class="form-group" style="margin-bottom:var(--sp-6)">
         <label class="form-label" for="setup-pw2">Confirm password</label>
-        <input class="input" type="password" id="setup-pw2" autocomplete="new-password" placeholder="Confirm password">
+        <input class="input" type="password" id="setup-pw2" name="confirm-password" autocomplete="new-password" placeholder="Confirm password">
       </div>
-      <button class="btn btn-primary btn-full btn-lg" id="setupSubmitBtn">Set password &amp; continue</button>
-    </div>
+      <button class="btn btn-primary btn-full btn-lg" type="submit" id="setupSubmitBtn">Set password &amp; continue</button>
+    </form>
   </div>
 
   <!-- Login screen -->
   <div class="auth-overlay" id="authLogin" style="display:none" role="dialog" aria-modal="true" aria-labelledby="login-title">
-    <div class="auth-card">
+    <form class="auth-card" id="loginForm" autocomplete="on">
       <div class="auth-icon">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
@@ -1303,12 +1305,14 @@
       <div class="auth-title" id="login-title">ESP32 Router</div>
       <div class="auth-subtitle">Enter your admin password to continue.</div>
       <div class="auth-error" id="login-error"></div>
+      <!-- Hidden username so password managers anchor the credential to "admin". -->
+      <input type="text" name="username" autocomplete="username" value="admin" hidden>
       <div class="form-group" style="margin-bottom:var(--sp-6)">
         <label class="form-label" for="login-pw">Password</label>
-        <input class="input" type="password" id="login-pw" autocomplete="current-password" placeholder="Password">
+        <input class="input" type="password" id="login-pw" name="password" autocomplete="current-password" placeholder="Password">
       </div>
-      <button class="btn btn-primary btn-full btn-lg" id="loginSubmitBtn">Sign in</button>
-    </div>
+      <button class="btn btn-primary btn-full btn-lg" type="submit" id="loginSubmitBtn">Sign in</button>
+    </form>
   </div>
 
   <!-- ===================================================================
@@ -2375,7 +2379,8 @@
     // =====================================================================
     // AUTH — setup wizard submit
     // =====================================================================
-    document.getElementById('setupSubmitBtn').addEventListener('click', function () {
+    document.getElementById('setupForm').addEventListener('submit', function (e) {
+      e.preventDefault();
       var pw  = document.getElementById('setup-pw').value;
       var pw2 = document.getElementById('setup-pw2').value;
 
@@ -2391,7 +2396,7 @@
         return;
       }
 
-      var btn = this;
+      var btn = document.getElementById('setupSubmitBtn');
       btn.disabled = true;
       btn.textContent = 'Setting up…';
 
@@ -2425,17 +2430,11 @@
         });
     });
 
-    // Submit setup on Enter in either field
-    ['setup-pw', 'setup-pw2'].forEach(function (id) {
-      document.getElementById(id).addEventListener('keydown', function (e) {
-        if (e.key === 'Enter') document.getElementById('setupSubmitBtn').click();
-      });
-    });
-
     // =====================================================================
     // AUTH — login submit
     // =====================================================================
-    document.getElementById('loginSubmitBtn').addEventListener('click', function () {
+    document.getElementById('loginForm').addEventListener('submit', function (e) {
+      e.preventDefault();
       var pw = document.getElementById('login-pw').value;
       setAuthError('login-error', '');
 
@@ -2444,7 +2443,7 @@
         return;
       }
 
-      var btn = this;
+      var btn = document.getElementById('loginSubmitBtn');
       btn.disabled = true;
       btn.textContent = 'Signing in…';
 
@@ -2476,10 +2475,6 @@
           btn.disabled = false;
           btn.textContent = 'Sign in';
         });
-    });
-
-    document.getElementById('login-pw').addEventListener('keydown', function (e) {
-      if (e.key === 'Enter') document.getElementById('loginSubmitBtn').click();
     });
 
     // =====================================================================
