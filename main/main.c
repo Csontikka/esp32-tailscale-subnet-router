@@ -27,6 +27,8 @@
 #include "lwip/sockets.h"
 #if IP_NAPT
 #include "lwip/lwip_napt.h"
+
+#include "log_capture.h"
 #endif
 #include "lwip/err.h"
 #include "lwip/sys.h"
@@ -188,6 +190,12 @@ void app_main(void)
         ret = nvs_flash_init();
     }
     ESP_ERROR_CHECK(ret);
+
+    /* Install the ESP_LOG ring buffer + RTC-NOINIT pre-crash buffer as
+     * early as possible so the boot-time output is recoverable from
+     * the /log page (live ring) and from /diag after a PANIC/WDT
+     * (the pre-crash slice in slow RTC RAM survives reboot). */
+    log_capture_init(0);
 
     /* Initialize event group */
     s_wifi_event_group = xEventGroupCreate();
