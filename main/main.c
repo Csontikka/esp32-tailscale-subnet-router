@@ -121,6 +121,13 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         ESP_LOGI(TAG_STA, "Got IP:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         ap_connect = 1;
+        /* Auto-spawn the Tailscale (microlink) connect task once STA has
+         * an IP — same trigger point as the old repo. The task is
+         * responsible for waiting on SNTP, dialing the control plane and
+         * staying online; we just kick it off here. */
+        if (tailscale_enabled) {
+            xTaskCreate(tailscale_connect_task, "ts_connect", 4096, NULL, 5, NULL);
+        }
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
 }
