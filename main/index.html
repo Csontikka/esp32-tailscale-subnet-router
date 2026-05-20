@@ -1816,6 +1816,33 @@
           <div style="padding:1rem; color:var(--text-muted);">— loading —</div>
         </div>
       </div>
+
+      <!-- ===== Port forwarding (uplink-side NAPT) ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Port forwarding</span>
+          </div>
+          <span class="badge badge-neutral" id="portmap-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">
+            Forward an external port on the uplink to an AP-side <code class="mono">IP:port</code>.
+            Mappings re-bind to the new uplink IP on every reconnect.
+          </p>
+          <div id="portmap-list"></div>
+          <div style="margin-top:0.75rem;">
+            <button class="btn btn-secondary btn-md" id="portmap-add-btn" type="button">+ Add mapping</button>
+          </div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Save replaces the whole table. Up to 16 entries.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-secondary btn-md" id="portmap-reload">Reload</button>
+            <button class="btn btn-primary btn-md" id="portmap-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- =================================================================
@@ -3116,6 +3143,7 @@
       /* DHCP reservations + connected-client/lease snapshot. */
       loadDhcpReservations();
       loadDhcpLeases();
+      loadPortmap();
     }
 
     /* Top-level network-list buttons. */
@@ -3516,6 +3544,148 @@
         btn.disabled = false; btn.textContent = 'Save';
         showToast('error', 'Save failed', 'Reservations were not stored. Check the device log.', 5000);
       });
+    });
+
+    // =====================================================================
+    // PORT FORWARDING (still on the Network tab)
+    // =====================================================================
+    var s_portmap_list = [];
+    var s_portmap_max  = 16;
+
+    function markPortmapDirty() {
+      document.getElementById('portmap-save').disabled = false;
+    }
+
+    function snapshotPortmapListFromDOM() {
+      var rows = document.querySelectorAll('.pm-row');
+      rows.forEach(function (row) {
+        var idx = parseInt(row.dataset.idx, 10);
+        var r = s_portmap_list[idx]; if (!r) return;
+        r.proto    = row.querySelector('.pm-proto').value;
+        r.ext_port = row.querySelector('.pm-ext').value;
+        r.int_ip   = row.querySelector('.pm-iip').value;
+        r.int_port = row.querySelector('.pm-iport').value;
+        r.name     = row.querySelector('.pm-name').value;
+      });
+    }
+
+    function renderPortmapList() {
+      var c = document.getElementById('portmap-list');
+      var b = document.getElementById('portmap-badge');
+      b.textContent = s_portmap_list.length + ' / ' + s_portmap_max;
+      b.className   = 'badge ' + (s_portmap_list.length ? 'badge-accent' : 'badge-neutral');
+
+      if (!s_portmap_list.length) {
+        c.innerHTML = '<div style="padding:1rem; color:var(--text-muted); border:1px dashed var(--border); border-radius:var(--radius-md);">No mappings — click <strong>+ Add mapping</strong> below.</div>';
+        return;
+      }
+      var html = '';
+      s_portmap_list.forEach(function (r, idx) {
+        var protoTcp = (r.proto || 'tcp').toLowerCase() === 'tcp';
+        html += '<div class="pm-row" data-idx="' + idx + '" style="border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; margin-bottom:0.5rem;">'
+              + '<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem;">'
+              +   '<span class="badge badge-neutral mono">#' + (idx + 1) + '</span>'
+              +   '<button class="btn btn-ghost btn-sm text-danger pm-del" type="button" title="Remove">×</button>'
+              + '</div>'
+              + '<div class="grid grid-cols-2">'
+              +   '<div class="form-group"><label class="form-label">Protocol</label>'
+              +     '<select class="select pm-proto">'
+              +       '<option value="tcp"' + (protoTcp?' selected':'') + '>TCP</option>'
+              +       '<option value="udp"' + (protoTcp?'':' selected') + '>UDP</option>'
+              +     '</select>'
+              +   '</div>'
+              +   '<div class="form-group"><label class="form-label">External port</label>'
+              +     '<input class="input mono pm-ext"   type="number" min="1" max="65535" placeholder="2222" value="' + escapeHtml(r.ext_port || '') + '">'
+              +   '</div>'
+              + '</div>'
+              + '<div class="grid grid-cols-2">'
+              +   '<div class="form-group"><label class="form-label">Internal IP (AP client)</label>'
+              +     '<input class="input mono pm-iip"   type="text"   placeholder="192.168.4.10" value="' + escapeHtml(r.int_ip || '') + '">'
+              +   '</div>'
+              +   '<div class="form-group"><label class="form-label">Internal port</label>'
+              +     '<input class="input mono pm-iport" type="number" min="1" max="65535" placeholder="22" value="' + escapeHtml(r.int_port || '') + '">'
+              +   '</div>'
+              + '</div>'
+              + '<div class="form-group" style="margin:0;">'
+              +   '<label class="form-label">Friendly name (optional)</label>'
+              +   '<input class="input pm-name" type="text" maxlength="31" placeholder="e.g. SSH to Pi" value="' + escapeHtml(r.name || '') + '">'
+              + '</div>'
+              + '</div>';
+      });
+      c.innerHTML = html;
+      document.querySelectorAll('.pm-row').forEach(function (row) {
+        var idx = parseInt(row.dataset.idx, 10);
+        row.querySelectorAll('input, select').forEach(function (el) {
+          var ev = el.tagName === 'SELECT' ? 'change' : 'input';
+          el.addEventListener(ev, markPortmapDirty);
+        });
+        row.querySelector('.pm-del').addEventListener('click', function () {
+          snapshotPortmapListFromDOM();
+          s_portmap_list.splice(idx, 1);
+          renderPortmapList();
+          markPortmapDirty();
+        });
+      });
+    }
+
+    function loadPortmap() {
+      apiFetch('/api/portmap')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          s_portmap_list = (d.mappings || []).slice();
+          if (typeof d.max === 'number') s_portmap_max = d.max;
+          renderPortmapList();
+          document.getElementById('portmap-save').disabled = true;
+        }).catch(function () {});
+    }
+
+    document.getElementById('portmap-reload').addEventListener('click', loadPortmap);
+    document.getElementById('portmap-add-btn').addEventListener('click', function () {
+      if (s_portmap_list.length >= s_portmap_max) {
+        showToast('error', 'List full', 'Max ' + s_portmap_max + ' mappings. Remove one first.', 4000);
+        return;
+      }
+      snapshotPortmapListFromDOM();
+      s_portmap_list.push({ proto: 'tcp', ext_port: '', int_ip: '', int_port: '', name: '' });
+      renderPortmapList();
+      markPortmapDirty();
+    });
+    document.getElementById('portmap-save').addEventListener('click', function () {
+      snapshotPortmapListFromDOM();
+      var clean = [];
+      for (var i = 0; i < s_portmap_list.length; i++) {
+        var r = s_portmap_list[i];
+        var ep = parseInt(r.ext_port, 10);
+        var ip = parseInt(r.int_port, 10);
+        var iip = (r.int_ip || '').trim();
+        if (!iip || !ep || !ip) continue;
+        if (ep < 1 || ep > 65535 || ip < 1 || ip > 65535) {
+          showToast('error', 'Invalid port', 'Row #' + (i + 1) + ' — ports must be 1–65535.', 5000);
+          return;
+        }
+        clean.push({
+          proto:    r.proto || 'tcp',
+          ext_port: ep,
+          int_ip:   iip,
+          int_port: ip,
+          name:     r.name || ''
+        });
+      }
+      var btn = this;
+      btn.disabled = true; btn.textContent = 'Saving…';
+      apiFetch('/api/portmap', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ mappings: clean })
+      }).then(function (r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function () {
+          btn.textContent = 'Save';
+          showToast('success', 'Saved', 'Port-forwarding table updated.', 4000);
+          loadPortmap();
+        }).catch(function () {
+          btn.disabled = false; btn.textContent = 'Save';
+          showToast('error', 'Save failed', 'Mappings were not stored.', 5000);
+        });
     });
 
     // =====================================================================

@@ -46,6 +46,7 @@
 #include "pcap_capture.h"
 #include "wifi_networks.h"
 #include "dhcp_reservations.h"
+#include "portmap.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -237,6 +238,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         esp_netif_t *ap = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
         esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
         if (ap && sta) softap_set_dns_addr(ap, sta);
+
+        /* Re-bind the NAPT portmap entries to the freshly-acquired
+         * STA IP. portmap_install_all is idempotent — duplicate bindings
+         * are cleared before the re-add. */
+        portmap_install_all();
     }
 }
 
@@ -484,6 +490,11 @@ void app_main(void)
      * ready before the AP netif starts handing out leases. The
      * matching DHCP-server hook lives in components/dhcpserver/. */
     dhcp_reservations_init();
+
+    /* Port-forwarding (NAPT portmap) table — load from NVS now; the
+     * actual lwIP bindings are installed from the IP_GOT_IP handler
+     * once we know the STA's bind IP. */
+    portmap_init();
 
     /* PCAP-over-TCP capture (listens on port 19000 for Wireshark).
      * Mode is OFF on boot; operator enables it from /api/tools/pcap. */
