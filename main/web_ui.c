@@ -159,10 +159,13 @@ static esp_err_t status_handler(httpd_req_t *req)
     }
     cJSON_AddItemToObject(root, "ap", ap);
 
-    /* Tailscale (microlink) — runtime state from tailscale_config.h. */
+    /* Tailscale (microlink) — runtime state from tailscale_config.h.
+     * tailscale_is_connected() polls microlink + refreshes the cached
+     * tunnel_ip; we use its return value over the stale bool global. */
+    bool ts_connected = tailscale_is_connected();
     cJSON *ts = cJSON_CreateObject();
     cJSON_AddBoolToObject  (ts, "enabled",   tailscale_enabled != 0);
-    cJSON_AddBoolToObject  (ts, "connected", tailscale_connected);
+    cJSON_AddBoolToObject  (ts, "connected", ts_connected);
     if (tailscale_hostname)         cJSON_AddStringToObject(ts, "hostname",         tailscale_hostname);
     if (tailscale_advertise_routes) cJSON_AddStringToObject(ts, "advertise_routes", tailscale_advertise_routes);
     if (tailscale_tunnel_ip) {
@@ -716,9 +719,11 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
     }
     cJSON_AddItemToObject(root, "settings", settings);
 
-    /* Runtime state. */
+    /* Runtime state. tailscale_is_connected() refreshes tunnel_ip from
+     * microlink, so the SPA gets a live tunnel address on every fetch. */
+    bool ts_runtime_connected = tailscale_is_connected();
     cJSON *runtime = cJSON_CreateObject();
-    cJSON_AddBoolToObject(runtime, "connected", tailscale_connected);
+    cJSON_AddBoolToObject(runtime, "connected", ts_runtime_connected);
     if (tailscale_tunnel_ip) {
         char buf[16];
         ip4_to_str(tailscale_tunnel_ip, buf, sizeof buf);
