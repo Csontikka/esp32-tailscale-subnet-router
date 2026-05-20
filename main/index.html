@@ -1640,6 +1640,54 @@
         </div>
       </div>
 
+      <!-- ===== Uplink IP configuration ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Uplink IP configuration</span>
+          </div>
+          <span class="badge badge-neutral" id="net-ip-badge">DHCP</span>
+        </div>
+        <div class="card-body">
+          <div class="form-group">
+            <label class="form-label">Address mode</label>
+            <div style="display:flex; gap:1rem; padding:0.25rem 0;">
+              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
+                <input type="radio" name="net-ip-mode" value="dhcp" id="net-ip-mode-dhcp" checked> DHCP
+              </label>
+              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
+                <input type="radio" name="net-ip-mode" value="static" id="net-ip-mode-static"> Static IP
+              </label>
+            </div>
+          </div>
+          <div id="net-static-fields" style="display:none;">
+            <div class="grid grid-cols-2">
+              <div class="form-group">
+                <label class="form-label" for="net-ip">IP address</label>
+                <input class="input mono" type="text" id="net-ip" placeholder="192.168.1.50">
+              </div>
+              <div class="form-group">
+                <label class="form-label" for="net-mask">Subnet mask</label>
+                <input class="input mono" type="text" id="net-mask" placeholder="255.255.255.0">
+              </div>
+            </div>
+            <div class="grid grid-cols-2">
+              <div class="form-group">
+                <label class="form-label" for="net-gw">Gateway</label>
+                <input class="input mono" type="text" id="net-gw" placeholder="192.168.1.1">
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Reboot required to apply. Switching back to DHCP clears the stored IP.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-secondary btn-md" id="net-ip-reload">Reload</button>
+            <button class="btn btn-primary btn-md" id="net-ip-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ===== Access Point (AP) ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -2499,6 +2547,15 @@
     // =====================================================================
     // NETWORK PAGE
     // =====================================================================
+    /* Show or hide the static-IP fieldset based on the radio selection. */
+    function applyIpModeUI() {
+      var staticMode = document.getElementById('net-ip-mode-static').checked;
+      document.getElementById('net-static-fields').style.display = staticMode ? '' : 'none';
+      var badge = document.getElementById('net-ip-badge');
+      badge.textContent = staticMode ? 'Static IP' : 'DHCP';
+      badge.className   = 'badge ' + (staticMode ? 'badge-accent' : 'badge-neutral');
+    }
+
     function loadNetwork() {
       apiFetch('/api/network')
         .then(function (r) { return r.json(); })
@@ -2508,6 +2565,18 @@
           document.getElementById('net-sta-pw').value       = '';
           document.getElementById('net-hostname').value     = sta.hostname || '';
           document.getElementById('net-sta-save').disabled  = true;
+
+          /* Static IP block — if any field is non-empty in NVS, we're in
+           * static mode. Empty = DHCP. */
+          var sIp = (sta.static_ip) || {};
+          var hasStatic = !!(sIp.ip || sIp.mask || sIp.gw);
+          document.getElementById('net-ip-mode-static').checked = hasStatic;
+          document.getElementById('net-ip-mode-dhcp').checked   = !hasStatic;
+          document.getElementById('net-ip').value   = sIp.ip   || '';
+          document.getElementById('net-mask').value = sIp.mask || '';
+          document.getElementById('net-gw').value   = sIp.gw   || '';
+          applyIpModeUI();
+          document.getElementById('net-ip-save').disabled = true;
 
           var ap = (d && d.ap) || {};
           document.getElementById('net-ap-ssid').value     = ap.ssid || '';
@@ -2592,6 +2661,49 @@
       if (!ssid) { showToast('error', 'SSID required', 'Enter an upstream SSID first.', 5000); return; }
       var body = { sta: { ssid: ssid, hostname: hostname } };
       if (pw) body.sta.password = pw;   /* omit-to-keep semantics */
+      saveNetwork(this, body);
+    });
+
+    /* Static IP — dirty-track + save. Mode toggle is also dirty-tracking. */
+    ['net-ip-mode-dhcp', 'net-ip-mode-static'].forEach(function (id) {
+      document.getElementById(id).addEventListener('change', function () {
+        applyIpModeUI();
+        document.getElementById('net-ip-save').disabled = false;
+      });
+    });
+    ['net-ip', 'net-mask', 'net-gw'].forEach(function (id) {
+      document.getElementById(id).addEventListener('input', function () {
+        document.getElementById('net-ip-save').disabled = false;
+      });
+    });
+    document.getElementById('net-ip-reload').addEventListener('click', loadNetwork);
+    document.getElementById('net-ip-save').addEventListener('click', function () {
+      var staticMode = document.getElementById('net-ip-mode-static').checked;
+      var body = { static_ip: {} };
+      if (staticMode) {
+        var ip   = document.getElementById('net-ip').value.trim();
+        var mask = document.getElementById('net-mask').value.trim();
+        var gw   = document.getElementById('net-gw').value.trim();
+        if (!ip || !mask || !gw) {
+          showToast('error', 'Missing fields', 'IP, mask and gateway are all required for static mode.', 5000);
+          return;
+        }
+        /* Light validation — full IPv4 syntax check happens server-side
+         * when the runtime tries to apply the values. */
+        var dotted = /^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$/;
+        if (!dotted.test(ip) || !dotted.test(mask) || !dotted.test(gw)) {
+          showToast('error', 'Bad format', 'Use dotted-quad IPv4 (e.g. 192.168.1.50).', 5000);
+          return;
+        }
+        body.static_ip.ip = ip;
+        body.static_ip.mask = mask;
+        body.static_ip.gw = gw;
+      } else {
+        /* DHCP — explicitly clear all three NVS keys. */
+        body.static_ip.ip = '';
+        body.static_ip.mask = '';
+        body.static_ip.gw = '';
+      }
       saveNetwork(this, body);
     });
 
