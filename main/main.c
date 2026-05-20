@@ -45,6 +45,7 @@
 #include "nvs_params.h"
 #include "pcap_capture.h"
 #include "wifi_networks.h"
+#include "dhcp_reservations.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -433,6 +434,11 @@ void app_main(void)
      * also migrates the legacy single-network NVS keys into slot 0
      * on first boot. */
     wifi_networks_init();
+
+    /* DHCP reservation table — read now so the cached lookups are
+     * ready before the AP netif starts handing out leases. The
+     * matching DHCP-server hook lives in components/dhcpserver/. */
+    dhcp_reservations_init();
 
     /* PCAP-over-TCP capture (listens on port 19000 for Wireshark).
      * Mode is OFF on boot; operator enables it from /api/tools/pcap. */
