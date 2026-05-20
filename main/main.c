@@ -39,6 +39,7 @@
 #include "lwip_route_hook.h"
 #include "web_ui.h"
 #include "acl.h"
+#include "netif_hooks.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -313,8 +314,12 @@ void app_main(void)
         ESP_LOGE(TAG_STA, "NAPT not enabled on the netif: %p", esp_netif_ap);
     }
 
-    /* HTTP server with the embedded SPA at /. JSON API endpoints land
-     * in later commits; for now this just gives the user a visible page
-     * confirming the router is up. */
+    /* ACL packet filter — install netif input/linkoutput hooks so the
+     * four ACL chains (to_esp / from_esp / to_ap / from_ap) actually
+     * drop denied traffic. Must run AFTER esp_wifi_start so the netifs
+     * exist and have their default input/linkoutput function pointers. */
+    netif_hooks_init();
+
+    /* HTTP server with the embedded SPA at / + the JSON API endpoints. */
     web_ui_init();
 }
