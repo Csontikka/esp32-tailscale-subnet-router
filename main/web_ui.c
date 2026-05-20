@@ -19,6 +19,8 @@
 #include "tailscale_config.h"
 #include "nvs_params.h"
 #include "microlink.h"
+#include "telemetry.h"
+#include "log_capture.h"
 
 /* Globals owned by main.c — link status flags rendered in /api/status. */
 extern int ap_connect;
@@ -295,6 +297,65 @@ static const httpd_uri_t uri_tailscale = {
     .user_ctx = NULL,
 };
 
+#define WEB_UI_LOG_SNAPSHOT_BYTES 4096
+
+static esp_err_t system_handler(httpd_req_t *req)
+{
+    cJSON *root = cJSON_CreateObject();
+    if (!root) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+
+    const esp_app_desc_t *desc = esp_app_get_description();
+    if (desc) {
+        cJSON_AddStringToObject(root, "version",    desc->version);
+        cJSON_AddStringToObject(root, "build_date", desc->date);
+        cJSON_AddStringToObject(root, "build_time", desc->time);
+        cJSON_AddStringToObject(root, "idf_ver",    desc->idf_ver);
+    }
+
+    /* Telemetry status — the API key is intentionally not exposed. */
+    telemetry_state_t tm = telemetry_get_state();
+    cJSON *t = cJSON_CreateObject();
+    cJSON_AddBoolToObject  (t, "enabled",     tm.enabled);
+    cJSON_AddStringToObject(t, "url",         tm.url);
+    cJSON_AddNumberToObject(t, "boot_count",  tm.boot_count);
+    cJSON_AddNumberToObject(t, "flash_count", tm.flash_count);
+    cJSON_AddStringToObject(t, "device_hash", tm.device_hash);
+    cJSON_AddNumberToObject(t, "last_send_ms", (double)tm.last_send_ms);
+    cJSON_AddStringToObject(t, "last_status", tm.last_status);
+    cJSON_AddItemToObject(root, "telemetry", t);
+
+    /* Log tail — read into a heap buffer to keep the request handler
+     * stack small. Truncated to a known size so the JSON stays bounded. */
+    char *log_buf = malloc(WEB_UI_LOG_SNAPSHOT_BYTES);
+    if (log_buf) {
+        size_t n = log_capture_read(log_buf, WEB_UI_LOG_SNAPSHOT_BYTES - 1);
+        log_buf[n] = '\0';
+        cJSON_AddStringToObject(root, "log_tail", log_buf);
+        free(log_buf);
+    }
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) {
+        httpd_resp_send_500(req);
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static const httpd_uri_t uri_system = {
+    .uri      = "/api/system",
+    .method   = HTTP_GET,
+    .handler  = system_handler,
+    .user_ctx = NULL,
+};
+
 void web_ui_init(void)
 {
     static httpd_handle_t server = NULL;
@@ -313,5 +374,6 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_status);
     httpd_register_uri_handler(server, &uri_network);
     httpd_register_uri_handler(server, &uri_tailscale);
+    httpd_register_uri_handler(server, &uri_system);
     ESP_LOGI(TAG, "web UI listening on :%d", config.server_port);
 }
