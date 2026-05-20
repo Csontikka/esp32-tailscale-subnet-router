@@ -25,14 +25,15 @@ static void clear_cache(void)
     s_count = 0;
 }
 
-/* Pull the legacy single-network keys into slot 0 of the cache. Returns
- * 1 if a non-empty SSID was found, 0 otherwise. */
-static int migrate_legacy_into_slot0(void)
+/* Pull the legacy single-network keys into the given temp slot. Returns
+ * 1 if a non-empty SSID was found, 0 otherwise. Writes into a caller-
+ * supplied buffer (not s_nets) so subsequent wifi_networks_set_all()
+ * — which clears s_nets at entry — doesn't alias-zero the migration. */
+static int migrate_legacy_into(wifi_network_t *n)
 {
     char *ssid = nvs_param_get_str("ssid");
     if (!ssid || !ssid[0]) { free(ssid); return 0; }
 
-    wifi_network_t *n = &s_nets[0];
     memset(n, 0, sizeof *n);
     strlcpy(n->ssid, ssid, sizeof n->ssid);
     free(ssid);
@@ -50,7 +51,6 @@ static int migrate_legacy_into_slot0(void)
     if (gw) { strlcpy(n->gateway, gw, sizeof n->gateway); free(gw); }
 
     n->valid = 1;
-    s_count  = 1;
     ESP_LOGI(TAG, "migrated legacy '%s' into slot 0", n->ssid);
     return 1;
 }
@@ -79,10 +79,11 @@ void wifi_networks_init(void)
         nvs_close(nvs);
     }
 
-    /* No blob — try legacy single-key migration. */
-    if (migrate_legacy_into_slot0()) {
-        /* Persist the migrated entry so we only do this once. */
-        wifi_networks_set_all(s_nets, s_count);
+    /* No blob — try legacy single-key migration. Use a stack-local
+     * temp so set_all's clear-then-copy doesn't alias its own input. */
+    wifi_network_t tmp = {0};
+    if (migrate_legacy_into(&tmp)) {
+        wifi_networks_set_all(&tmp, 1);
     } else {
         ESP_LOGI(TAG, "no networks configured");
     }
