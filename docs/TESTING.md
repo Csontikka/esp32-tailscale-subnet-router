@@ -117,25 +117,26 @@ scenario:
    expected path (`AP-IP` when relay-on, not-AP-IP when relay-off),
    and (b) `getent hosts cloudflare.com` returns a result.
 
-HTTPS-egress (`curl https://api.ipify.org`) is collected as **advisory**
-diagnostics — exit-on egress is known to be flaky on rapid toggles
-(tracked in the route-hook self-traffic memo), and a transient curl
-miss shouldn't fail the relay verdict.
+**The verdict gates on DNS resolution only** (`dns_ok`) — that's the
+relay's job. Two other signals are collected and reported, but
+**advisory**:
 
-**Known caveat — one scenario can flap.** The `relay-OFF | exit-on →
-relay-ON | no-exit` transition flips three things almost simultaneously
-on the device (exit-node off, relay enable, then the relay's settle +
-softap-DHCP-restart), while NetworkManager on the Pi may keep its
-cached `IP4.DNS` entry from the previous lease until the next DHCP
-exchange completes. If the Pi reconnects mid-restart, it lands on the
-old (STA-uplink) `nameserver` entry even though the resolver path through the ESP
-is fully functional. The runner reports this as a `ns_ok=False` FAIL
-even when `dns_ok=True` and `curl_ok=True`. This is a NM-side cache
-artifact at a specific scenario boundary, not an ESP relay bug — the
-relay itself serves correctly in all 6 scenarios as verified by
-`getent`. Set `ipv4.dhcp-send-release yes` on the Pi profile to reduce
-the window, but don't expect 100% stability on this one boundary in
-back-to-back runs.
+| Signal | Meaning | Why advisory |
+|---|---|---|
+| `ns_ok`  | Pi's `resolv.conf` `nameserver` matches the expected path (AP-IP when relay-on, not-AP-IP when relay-off) | NetworkManager caches the lease's DNS server in `/var/lib/NetworkManager/internal-*.lease` for the full 7200 s lease lifetime. Across some scenario transitions it doesn't refresh even after a `connection down → up` with `ipv4.dhcp-send-release yes`. The relay still serves correctly — the Pi just keeps pointing at the old resolver. |
+| `curl_ok` | HTTPS-egress completed (probes `https://api.ipify.org`) | Exit-on egress is known to flap on rapid toggles, tracked separately in the route-hook self-traffic memo. |
+
+**Known flap.** The `relay-OFF | exit-on → relay-ON | no-exit`
+transition flips three things almost simultaneously on the ESP
+(exit-node off, relay enable, then a ~3 s settle + softap-DHCP-restart
+when the relay reaches healthy). On the Pi side, NetworkManager's
+lease cache survives both `nmcli device disconnect` and even
+`nmcli connection down` in many cases, so the Pi keeps the old
+resolver in `resolv.conf` while still resolving correctly. `dns_ok`
+and `curl_ok` both stay `True` in this case — the relay is
+functionally fine, just not the one the Pi is talking to. To fully
+flush the NM cache on the Pi side, manually
+`sudo rm /var/lib/NetworkManager/internal-*.lease` and reconnect.
 
 ### `routing` — the 4×2 scenario matrix
 The headline test. Runs every direction twice (once with no exit
