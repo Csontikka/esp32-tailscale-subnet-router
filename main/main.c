@@ -55,6 +55,7 @@
 #include "portmap.h"
 #include "mac_deny.h"
 #include "reset_history.h"
+#include "cli.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -755,4 +756,9 @@ void app_main(void)
 
     /* HTTP server with the embedded SPA at / + the JSON API endpoints. */
     web_ui_init();
+
+    /* Serial REPL on UART0 (115200 8N1). Starts last so every other
+     * subsystem the commands can poke is ready by the time the prompt
+     * appears. Type `help` over `pio device monitor` / `idf.py monitor`. */
+    cli_init();
 }
