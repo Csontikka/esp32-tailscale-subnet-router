@@ -481,7 +481,12 @@ static bool maintain_ap_cidr_in_routes(const char *old_cidr,
     if (out_offer_add) *out_offer_add = false;
     if (!new_cidr || !*new_cidr) return false;
 
-    char *routes = nvs_param_get_str("ts_advertise_routes");
+    /* NVS keys are limited to 15 chars — the rest of the code base
+     * stores this value under "ts_routes" (matches tailscale_init and
+     * tailscale_save_handler), so the auto-maintain has to use the
+     * same key or the write lands on a different (and silently
+     * rejected) slot. */
+    char *routes = nvs_param_get_str("ts_routes");
     const bool routes_empty = !routes || !routes[0];
     const bool unchanged = old_cidr && strcmp(old_cidr, new_cidr) == 0;
 
@@ -558,7 +563,7 @@ static bool maintain_ap_cidr_in_routes(const char *old_cidr,
     bool changed = !routes || strcmp(routes, out) != 0;
     free(routes);
     if (changed) {
-        nvs_param_set_str("ts_advertise_routes", out);
+        nvs_param_set_str("ts_routes", out);
         /* Refresh the cached global — tailscale_init only reads it at
          * boot, and the live /api/tailscale GET serialises this
          * pointer. Without the refresh, the operator would see the
