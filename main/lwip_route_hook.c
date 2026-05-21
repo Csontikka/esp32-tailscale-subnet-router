@@ -378,16 +378,16 @@ struct netif *__wrap_ip4_route_src_hook(const ip4_addr_t *src,
     /* 3. Self-origin public destination (NEW 2026-05-20):
      * Raw sockets and TLS connect() calls that originate on the ESP
      * itself often pass src=NULL or src=INADDR_ANY into lwIP's route
-     * lookup. In exit-node mode `netif_default` is wg0, so falling
-     * through to the IDF default below would route those packets via
-     * wg0 — but wg0 needs the DERP/STUN sessions WE'RE TRYING TO MAKE
-     * RIGHT NOW to be already alive, which they aren't (chicken & egg).
-     *
-     * Detect self-origin (src NULL/any, OR src matches one of our own
-     * netif IPs) and a public destination (NOT CGNAT, NOT RFC1918 —
-     * those branches were handled above). Route those to the first
-     * STA-class netif so DERP/STUN/control-plane TCP can actually
-     * reach the upstream. */
+     * lookup. In exit-node mode we WANT non-self traffic to follow the
+     * tunnel, but the ESP's own DERP/STUN/control-plane sessions are
+     * what KEEP the tunnel alive — routing those via wg would loop
+     * (chicken & egg). So we split here:
+     *   - self-origin to public dst → STA upstream
+     *   - forwarded (non-self) to public dst → WG tunnel (the actual
+     *     exit-node egress). This is the egress path we previously
+     *     relied on netif_default for, but the esp_netif framework
+     *     keeps resetting netif_default back to STA on link/DHCP
+     *     events — so we must steer explicitly from the hook. */
     if (tailscale_exit_node_ip != 0) {
         bool src_is_self = (src == NULL) || ip4_addr_isany_val(*src);
         if (!src_is_self) {
@@ -397,10 +397,10 @@ struct netif *__wrap_ip4_route_src_hook(const ip4_addr_t *src,
                 if (na && ip4_addr_cmp(src, na)) { src_is_self = true; break; }
             }
         }
+        bool is_priv = ((dst_hbo & 0xFF000000UL) == 0x0A000000UL) ||
+                       ((dst_hbo & 0xFFF00000UL) == 0xAC100000UL) ||
+                       ((dst_hbo & 0xFFFF0000UL) == 0xC0A80000UL);
         if (src_is_self) {
-            bool is_priv = ((dst_hbo & 0xFF000000UL) == 0x0A000000UL) ||
-                           ((dst_hbo & 0xFFF00000UL) == 0xAC100000UL) ||
-                           ((dst_hbo & 0xFFFF0000UL) == 0xC0A80000UL);
             /* CGNAT was already returned in step 1; here we just need
              * to bypass exit-node for the remaining public space. */
             if (!is_priv) {
@@ -411,15 +411,21 @@ struct netif *__wrap_ip4_route_src_hook(const ip4_addr_t *src,
                     }
                 }
             }
+        } else if (!is_priv) {
+            /* Forwarded packet (AP client → public). Steer into the
+             * tunnel explicitly — don't fall through to the IDF default
+             * which would land on STA (because esp_netif keeps
+             * netif_default pinned to STA across DHCP renews). */
+            struct netif *wg = find_wg_netif();
+            if (wg && netif_is_up(wg)) return wg;
         }
     }
 
     /* 4. Fall through to ESP-IDF default. The IDF default uses
      * ip4_addr_cmp(src, netif->ip) (EXACT equality, not prefix-match)
      * to find a source-binding netif. For forwarded AP-client packets
-     * (src=192.168.4.2) src doesn't equal any netif IP exactly →
-     * returns NULL → ip4_route_src falls through to ip4_route(dst) →
-     * subnet match → netif_default (= wg0 in exit-node mode). */
+     * exit-node-off this lands on netif_default (= STA), which is the
+     * desired vanilla behaviour. */
     return __real_ip4_route_src_hook(src, dest);
 }
 
