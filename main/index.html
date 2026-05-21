@@ -2364,6 +2364,27 @@
         </div>
       </div>
 
+      <!-- ===== Reset history ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Reset history</span>
+          </div>
+          <span class="badge badge-neutral" id="sys-hist-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">Last 10 boots — most recent first. <strong>FLASH</strong>/<strong>SW</strong>/<strong>POWERON</strong> are clean; <strong>PANIC</strong>/<strong>*_WDT</strong> rows include a one-line crash summary recovered from the core dump.</p>
+          <div style="overflow-x:auto;">
+            <table class="table mono" id="sys-hist-table" style="width:100%;">
+              <thead>
+                <tr><th style="white-space:nowrap;">When</th><th>Reason</th><th>Who</th><th>Crash</th></tr>
+              </thead>
+              <tbody id="sys-hist-tbody"><tr><td colspan="4" class="form-hint">—</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
       <!-- ===== Web session ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -5033,7 +5054,56 @@
            * tab — apiFetch already reset it on this call, but the
            * timeout length may have been changed by another tab. */
           sessionCountdownConfig(d.session_timeout_s, d.session_remaining_s);
+
+          /* Reset history table — last 10 boots, hist[0] is current. */
+          renderResetHistory(d.reset_history || []);
         }).catch(function () {});
+    }
+
+    function _resetReasonClass(reason) {
+      if (!reason) return 'badge badge-neutral';
+      if (reason.indexOf('PANIC') >= 0 || reason.indexOf('WDT') >= 0
+          || reason === 'BROWNOUT' || reason === 'ROLLBACK')
+        return 'badge badge-danger';
+      if (reason === 'FLASH' || reason === 'POWERON' || reason === 'EXT')
+        return 'badge badge-info';
+      return 'badge badge-success';
+    }
+
+    function _fmtWallclock(ts) {
+      if (!ts || ts < 1700000000) return '—';
+      try {
+        return new Date(ts * 1000).toLocaleString();
+      } catch (e) { return '' + ts; }
+    }
+
+    function renderResetHistory(hist) {
+      var tb = document.getElementById('sys-hist-tbody');
+      var badge = document.getElementById('sys-hist-badge');
+      if (!tb || !badge) return;
+      if (!hist.length) {
+        tb.innerHTML = '<tr><td colspan="4" class="form-hint">No history yet — wait for the next boot.</td></tr>';
+        badge.className = 'badge badge-neutral';
+        badge.textContent = '0';
+        return;
+      }
+      badge.textContent = '' + hist.length;
+      var crashCount = 0;
+      var rows = hist.map(function (e, i) {
+        var reason = e.reason || '';
+        if (reason.indexOf('PANIC') >= 0 || reason.indexOf('WDT') >= 0) crashCount++;
+        var marker = (i === 0) ? '<span class="badge badge-info" style="margin-right:0.35rem;">now</span>' : '';
+        var crashCell = e.crash ? ('<code class="mono" style="white-space:pre-wrap; word-break:break-all;">' + escapeHtml(e.crash) + '</code>') : '<span class="form-hint">—</span>';
+        return '<tr>'
+          + '<td style="white-space:nowrap;">' + escapeHtml(_fmtWallclock(e.wallclock)) + '</td>'
+          + '<td>' + marker + '<span class="' + _resetReasonClass(reason) + '">' + escapeHtml(reason || '—') + '</span></td>'
+          + '<td>' + (e.who ? escapeHtml(e.who) : '<span class="form-hint">—</span>') + '</td>'
+          + '<td>' + crashCell + '</td>'
+          + '</tr>';
+      }).join('');
+      tb.innerHTML = rows;
+      badge.className = crashCount ? 'badge badge-danger' : 'badge badge-success';
+      badge.textContent = crashCount ? (crashCount + '× crash / ' + hist.length) : ('' + hist.length);
     }
 
     /* Render the dBm conversion next to the TX-power input so the
@@ -5073,6 +5143,8 @@
         /* Drop runtime + bulky fields from the system block so the backup
          * captures config, not state. */
         delete sys.log_tail;
+        delete sys.reset_history;
+        delete sys.session_remaining_s;
         if (sys.telemetry) {
           delete sys.telemetry.last_send_ms;
           delete sys.telemetry.last_status;

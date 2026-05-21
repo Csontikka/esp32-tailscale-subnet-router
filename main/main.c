@@ -53,6 +53,7 @@
 #include "dhcp_reservations.h"
 #include "portmap.h"
 #include "mac_deny.h"
+#include "reset_history.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -492,6 +493,13 @@ void app_main(void)
      * (the pre-crash slice in slow RTC RAM survives reboot). */
     log_capture_init(0);
 
+    /* Record the current boot in the rst_hist ring buffer NOW — before
+     * any other subsystem can crash, so the row is on disk even if init
+     * goes wrong further down. Classifies the reset reason (with FLASH
+     * / ROLLBACK detection via the app-SHA8 fingerprint trick), shifts
+     * the prior 10 boots down a slot, and stamps hist[0]. */
+    reset_history_record_boot();
+
     /* AP-side DNS forwarder. Spawn early so the task is up by the time
      * wifi_init_softap publishes the AP IP — set_bind_addr triggers the
      * (re-)bind. Loads enable + upstream-override from NVS itself. */
@@ -529,6 +537,11 @@ void app_main(void)
                 nvs_commit(ch);
                 nvs_close(ch);
             }
+            /* Attach the one-liner to the matching reset_history row.
+             * hist[0] is the current (recovery) boot for the panic we
+             * just decoded — the core-dump partition only ever holds
+             * the latest panic, so this is exactly the right slot. */
+            reset_history_set_current_crash(crash_info);
         }
         free(sum);
         esp_core_dump_image_erase();

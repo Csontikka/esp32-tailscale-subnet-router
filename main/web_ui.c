@@ -30,6 +30,7 @@
 #include "dhcps_ext.h"
 #include "portmap.h"
 #include "mac_deny.h"
+#include "reset_history.h"
 #include <stdlib.h>
 #include <time.h>
 
@@ -2419,6 +2420,24 @@ static esp_err_t system_handler(httpd_req_t *req)
         log_buf[n] = '\0';
         cJSON_AddStringToObject(root, "log_tail", log_buf);
         free(log_buf);
+    }
+
+    /* Reset history — last 10 boots, [0] is the most recent. The recorder
+     * runs at app_main() time, the coredump backfill writes hist[0].crash
+     * when a panic-from-prior-boot was decoded on this boot. */
+    {
+        reset_history_entry_t hist[RESET_HISTORY_MAX] = {0};
+        int n = reset_history_load(hist, RESET_HISTORY_MAX);
+        cJSON *arr = cJSON_CreateArray();
+        for (int i = 0; i < n; i++) {
+            cJSON *e = cJSON_CreateObject();
+            cJSON_AddNumberToObject(e, "wallclock", hist[i].wallclock);
+            cJSON_AddStringToObject(e, "reason",    hist[i].reason);
+            cJSON_AddStringToObject(e, "who",       hist[i].who);
+            cJSON_AddStringToObject(e, "crash",     hist[i].crash);
+            cJSON_AddItemToArray(arr, e);
+        }
+        cJSON_AddItemToObject(root, "reset_history", arr);
     }
 
     char *body = cJSON_PrintUnformatted(root);
