@@ -1470,6 +1470,10 @@
               <span class="stat-value" id="ap-channel">6</span>
             </div>
             <div class="stat-row">
+              <span class="stat-label">TX power</span>
+              <span class="stat-value mono" id="ap-tx-power">—</span>
+            </div>
+            <div class="stat-row">
               <span class="stat-label">Traffic</span>
               <span class="stat-value mono" id="ap-traffic">—</span>
             </div>
@@ -2718,6 +2722,9 @@
       document.getElementById('ap-ip').textContent      = ap.ip      || '—';
       document.getElementById('ap-mac').textContent     = ap.mac     || '—';
       document.getElementById('ap-channel').textContent = ap.channel || '—';
+      var txp = data.tx_power;
+      document.getElementById('ap-tx-power').textContent =
+        (typeof txp === 'number') ? (txp + ' (' + (txp * 0.25).toFixed(2) + ' dBm)') : '—';
       document.getElementById('ap-traffic').textContent = formatTraffic(ap.bytes_in, ap.bytes_out);
       document.getElementById('ap-clients-badge').textContent = (ap.clients != null ? ap.clients + ' client' + (ap.clients !== 1 ? 's' : '') : '—');
 

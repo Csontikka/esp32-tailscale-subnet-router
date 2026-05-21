@@ -210,6 +210,16 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(ap, "bytes_out", (double)netif_hooks_get_ap_bytes_out());
     cJSON_AddItemToObject(root, "ap", ap);
 
+    /* Radio-wide TX power (live, post-override). Same value for both
+     * STA + AP — kept at the root rather than duplicated under each
+     * interface object since it's a single radio setting. */
+    {
+        int8_t live_pwr = 0;
+        if (esp_wifi_get_max_tx_power(&live_pwr) == ESP_OK) {
+            cJSON_AddNumberToObject(root, "tx_power", live_pwr);
+        }
+    }
+
     /* Tailscale (microlink) — runtime state from tailscale_config.h.
      * tailscale_is_connected() polls microlink + refreshes the cached
      * tunnel_ip; we use its return value over the stale bool global. */
