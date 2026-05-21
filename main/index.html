@@ -2232,8 +2232,10 @@
           <div class="stat-row"><span class="stat-label">Device hash</span>      <span class="stat-value mono" id="sys-dh">—</span></div>
         </div>
         <div class="form-footer">
-          <span class="form-footer-hint">Friendly-name change applies immediately. Backup excludes secrets (WiFi/AP passwords, auth keys).</span>
+          <span class="form-footer-hint">Friendly-name change applies immediately. Backup excludes secrets — restore won't reapply WiFi/AP passwords or auth keys.</span>
           <div class="form-footer-actions">
+            <input type="file" id="sys-config-restore-file" accept="application/json,.json" style="display:none;">
+            <button class="btn btn-ghost btn-md" id="sys-config-restore">Restore…</button>
             <button class="btn btn-secondary btn-md" id="sys-config-backup">Download config</button>
             <button class="btn btn-primary btn-md" id="sys-device-name-save" disabled>Save</button>
           </div>
@@ -4422,6 +4424,90 @@
       }).finally(function () {
         btn.disabled = false; btn.textContent = 'Download config';
       });
+    });
+
+    /* Restore from a previously-downloaded backup. Pure client-side
+     * orchestration — POSTs each section back to the same endpoint
+     * that produced it. Sections are applied in dependency order so
+     * later steps see the right state if they care. Partial failure
+     * leaves the device in a mixed state — the toast surfaces which
+     * section died. */
+    document.getElementById('sys-config-restore').addEventListener('click', function () {
+      document.getElementById('sys-config-restore-file').click();
+    });
+    document.getElementById('sys-config-restore-file').addEventListener('change', function (ev) {
+      var file = ev.target.files && ev.target.files[0];
+      if (!file) return;
+      var reader = new FileReader();
+      reader.onload = function () {
+        var data;
+        try { data = JSON.parse(reader.result); }
+        catch (e) {
+          showToast('error', 'Not JSON', 'Could not parse the selected file.', 5000);
+          return;
+        }
+        if (data.format !== 'tsr-backup-v1') {
+          showToast('error', 'Wrong format', 'Expected tsr-backup-v1.', 5000);
+          return;
+        }
+        if (!confirm('Restore config from this file?\n\nReplaces networks, AP settings, DHCP reservations, port mappings, Tailscale settings and system block. Secrets (passwords, auth keys) are NOT in the backup — you will need to re-enter them.')) {
+          return;
+        }
+
+        var btn = document.getElementById('sys-config-restore');
+        btn.disabled = true; btn.textContent = 'Restoring…';
+
+        function post(url, body) {
+          return apiFetch(url, {
+            method:  'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body:    JSON.stringify(body)
+          }).then(function (r) { if (!r.ok) throw new Error(url); return r; });
+        }
+
+        var steps = [];
+        if (data.network) steps.push({ name: 'network',           url: '/api/network',           body: data.network });
+        if (data.dhcp_reservations) steps.push({ name: 'reservations',    url: '/api/dhcp/reservations', body: { reservations: data.dhcp_reservations } });
+        if (data.portmap)           steps.push({ name: 'portmap',         url: '/api/portmap',           body: { mappings:     data.portmap } });
+        if (data.system) {
+          /* Re-build the system POST shape — only the fields we accept. */
+          var sb = {};
+          if (typeof data.system.device_name === 'string') sb.device_name = data.system.device_name;
+          if (typeof data.system.tz          === 'string') sb.tz          = data.system.tz;
+          if (typeof data.system.tx_power_nvs === 'number') sb.tx_power = data.system.tx_power_nvs;
+          if (data.system.telemetry && typeof data.system.telemetry.enabled === 'boolean') {
+            sb.telemetry = { enabled: data.system.telemetry.enabled };
+          }
+          if (data.system.syslog) sb.syslog = data.system.syslog;
+          if (Object.keys(sb).length) steps.push({ name: 'system', url: '/api/system', body: sb });
+        }
+        if (data.tailscale && data.tailscale.settings) {
+          var ts = data.tailscale.settings;
+          delete ts.auth_key;  /* secret, not in backup but be paranoid */
+          steps.push({ name: 'tailscale', url: '/api/tailscale', body: { settings: ts } });
+        }
+
+        function next(i) {
+          if (i >= steps.length) {
+            btn.disabled = false; btn.textContent = 'Restore…';
+            showToast('success', 'Restored', 'Reboot recommended so every section applies cleanly.', 6000);
+            setPendingReboot(true);
+            return;
+          }
+          var s = steps[i];
+          post(s.url, s.body)
+            .then(function () { next(i + 1); })
+            .catch(function () {
+              btn.disabled = false; btn.textContent = 'Restore…';
+              showToast('error', 'Restore failed', 'Step "' + s.name + '" did not save. Device is in a mixed state.', 8000);
+            });
+        }
+        next(0);
+
+        /* Clear so picking the same file again still fires change. */
+        ev.target.value = '';
+      };
+      reader.readAsText(file);
     });
 
     document.getElementById('sys-device-name-save').addEventListener('click', function () {
