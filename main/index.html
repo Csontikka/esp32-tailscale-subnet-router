@@ -3309,11 +3309,47 @@
           btn.textContent = 'Save';
           showToast('success', 'Saved', 'Network settings written to NVS.', 4000);
           if (resp.restart_required) setPendingReboot(true);
+          /* AP CIDR shifted but the new subnet isn't in the Tailscale
+           * advertised-routes list — the backend honoured the
+           * operator's prior deletion. Offer to add it now rather than
+           * forcing them to navigate to the Tailscale tab. */
+          if (resp.ap_cidr_offer) {
+            offerAddApCidr(resp.ap_cidr_offer);
+          }
         })
         .catch(function (e) {
           btn.disabled = false;
           btn.textContent = 'Save';
           showToast('error', 'Save failed', e && e.message ? e.message : 'unknown error', 6000);
+        });
+    }
+
+    /* Prompts the operator, then if accepted fetches the current
+     * Tailscale settings, appends the new CIDR to advertised_routes,
+     * and POSTs the result back. The whole flow is best-effort — a
+     * failure here is non-fatal since the operator can do the same
+     * thing manually on the Tailscale tab. */
+    function offerAddApCidr(cidr) {
+      var ok = confirm('AP subnet is now ' + cidr + ', but it is not in the Tailscale advertised routes.\n\nAdd it now? (Other routes are kept untouched.)');
+      if (!ok) return;
+      apiFetch('/api/tailscale')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var s = (d && d.settings) || {};
+          var cur = (s.advertise_routes || '').replace(/\s+$/, '');
+          var next = cur ? (cur + '\n' + cidr) : cidr;
+          return apiFetch('/api/tailscale', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ settings: { advertise_routes: next } })
+          });
+        })
+        .then(function (r) { if (!r.ok) throw 0; })
+        .then(function () {
+          showToast('success', 'Route added', cidr + ' appended to advertised routes.', 4000);
+        })
+        .catch(function () {
+          showToast('error', 'Add failed', 'Could not write the route — try the Tailscale tab.', 5000);
         });
     }
 
