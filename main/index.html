@@ -1848,6 +1848,26 @@
         </div>
       </div>
 
+      <!-- ===== Denied MAC addresses ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Denied MAC addresses</span>
+          </div>
+          <span class="badge badge-neutral" id="deny-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">
+            Stations on this list are deauthed on association — they can't reach the AP at all.
+            Use the <strong>Deny</strong> button in the Connected clients table to add a row in one click,
+            or remove an entry with × below.
+          </p>
+          <div id="deny-body">
+            <div style="padding:1rem; color:var(--text-muted); border:1px dashed var(--border); border-radius:var(--radius-md);">— no MACs denied —</div>
+          </div>
+        </div>
+      </div>
+
       <!-- ===== Port forwarding (uplink-side NAPT) ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -3237,6 +3257,7 @@
       /* DHCP reservations + connected-client/lease snapshot. */
       loadDhcpReservations();
       loadDhcpLeases();
+      loadDenylist();
       loadPortmap();
     }
 
@@ -3523,7 +3544,8 @@
               + (canReserve
                   ? '<button class="btn btn-secondary btn-sm dhcp-reserve-from" data-mac="' + escapeHtml(c.mac) + '" data-ip="' + escapeHtml(c.ip) + '" data-name="' + escapeHtml(c.hostname || '') + '" type="button">Reserve</button> '
                   : '')
-              + '<button class="btn btn-ghost btn-sm text-danger dhcp-kick" data-mac="' + escapeHtml(c.mac) + '" type="button" title="Force reconnect — useful after changing the reservation">Kick</button>'
+              + '<button class="btn btn-ghost btn-sm text-danger dhcp-kick" data-mac="' + escapeHtml(c.mac) + '" type="button" title="Force reconnect — useful after changing the reservation">Kick</button> '
+              + '<button class="btn btn-ghost btn-sm text-danger dhcp-deny" data-mac="' + escapeHtml(c.mac) + '" data-name="' + escapeHtml(c.name || c.hostname || '') + '" type="button" title="Add to denylist and kick — client cannot reassociate">Deny</button>'
               + '</td>'
               + '</tr>';
       });
@@ -3544,6 +3566,26 @@
           renderDhcpResList();
           markDhcpDirty();
           showToast('success', 'Row added', 'Edit the name if you like, then click Save.', 3500);
+        });
+      });
+      document.querySelectorAll('.dhcp-deny').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var mac  = this.dataset.mac;
+          var name = this.dataset.name || '';
+          if (!confirm('Deny ' + mac + ' from associating to this AP?\n\nIt will be added to the denylist and kicked. Remove from the Denied MACs card to allow it again.')) return;
+          if (s_deny_list.some(function (e) { return (e.mac || '').toLowerCase() === mac.toLowerCase(); })) {
+            showToast('info', 'Already denied', mac + ' is already on the list.', 3500);
+            return;
+          }
+          if (s_deny_list.length >= s_deny_max) {
+            showToast('error', 'Denylist full', 'Max ' + s_deny_max + ' MACs. Remove one first.', 5000);
+            return;
+          }
+          var next = s_deny_list.concat([{ mac: mac, name: name }]);
+          saveDenylist(next, function () {
+            showToast('success', 'Denied', mac + ' — kicked + blocked.', 4000);
+            setTimeout(loadDhcpLeases, 1500);
+          });
         });
       });
       document.querySelectorAll('.dhcp-kick').forEach(function (btn) {
@@ -3681,6 +3723,72 @@
         showToast('error', 'Save failed', 'Reservations were not stored. Check the device log.', 5000);
       });
     });
+
+    // =====================================================================
+    // MAC DENYLIST (Connected clients → Deny button + Denied MACs card)
+    // =====================================================================
+    var s_deny_list = [];
+    var s_deny_max  = 16;
+
+    function loadDenylist() {
+      apiFetch('/api/mac/denylist')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          s_deny_list = (d.denylist || []).slice();
+          if (typeof d.max === 'number') s_deny_max = d.max;
+          renderDenylist();
+        }).catch(function () {});
+    }
+
+    function renderDenylist() {
+      var body = document.getElementById('deny-body');
+      var b    = document.getElementById('deny-badge');
+      b.textContent = s_deny_list.length + ' / ' + s_deny_max;
+      b.className   = 'badge ' + (s_deny_list.length ? 'badge-danger' : 'badge-neutral');
+
+      if (!s_deny_list.length) {
+        body.innerHTML = '<div style="padding:1rem; color:var(--text-muted); border:1px dashed var(--border); border-radius:var(--radius-md);">— no MACs denied —</div>';
+        return;
+      }
+      var html = '<div class="table-wrap"><table class="table"><thead><tr>'
+               + '<th>MAC</th><th>Name</th><th></th>'
+               + '</tr></thead><tbody>';
+      s_deny_list.forEach(function (e, idx) {
+        html += '<tr>'
+              + '<td class="mono">' + escapeHtml(e.mac || '') + '</td>'
+              + '<td>' + escapeHtml(e.name || '') + '</td>'
+              + '<td style="text-align:right;">'
+              +   '<button class="btn btn-ghost btn-sm deny-remove" data-idx="' + idx + '" type="button" title="Allow this MAC again">×</button>'
+              + '</td></tr>';
+      });
+      html += '</tbody></table></div>';
+      body.innerHTML = html;
+      document.querySelectorAll('.deny-remove').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          var idx = parseInt(this.dataset.idx, 10);
+          var next = s_deny_list.slice();
+          next.splice(idx, 1);
+          saveDenylist(next, function () {
+            showToast('success', 'Allowed', 'MAC removed from denylist.', 3500);
+          });
+        });
+      });
+    }
+
+    function saveDenylist(next, onOk) {
+      apiFetch('/api/mac/denylist', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ denylist: next })
+      }).then(function (r) { if (!r.ok) throw 0; return r.json(); })
+        .then(function () {
+          s_deny_list = next;
+          renderDenylist();
+          if (typeof onOk === 'function') onOk();
+        }).catch(function () {
+          showToast('error', 'Save failed', 'Denylist not stored.', 5000);
+        });
+    }
 
     // =====================================================================
     // PORT FORWARDING (still on the Network tab)

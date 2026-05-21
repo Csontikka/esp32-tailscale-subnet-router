@@ -49,6 +49,7 @@
 #include "wifi_networks.h"
 #include "dhcp_reservations.h"
 #include "portmap.h"
+#include "mac_deny.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -189,6 +190,18 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         wifi_event_ap_staconnected_t *event = (wifi_event_ap_staconnected_t *) event_data;
         ESP_LOGI(TAG_AP, "Station "MACSTR" joined, AID=%d",
                  MAC2STR(event->mac), event->aid);
+        /* MAC denylist enforcement runs at associate time — the Wi-Fi
+         * driver has no built-in MAC ACL on ESP-IDF, so the cheapest
+         * place to drop a banned client is the next tick, before
+         * anything routes through it. */
+        if (mac_deny_is_blocked(event->mac)) {
+            ESP_LOGW(TAG_AP, "denied MAC " MACSTR " — deauthing",
+                     MAC2STR(event->mac));
+            esp_wifi_deauth_sta(event->aid);
+            /* Skip the connect_count bump — the station never really
+             * joined from the application's point of view. */
+            return;
+        }
         connect_count++;
     } else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_AP_STADISCONNECTED) {
         wifi_event_ap_stadisconnected_t *event = (wifi_event_ap_stadisconnected_t *) event_data;
@@ -568,6 +581,11 @@ void app_main(void)
      * actual lwIP bindings are installed from the IP_GOT_IP handler
      * once we know the STA's bind IP. */
     portmap_init();
+
+    /* MAC denylist — the AP_STACONNECTED handler consults this cache
+     * (lock-free) to decide whether to deauth the freshly-associated
+     * station before it gets anywhere. */
+    mac_deny_init();
 
     /* PCAP-over-TCP capture (listens on port 19000 for Wireshark).
      * Mode is OFF on boot; operator enables it from /api/tools/pcap. */
