@@ -4684,6 +4684,19 @@
         if (!setupVisible && !loginVisible) fetchStatus();
       }
     }, 30000);
+
+    /* Network tab: refresh the dynamic widgets (connected clients,
+     * active leases, byte-count-ish bits in /api/status) on a 10 s
+     * cadence while the operator is actually looking at the tab.
+     * Skipped on every other tab so we don't churn the device. */
+    setInterval(function () {
+      var nav = document.getElementById('page-network');
+      if (!nav || !nav.classList.contains('active')) return;
+      var setupVisible = document.getElementById('authSetup').style.display !== 'none';
+      var loginVisible = document.getElementById('authLogin').style.display !== 'none';
+      if (setupVisible || loginVisible) return;
+      if (typeof loadDhcpLeases === 'function') loadDhcpLeases();
+    }, 10000);
   </script>
 
 </body>
