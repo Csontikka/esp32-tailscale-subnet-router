@@ -1526,7 +1526,7 @@
             </div>
             <div class="stat-row">
               <span class="stat-label">Exit node</span>
-              <span class="stat-value text-muted" id="ts-exit">None</span>
+              <span class="stat-value text-muted" id="ts-exit">—</span>
             </div>
           </div>
           <!-- Peer mini-list -->
@@ -2801,7 +2801,7 @@
       document.getElementById('ts-hostname').textContent = ts.hostname  || '—';
       document.getElementById('ts-peers').textContent    = (ts.peers_total != null ? ts.peers_online + ' / ' + ts.peers_total : '—');
       document.getElementById('ts-routes').textContent   = ts.advertise_routes || '—';
-      document.getElementById('ts-exit').textContent     = ts.exit_node_ip || 'None';
+      document.getElementById('ts-exit').textContent     = ts.exit_node_ip || '—';
 
       /* Peer list is fed by /api/tailscale (it carries the full peer
        * array); /api/status only carries summary counts. Lazy-fetch
