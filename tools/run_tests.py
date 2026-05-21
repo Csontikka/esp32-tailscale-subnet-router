@@ -29,6 +29,7 @@ MODULES = [
     ("tailscale", "test_lib.tailscale"),
     ("pi",        "test_lib.pi"),
     ("routing",   "test_lib.routing"),
+    ("dns_relay", "test_lib.dns_relay"),
 ]
 
 

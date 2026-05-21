@@ -732,12 +732,13 @@ static esp_err_t network_save_handler(httpd_req_t *req)
                 dns_relay_touched = true;
             }
         }
-        if (dns_relay_touched) {
-            esp_netif_t *ap_n  = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
-            esp_netif_t *sta_n = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
-            extern void softap_set_dns_addr(esp_netif_t *ap, esp_netif_t *sta);
-            if (ap_n && sta_n) softap_set_dns_addr(ap_n, sta_n);
-        }
+        /* No direct softap_set_dns_addr() here — the dns_relay task
+         * fires dns_relay_on_healthy / dns_relay_on_unhealthy on every
+         * health transition, and main.c's overrides re-run softap from
+         * there. Calling it both places would cause a second DHCP-server
+         * restart 12 s after the first and knock newly-leased clients
+         * off their fresh DNS-server entry. */
+        (void)dns_relay_touched;
 
         char new_cidr[32];
         char proposed[512];

@@ -39,11 +39,21 @@ static volatile bool     s_healthy       = false;  /* the task is bound and serv
 
 static TaskHandle_t s_task = NULL;
 
-/* Weak hook fired on every false→true health transition. main.c
- * overrides this to (re-)run softap_set_dns_addr so the DHCP-advertised
- * resolver flips to the AP IP the instant the relay is actually ready.
- * Weak so unit tests / future callers without a main.c override link. */
-__attribute__((weak)) void dns_relay_on_healthy(void) {}
+/* Explicit registration-based callback fired on every health-state
+ * transition (false→true or true→false). Originally implemented as
+ * weak-symbol overrides, but the ESP-IDF link order doesn't reliably
+ * resolve the main-side strong definition over the component-side
+ * weak one — the relay would go healthy and the softap-reapply hook
+ * would never fire. Explicit registration sidesteps that entirely. */
+static dns_relay_state_cb_t s_state_cb = NULL;
+
+void dns_relay_set_state_cb(dns_relay_state_cb_t cb) { s_state_cb = cb; }
+
+static void notify_state(bool healthy)
+{
+    dns_relay_state_cb_t cb = s_state_cb;
+    if (cb) cb(healthy);
+}
 
 /* Resolve the live upstream IP every forward. Priority:
  *   1. Explicit override (s_upstream_nbo)
@@ -180,13 +190,15 @@ static void dns_relay_task(void *arg)
             s_healthy = true;
             if (!was_healthy) {
                 ESP_LOGI(TAG, "first healthy transition — notifying softap dns reapply");
-                dns_relay_on_healthy();
+                notify_state(true);
             }
         } else if (!want_listening && listen_sock >= 0) {
             ESP_LOGI(TAG, "disabled — closing listen socket");
             close(listen_sock);
             listen_sock = -1;
+            bool was_healthy = s_healthy;
             s_healthy = false;
+            if (was_healthy) notify_state(false);
         }
 
         if (listen_sock < 0) {
