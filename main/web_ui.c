@@ -2141,7 +2141,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
          * still serialise the stale value. Mirror the just-saved
          * strings back into the heap-allocated globals so the next
          * read-back sees the new state without waiting for a reboot. */
-        #define _TS_REFRESH(json_key, global_var)                           \
+        #define _TS_REFRESH_STR(json_key, global_var)                       \
             do {                                                            \
                 const cJSON *_v = cJSON_GetObjectItem(s, json_key);         \
                 if (cJSON_IsString(_v)) {                                   \
@@ -2149,11 +2149,32 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
                     global_var = strdup(_v->valuestring);                   \
                 }                                                           \
             } while (0)
-        _TS_REFRESH("auth_key",         tailscale_auth_key);
-        _TS_REFRESH("hostname",         tailscale_hostname);
-        _TS_REFRESH("login_server",     tailscale_login_server);
-        _TS_REFRESH("advertise_routes", tailscale_advertise_routes);
-        #undef _TS_REFRESH
+        #define _TS_REFRESH_BOOL(json_key, global_var)                      \
+            do {                                                            \
+                const cJSON *_v = cJSON_GetObjectItem(s, json_key);         \
+                if (cJSON_IsBool(_v)) global_var = cJSON_IsTrue(_v) ? 1 : 0;\
+            } while (0)
+        #define _TS_REFRESH_NUM(json_key, global_var)                       \
+            do {                                                            \
+                const cJSON *_v = cJSON_GetObjectItem(s, json_key);         \
+                if (cJSON_IsNumber(_v)) global_var = (int32_t)_v->valuedouble; \
+            } while (0)
+
+        _TS_REFRESH_STR ("auth_key",                tailscale_auth_key);
+        _TS_REFRESH_STR ("hostname",                tailscale_hostname);
+        _TS_REFRESH_STR ("login_server",            tailscale_login_server);
+        _TS_REFRESH_STR ("advertise_routes",        tailscale_advertise_routes);
+        _TS_REFRESH_BOOL("enabled",                 tailscale_enabled);
+        _TS_REFRESH_NUM ("max_peers",               tailscale_max_peers);
+        _TS_REFRESH_NUM ("default_derp_region",     tailscale_default_derp_region);
+        _TS_REFRESH_NUM ("netcheck_threshold_ms",   tailscale_netcheck_threshold_ms);
+        _TS_REFRESH_BOOL("netcheck_override",       tailscale_netcheck_override);
+        _TS_REFRESH_BOOL("lan_bypass",              tailscale_lan_bypass);
+        _TS_REFRESH_BOOL("accept_routes",           tailscale_accept_routes);
+
+        #undef _TS_REFRESH_STR
+        #undef _TS_REFRESH_BOOL
+        #undef _TS_REFRESH_NUM
         save_int_if_present(s, "max_peers",        "ts_maxpeers");
         save_int_if_present(s, "default_derp_region",   "ts_def_derp");
         save_int_if_present(s, "netcheck_threshold_ms", "ts_nc_thr");
@@ -2171,12 +2192,15 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
         }
 
         /* exit_node_ip is a dotted-quad string in the JSON, stored in
-         * NVS as the host-order int that tailscale_init reads back. */
+         * NVS as the host-order int that tailscale_init reads back.
+         * Mirror the parsed value into the global too so /api/tailscale
+         * + /api/status reflect the change without a reboot. */
         const cJSON *exit_node = cJSON_GetObjectItem(s, "exit_node_ip");
         if (cJSON_IsString(exit_node)) {
             ip4_addr_t a = { 0 };
             if (exit_node->valuestring[0] == '\0' || ip4addr_aton(exit_node->valuestring, &a)) {
                 nvs_param_set_int("ts_exit_node", (int32_t)a.addr);
+                tailscale_exit_node_ip = a.addr;
             }
         }
     }
