@@ -3533,6 +3533,23 @@
         } else {
           n.static_ip = {};
         }
+        /* EAP capture — method=0 means disabled (clears the block). */
+        var eapMethod = parseInt(row.querySelector('.net-eap-method').value, 10) || 0;
+        if (eapMethod === 0) {
+          n.eap = { method: 0, phase2: 0, cert_bundle: false,
+                    identity: '', username: '', has_password: false };
+        } else {
+          var eapPw = row.querySelector('.net-eap-pw').value;
+          n.eap = {
+            method:      eapMethod,
+            phase2:      parseInt(row.querySelector('.net-eap-phase2').value, 10) || 0,
+            cert_bundle: row.querySelector('.net-eap-cb').checked,
+            identity:    row.querySelector('.net-eap-id').value,
+            username:    row.querySelector('.net-eap-un').value,
+            has_password: (n.eap && n.eap.has_password) || !!eapPw
+          };
+          if (eapPw) n._new_eap_pw = eapPw;
+        }
       });
     }
 
@@ -3564,8 +3581,57 @@
               +   '</div>'
               +   '<div class="form-group"><label class="form-label">Password</label>'
               +     '<input class="input net-pw" type="password" autocomplete="new-password" placeholder="' + (n.ssid ? 'Leave empty to keep current' : 'Enter password') + '">'
+              +     '<span class="form-hint">Ignored when WPA2-Enterprise is enabled below.</span>'
               +   '</div>'
               + '</div>'
+              /* WPA2-Enterprise block. Default closed (method=0 / disabled)
+               * so home-network rows stay short. The .net-eap-fields div
+               * is shown only when method != 0. */
+              + (function () {
+                  var eap = n.eap || {};
+                  var em = parseInt(eap.method || 0, 10);
+                  var showFields = em !== 0;
+                  return ''
+                  + '<div class="form-group" style="margin-top:0.25rem;">'
+                  +   '<label class="form-label">WPA2-Enterprise (EAP)</label>'
+                  +   '<select class="input net-eap-method">'
+                  +     '<option value="0"' + (em===0?' selected':'') + '>Disabled (plain PSK)</option>'
+                  +     '<option value="1"' + (em===1?' selected':'') + '>PEAP</option>'
+                  +     '<option value="2"' + (em===2?' selected':'') + '>TTLS</option>'
+                  +   '</select>'
+                  + '</div>'
+                  + '<div class="net-eap-fields" style="display:' + (showFields?'':'none') + '; padding:0.5rem 0.75rem; background:var(--bg-subtle); border-radius:var(--radius-sm); margin-bottom:0.5rem;">'
+                  +   '<div class="grid grid-cols-2">'
+                  +     '<div class="form-group"><label class="form-label">Identity (outer)</label>'
+                  +       '<input class="input net-eap-id" type="text" placeholder="anonymous@example.org — empty = same as username" value="' + escapeHtml(eap.identity || '') + '">'
+                  +     '</div>'
+                  +     '<div class="form-group"><label class="form-label">Phase 2</label>'
+                  +       '<select class="input net-eap-phase2">'
+                  +         '<option value="0"' + ((eap.phase2||0)===0?' selected':'') + '>Auto (per-method default)</option>'
+                  +         '<option value="1"' + ((eap.phase2||0)===1?' selected':'') + '>MSCHAPv2</option>'
+                  +         '<option value="2"' + ((eap.phase2||0)===2?' selected':'') + '>PAP</option>'
+                  +         '<option value="3"' + ((eap.phase2||0)===3?' selected':'') + '>CHAP</option>'
+                  +         '<option value="4"' + ((eap.phase2||0)===4?' selected':'') + '>MSCHAP</option>'
+                  +       '</select>'
+                  +     '</div>'
+                  +   '</div>'
+                  +   '<div class="grid grid-cols-2">'
+                  +     '<div class="form-group"><label class="form-label">Username (inner)</label>'
+                  +       '<input class="input net-eap-un" type="text" placeholder="user@example.org" value="' + escapeHtml(eap.username || '') + '">'
+                  +     '</div>'
+                  +     '<div class="form-group"><label class="form-label">EAP password</label>'
+                  +       '<input class="input net-eap-pw" type="password" autocomplete="new-password" placeholder="' + (eap.has_password ? 'Leave empty to keep current' : 'Enter EAP password') + '">'
+                  +     '</div>'
+                  +   '</div>'
+                  +   '<div class="form-group" style="margin:0;">'
+                  +     '<label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">'
+                  +       '<input type="checkbox" class="net-eap-cb"' + (eap.cert_bundle ? ' checked' : '') + '>'
+                  +       'Verify server certificate against the bundled Mozilla CA store'
+                  +     '</label>'
+                  +     '<span class="form-hint">Off = trust the server unconditionally. Turn on for eduroam-class deployments that present a publicly-trusted RADIUS cert.</span>'
+                  +   '</div>'
+                  + '</div>';
+                })()
               + '<div class="form-group" style="margin-top:0.25rem;">'
               +   '<label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">'
               +     '<input type="checkbox" class="net-static-toggle" ' + (isStatic?'checked':'') + '> Use static IP on this network'
@@ -3606,6 +3672,10 @@
         });
         row.querySelector('.net-static-toggle').addEventListener('change', function () {
           row.querySelector('.net-static-block').style.display = this.checked ? '' : 'none';
+          markNetDirty();
+        });
+        row.querySelector('.net-eap-method').addEventListener('change', function () {
+          row.querySelector('.net-eap-fields').style.display = (parseInt(this.value, 10) === 0) ? 'none' : '';
           markNetDirty();
         });
         row.querySelector('.net-scan').addEventListener('click', function () {
@@ -3776,6 +3846,17 @@
         if (sip.mask) e.static_ip.mask = (sip.mask || '').trim();
         if (sip.gw)   e.static_ip.gw   = (sip.gw   || '').trim();
         if (sip.dns)  e.static_ip.dns  = (sip.dns  || '').trim();
+        /* EAP block — only sent when the operator picked a method.
+         * eap.password follows omit-to-keep (backend re-reads NVS). */
+        var eap = n.eap || {};
+        e.eap = {
+          method:      parseInt(eap.method || 0, 10),
+          phase2:      parseInt(eap.phase2 || 0, 10),
+          cert_bundle: !!eap.cert_bundle,
+          identity:    (eap.identity || '').trim(),
+          username:    (eap.username || '').trim()
+        };
+        if (n._new_eap_pw) e.eap.password = n._new_eap_pw;
         return e;
       }).filter(function (e) { return e.ssid.length > 0; });
       if (!nets.length) {

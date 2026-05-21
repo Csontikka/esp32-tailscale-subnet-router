@@ -32,6 +32,19 @@ typedef struct {
     uint8_t _reserved[7];
 } wifi_network_v1_t;
 
+/* On-flash layout in use between the dns[16] addition and the EAP
+ * (WPA2-Enterprise) fields. Loads as a no-EAP plain-PSK network. */
+typedef struct {
+    char    ssid[33];
+    char    passwd[65];
+    char    static_ip[16];
+    char    subnet[16];
+    char    gateway[16];
+    char    dns[16];
+    uint8_t valid;
+    uint8_t _reserved[7];
+} wifi_network_v2_t;
+
 static void clear_cache(void)
 {
     memset(s_nets, 0, sizeof s_nets);
@@ -90,8 +103,8 @@ void wifi_networks_init(void)
                 }
             } else if (actual == sizeof(wifi_network_v1_t) * WIFI_NETWORKS_MAX) {
                 /* Pre-DNS layout — read into a v1 buffer, expand each entry
-                 * with an empty dns field, then persist back in the new
-                 * format so this branch only runs once. */
+                 * with an empty dns + EAP fields, then persist back in the
+                 * new format so this branch only runs once. */
                 wifi_network_v1_t v1[WIFI_NETWORKS_MAX] = {0};
                 size_t sz = sizeof v1;
                 if (nvs_get_blob(nvs, NVS_KEY, v1, &sz) == ESP_OK) {
@@ -106,9 +119,35 @@ void wifi_networks_init(void)
                         if (s_nets[i].valid && s_nets[i].ssid[0]) s_count++;
                     }
                     nvs_close(nvs);
-                    ESP_LOGI(TAG, "migrated %d v1 network(s) → v2 (added dns field)", s_count);
-                    /* Persist now so the next boot reads the new layout
-                     * directly. set_all rebuilds the cache from arr[]. */
+                    ESP_LOGI(TAG, "migrated %d v1 network(s) → v3 (added dns + EAP fields)", s_count);
+                    wifi_network_t snapshot[WIFI_NETWORKS_MAX];
+                    memcpy(snapshot, s_nets, sizeof snapshot);
+                    wifi_networks_set_all(snapshot, WIFI_NETWORKS_MAX);
+                    s_loaded = true;
+                    return;
+                }
+            } else if (actual == sizeof(wifi_network_v2_t) * WIFI_NETWORKS_MAX) {
+                /* Pre-EAP layout — read into a v2 buffer, expand each entry
+                 * with empty EAP fields, then persist back. New entries
+                 * default to eap_method=WIFI_EAP_DISABLED so the
+                 * configured PSK behaviour is preserved exactly. */
+                wifi_network_v2_t v2[WIFI_NETWORKS_MAX] = {0};
+                size_t sz = sizeof v2;
+                if (nvs_get_blob(nvs, NVS_KEY, v2, &sz) == ESP_OK) {
+                    for (int i = 0; i < WIFI_NETWORKS_MAX; i++) {
+                        memset(&s_nets[i], 0, sizeof s_nets[i]);
+                        memcpy(s_nets[i].ssid,      v2[i].ssid,      sizeof v2[i].ssid);
+                        memcpy(s_nets[i].passwd,    v2[i].passwd,    sizeof v2[i].passwd);
+                        memcpy(s_nets[i].static_ip, v2[i].static_ip, sizeof v2[i].static_ip);
+                        memcpy(s_nets[i].subnet,    v2[i].subnet,    sizeof v2[i].subnet);
+                        memcpy(s_nets[i].gateway,   v2[i].gateway,   sizeof v2[i].gateway);
+                        memcpy(s_nets[i].dns,       v2[i].dns,       sizeof v2[i].dns);
+                        s_nets[i].valid = v2[i].valid;
+                        /* eap_method left 0 (DISABLED) — exactly the PSK behaviour we had. */
+                        if (s_nets[i].valid && s_nets[i].ssid[0]) s_count++;
+                    }
+                    nvs_close(nvs);
+                    ESP_LOGI(TAG, "migrated %d v2 network(s) → v3 (added EAP fields)", s_count);
                     wifi_network_t snapshot[WIFI_NETWORKS_MAX];
                     memcpy(snapshot, s_nets, sizeof snapshot);
                     wifi_networks_set_all(snapshot, WIFI_NETWORKS_MAX);

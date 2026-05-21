@@ -38,7 +38,7 @@ idf_component_register(SRCS "main.c"
                             "reset_history.c"
                             "index_html_data.c"
                     PRIV_REQUIRES esp_wifi nvs_flash esp_event esp_netif esp_timer
-                                  lwip microlink
+                                  lwip microlink wpa_supplicant
                                   esp_http_client esp-tls mbedtls
                                   esp_http_server json esp_app_format
                                   acl syslog pcap_capture remote_console

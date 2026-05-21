@@ -19,6 +19,7 @@
 #include "freertos/event_groups.h"
 #include "esp_mac.h"
 #include "esp_wifi.h"
+#include "esp_eap_client.h"
 #include "esp_event.h"
 #include "esp_log.h"
 #include "esp_netif_net_stack.h"
@@ -141,6 +142,59 @@ static void dns_relay_state_cb(bool healthy)
 static int s_net_current = 0;
 static int s_net_retries = 0;
 
+/* Apply WPA2-Enterprise (EAP) settings for the given network. Returns
+ * true if enterprise auth was actually enabled — caller must skip the
+ * PSK password copy in that case. */
+static bool wifi_apply_eap(const wifi_network_t *n)
+{
+    /* Clear any prior enterprise state so a rotation from EAP-slot to
+     * PSK-slot doesn't leak credentials between SSIDs. */
+    esp_wifi_sta_enterprise_disable();
+
+    if (n->eap_method == WIFI_EAP_DISABLED) return false;
+    if (n->eap_username[0] == '\0') {
+        ESP_LOGW("WiFi Sta", "EAP requested for '%s' but no username — falling back to PSK", n->ssid);
+        return false;
+    }
+
+    /* Outer identity defaults to the username when blank — what eduroam-
+     * style setups expect when there's no anonymous-identity policy. */
+    const char *outer = n->eap_identity[0] ? n->eap_identity : n->eap_username;
+    esp_eap_client_set_identity((const uint8_t *)outer, strlen(outer));
+    esp_eap_client_set_username((const uint8_t *)n->eap_username, strlen(n->eap_username));
+    esp_eap_client_set_password((const uint8_t *)n->eap_password, strlen(n->eap_password));
+
+    if (n->eap_method == WIFI_EAP_PEAP || n->eap_method == WIFI_EAP_TTLS) {
+        switch (n->eap_phase2) {
+            case WIFI_EAP_PHASE2_MSCHAPV2:
+                esp_eap_client_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAPV2);
+                break;
+            case WIFI_EAP_PHASE2_PAP:
+                esp_eap_client_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_PAP);
+                break;
+            case WIFI_EAP_PHASE2_CHAP:
+                esp_eap_client_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_CHAP);
+                break;
+            case WIFI_EAP_PHASE2_MSCHAP:
+                esp_eap_client_set_ttls_phase2_method(ESP_EAP_TTLS_PHASE2_MSCHAP);
+                break;
+            default: /* AUTO — let IDF pick the per-method default. */
+                break;
+        }
+    }
+
+#ifdef CONFIG_MBEDTLS_CERTIFICATE_BUNDLE
+    if (n->eap_use_cert_bundle) {
+        esp_eap_client_use_default_cert_bundle(true);
+    }
+#endif
+
+    esp_wifi_sta_enterprise_enable();
+    ESP_LOGI("WiFi Sta", "EAP enabled for '%s' (method=%u phase2=%u outer='%s')",
+             n->ssid, (unsigned)n->eap_method, (unsigned)n->eap_phase2, outer);
+    return true;
+}
+
 /* Push a network entry (SSID/password + per-network static IP) into the
  * live esp_wifi + esp_netif config. Called once from wifi_init_sta()
  * with idx=0, then again from the STA_DISCONNECTED handler when the
@@ -161,8 +215,11 @@ static void wifi_apply_network(int idx)
             .sae_pwe_h2e        = WPA3_SAE_PWE_BOTH,
         },
     };
-    strlcpy((char *)cfg.sta.ssid,     n.ssid,   sizeof cfg.sta.ssid);
-    strlcpy((char *)cfg.sta.password, n.passwd, sizeof cfg.sta.password);
+    strlcpy((char *)cfg.sta.ssid, n.ssid, sizeof cfg.sta.ssid);
+    bool ent = wifi_apply_eap(&n);
+    if (!ent) {
+        strlcpy((char *)cfg.sta.password, n.passwd, sizeof cfg.sta.password);
+    }
     esp_wifi_set_config(WIFI_IF_STA, &cfg);
 
     /* Apply per-network static IP. All three fields must be non-empty
