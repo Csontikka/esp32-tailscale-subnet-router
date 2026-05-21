@@ -965,6 +965,14 @@
     .text-info    { color: var(--info); }
     .text-accent  { color: var(--accent); }
     .text-muted   { color: var(--fg-muted); }
+
+    /* ESP_LOG severity colors — applied to <span class="lvl-X"> wrappers
+     * around each log line in the live log viewer. */
+    .lvl-E { color: #ff6b6b; }
+    .lvl-W { color: #ffc107; }
+    .lvl-I { color: #c8d6dc; }
+    .lvl-D { color: #888; }
+    .lvl-V { color: #666; }
     .text-secondary { color: var(--fg-secondary); }
 
     .flex { display: flex; }
@@ -2167,16 +2175,28 @@
         </div>
       </div>
 
-      <!-- ===== Log Viewer ===== -->
+      <!-- ===== Log Viewer (live tail, level-coloured) ===== -->
       <div class="card mt-4">
         <div class="card-header">
           <div class="card-header-left">
-            <span class="card-title">Log buffer (last 4 KB)</span>
+            <span class="card-title">Live log</span>
           </div>
-          <button class="btn btn-secondary btn-sm" id="tool-log-refresh">Refresh</button>
+          <span class="badge badge-success" id="log-state">● live</span>
         </div>
-        <div class="card-body">
-          <pre id="tool-log-body" style="background:var(--bg-page); border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; max-height:24rem; overflow:auto; font-family:var(--font-mono); font-size:0.8rem; line-height:1.4; margin:0; white-space:pre-wrap; word-break:break-all;">— no log loaded yet —</pre>
+        <div class="card-body" style="padding-top:0.5rem;">
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem; flex-wrap:wrap; gap:0.5rem;">
+            <span class="form-hint mono"><span id="log-size">—</span> / <span id="log-cap">—</span> bytes</span>
+            <div style="display:flex; gap:0.4rem;">
+              <button class="btn btn-secondary btn-sm" id="log-pause">Pause</button>
+              <button class="btn btn-secondary btn-sm" id="log-copy">Copy</button>
+              <button class="btn btn-ghost btn-sm text-danger" id="log-clear">Clear</button>
+            </div>
+          </div>
+          <pre id="tool-log-body" data-seq="0" style="background:var(--bg-page); border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; max-height:32rem; overflow:auto; font-family:var(--font-mono); font-size:0.8rem; line-height:1.4; margin:0; white-space:pre-wrap; word-break:break-all;">— waiting for first tail —</pre>
+          <span class="form-hint" style="margin-top:0.4rem; display:block;">
+            16 KB ring buffer of every ESP_LOG line (serial keeps the same stream). Polls every 500 ms; older lines roll off when the ring wraps.
+            Level legend: <span class="lvl-E">E</span> errors, <span class="lvl-W">W</span> warnings, <span class="lvl-I">I</span> info, <span class="lvl-D">D</span>/<span class="lvl-V">V</span> debug.
+          </span>
         </div>
       </div>
 
@@ -4796,21 +4816,127 @@
     /* Auto-load PCAP status on first Tools-tab open — piggy-back on the
      * tab nav hook below. */
 
-    document.getElementById('tool-log-refresh').addEventListener('click', function () {
-      var btn = this;
-      var pre = document.getElementById('tool-log-body');
-      btn.disabled = true;
-      btn.textContent = 'Loading…';
-      apiFetch('/api/system')
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          pre.textContent = d.log_tail || '— empty —';
-          /* Scroll to bottom — that's where the latest lines are. */
-          pre.scrollTop = pre.scrollHeight;
-        })
-        .catch(function () { pre.textContent = '— fetch failed —'; })
-        .finally(function () { btn.disabled = false; btn.textContent = 'Refresh'; });
-    });
+    /* Live log tail — polls /api/log/raw?since=<seq> every 500 ms while
+     * the Tools tab is open. Each line is wrapped in a <span class="lvl-X">
+     * so the existing CSS palette colours it by severity. Pause toggles
+     * the poll without tearing down state; Copy reads the rendered text
+     * back out; Clear hits POST /api/log/clear and resets the view. */
+    (function () {
+      var pre   = document.getElementById('tool-log-body');
+      var size  = document.getElementById('log-size');
+      var cap   = document.getElementById('log-cap');
+      var state = document.getElementById('log-state');
+      var paused = false;
+      var carry  = '';   /* partial line carried between polls */
+      var firstTick = true;
+
+      function nearBottom() { return (pre.scrollHeight - pre.scrollTop - pre.clientHeight) < 40; }
+
+      function emitLine(line, trail) {
+        var c = 'I';
+        if (line.length >= 2 && line[1] === ' ') {
+          var f = line[0];
+          if (f === 'E' || f === 'W' || f === 'I' || f === 'D' || f === 'V') c = f;
+        }
+        var sp = document.createElement('span');
+        sp.className = 'lvl-' + c;
+        sp.textContent = line + trail;
+        pre.appendChild(sp);
+      }
+
+      function appendColored(text) {
+        var combined = carry + text;
+        var nl = combined.lastIndexOf('\n');
+        if (nl < 0) { carry = combined; return; }
+        var complete = combined.substring(0, nl + 1);
+        carry = combined.substring(nl + 1);
+        var parts = complete.split('\n');
+        for (var i = 0; i < parts.length - 1; i++) emitLine(parts[i], '\n');
+      }
+
+      function poll() {
+        var toolsActive = document.getElementById('page-tools').classList.contains('active');
+        if (!toolsActive || paused) { setTimeout(poll, 500); return; }
+        apiFetch('/api/log/raw?since=' + (pre.dataset.seq || 0), { cache: 'no-store' })
+          .then(function (r) {
+            if (!r.ok) throw r.status;
+            return r.json();
+          })
+          .then(function (j) {
+            if (firstTick) {
+              pre.textContent = ''; carry = '';
+              firstTick = false;
+            }
+            if (j.lost) {
+              pre.textContent = ''; carry = '';
+              emitLine('⚠ ring buffer wrapped past our cursor — view re-synced', '\n');
+              if (j.data) appendColored(j.data);
+            } else if (j.data) {
+              var stick = nearBottom();
+              appendColored(j.data);
+              if (stick) pre.scrollTop = pre.scrollHeight;
+            }
+            pre.dataset.seq = j.seq;
+            if (size && typeof j.size === 'number') size.textContent = j.size;
+            if (cap  && typeof j.cap  === 'number') cap.textContent  = j.cap;
+            if (!paused) {
+              state.textContent = '● live';
+              state.className   = 'badge badge-success';
+            }
+            setTimeout(poll, 500);
+          })
+          .catch(function () {
+            state.textContent = '● offline';
+            state.className   = 'badge badge-danger';
+            setTimeout(poll, 2000);
+          });
+      }
+      /* Kick off the poller; the toolsActive guard inside poll keeps it
+       * idle until the operator opens the Tools tab, so we don't churn
+       * the device while parked elsewhere. */
+      setTimeout(poll, 500);
+
+      document.getElementById('log-pause').addEventListener('click', function () {
+        paused = !paused;
+        this.textContent = paused ? 'Resume' : 'Pause';
+        state.textContent = paused ? '● paused' : '● live';
+        state.className   = paused ? 'badge badge-warning' : 'badge badge-success';
+      });
+
+      document.getElementById('log-copy').addEventListener('click', function () {
+        var txt = pre.textContent;
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(txt).then(
+            function () { showToast('success', 'Copied', txt.length + ' chars on the clipboard.', 3000); },
+            function () { fallback(); }
+          );
+        } else { fallback(); }
+        function fallback() {
+          /* http://192.168.4.1 isn't a secure context — fall back to a
+           * hidden textarea + execCommand. */
+          var ta = document.createElement('textarea');
+          ta.value = txt;
+          ta.style.position = 'fixed'; ta.style.left = '-9999px';
+          document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); showToast('success', 'Copied', txt.length + ' chars on the clipboard.', 3000); }
+          catch (e) { showToast('error', 'Copy failed', '', 4000); }
+          document.body.removeChild(ta);
+        }
+      });
+
+      document.getElementById('log-clear').addEventListener('click', function () {
+        if (!confirm('Clear the live log ring buffer? Pre-crash buffer is unaffected.')) return;
+        apiFetch('/api/log/clear', { method: 'POST' })
+          .then(function (r) { if (!r.ok) throw 0; })
+          .then(function () {
+            pre.textContent = ''; carry = '';
+            pre.dataset.seq = '0';
+            firstTick = false;
+            showToast('success', 'Cleared', 'Ring buffer wiped.', 3000);
+          })
+          .catch(function () { showToast('error', 'Clear failed', '', 4000); });
+      });
+    })();
 
     /* Pre-crash buffer — fetched lazily by the Refresh button. The
      * Clear button wipes the RTC ring so a fresh panic gets a clean
