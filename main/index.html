@@ -1514,7 +1514,7 @@
             </div>
             <div class="stat-row">
               <span class="stat-label">Hostname</span>
-              <span class="stat-value mono" id="ts-hostname">—</span>
+              <span class="stat-value mono" id="ts-hostname-summary">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Peers online</span>
@@ -1522,7 +1522,7 @@
             </div>
             <div class="stat-row">
               <span class="stat-label">Advertised routes</span>
-              <span class="stat-value mono" id="ts-routes">—</span>
+              <span class="stat-value mono" id="ts-routes-summary">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Exit node</span>
@@ -2815,9 +2815,9 @@
         tsBadge.textContent = 'Off';
       }
       document.getElementById('ts-ip').textContent       = ts.tunnel_ip || '—';
-      document.getElementById('ts-hostname').textContent = ts.hostname  || '—';
+      document.getElementById('ts-hostname-summary').textContent = ts.hostname || '—';
       document.getElementById('ts-peers').textContent    = (ts.peers_total != null ? ts.peers_online + ' / ' + ts.peers_total : '—');
-      document.getElementById('ts-routes').textContent   = ts.advertise_routes || '—';
+      document.getElementById('ts-routes-summary').textContent = ts.advertise_routes || '—';
       document.getElementById('ts-exit').textContent     = ts.exit_node_ip || '—';
       /* Identity badge — persistent (green) means the device has a
        * stable node-key from NVS; fresh (yellow) means the keys were
