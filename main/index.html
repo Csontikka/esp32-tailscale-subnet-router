@@ -3024,11 +3024,10 @@
       err.className = 'input-error';
       input.parentNode.insertBefore(err, input.nextSibling);
 
-      var entry = { input: input, fn: fn, err: err, btns: btns };
+      var entry = { input: input, fn: fn, err: err, btns: btns, pristine: true };
       s_validators.push(entry);
 
-      function check() {
-        var msg = fn(input.value);
+      function visualUpdate(msg) {
         if (msg) {
           input.classList.add('input-invalid');
           err.textContent = msg;
@@ -3038,15 +3037,28 @@
           err.textContent = '';
           err.classList.remove('visible');
         }
+      }
+      function check() {
+        var msg = fn(input.value);
+        /* Pristine inputs (never touched, and the API may still be in
+         * flight populating the value) only feed the save-button gate
+         * — no red border / message yet. The first user interaction
+         * flips pristine off and surfaces the hint normally. */
+        visualUpdate(entry.pristine ? null : msg);
         _vRefreshSaveBtns(btns);
       }
-      input.addEventListener('input',  check);
-      input.addEventListener('change', check);
-      input.addEventListener('blur',   check);
-      /* First-pass evaluation — defer until the rest of init has run
-       * so the save button has its dirty/clean state set up already. */
+      function userCheck() {
+        entry.pristine = false;
+        check();
+      }
+      input.addEventListener('input',  userCheck);
+      input.addEventListener('change', userCheck);
+      input.addEventListener('blur',   userCheck);
+      /* First-pass evaluation — gates the save button but stays
+       * visually clean until the user actually touches the field. */
       setTimeout(check, 0);
       entry.recheck = check;
+      entry.forceCheck = function () { entry.pristine = false; check(); };
       return entry;
     }
 
