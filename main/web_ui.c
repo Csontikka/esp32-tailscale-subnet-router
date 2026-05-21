@@ -480,12 +480,12 @@ static bool maintain_ap_cidr_in_routes(const char *old_cidr,
 {
     if (out_offer_add) *out_offer_add = false;
     if (!new_cidr || !*new_cidr) return false;
-    if (old_cidr && strcmp(old_cidr, new_cidr) == 0) return false;
 
     char *routes = nvs_param_get_str("ts_advertise_routes");
-    bool routes_empty = !routes || !routes[0];
+    const bool routes_empty = !routes || !routes[0];
+    const bool unchanged = old_cidr && strcmp(old_cidr, new_cidr) == 0;
 
-    /* First pass: scan for presence of old_cidr / new_cidr. */
+    /* First pass: track presence of old / new in the existing routes. */
     bool old_present = false, new_present = false;
     if (!routes_empty) {
         const char *p = routes;
@@ -505,24 +505,25 @@ static bool maintain_ap_cidr_in_routes(const char *old_cidr,
         }
     }
 
-    /* Skip the silent auto-add: operator-curated routes without the
-     * old AP CIDR mean they don't want us touching their list. Tell
-     * the caller to ask. */
-    if (!routes_empty && !old_present && !new_present) {
+    /* Offer-via-UI case: AP CIDR actually moved, routes are
+     * non-empty, but the operator-curated list contains neither the
+     * old nor the new CIDR — they removed it on purpose. Don't add
+     * silently; surface the offer instead. */
+    if (!unchanged && !routes_empty && !old_present && !new_present) {
         if (out_offer_add) *out_offer_add = true;
         free(routes);
-        ESP_LOGI(TAG, "ts_advertise_routes: AP CIDR %s not present, "
-                      "offering add via UI", new_cidr);
+        ESP_LOGI(TAG, "ts_advertise_routes: AP CIDR %s absent, offering UI add", new_cidr);
         return false;
     }
-    if (new_present && !old_present) {
-        free(routes);
-        return false;  /* Already where we want it. */
-    }
 
-    /* Build updated routes: drop old_cidr line(s), append new_cidr. */
+    /* Otherwise rebuild: drop any line equal to old_cidr (if old !=
+     * new — when unchanged, old_cidr matches the desired entry and
+     * we keep it), then ensure new_cidr is present exactly once. The
+     * "drop only when different" guard prevents wiping our own entry
+     * during a no-op save. */
     char out[512];
     out[0] = '\0';
+    bool out_has_new = false;
     if (!routes_empty) {
         const char *p = routes;
         while (*p) {
@@ -531,27 +532,37 @@ static bool maintain_ap_cidr_in_routes(const char *old_cidr,
             size_t llen = (size_t)(eol - p);
             while (llen > 0 && (p[llen - 1] == ' ' || p[llen - 1] == '\t')) llen--;
             if (llen > 0) {
-                bool is_old = old_cidr && strlen(old_cidr) == llen
+                bool is_old = !unchanged && old_cidr
+                              && strlen(old_cidr) == llen
                               && strncmp(p, old_cidr, llen) == 0;
-                if (!is_old) {
+                bool is_new = strlen(new_cidr) == llen
+                              && strncmp(p, new_cidr, llen) == 0;
+                if (is_new && out_has_new) {
+                    /* Duplicate, drop. */
+                } else if (!is_old) {
                     if (out[0]) strlcat(out, "\n", sizeof out);
                     strncat(out, p, llen);
+                    if (is_new) out_has_new = true;
                 }
             }
             p = eol;
             while (*p == '\n' || *p == '\r') p++;
         }
     }
-    if (!new_present) {
+    if (!out_has_new) {
         if (out[0]) strlcat(out, "\n", sizeof out);
         strlcat(out, new_cidr, sizeof out);
     }
-    free(routes);
 
-    nvs_param_set_str("ts_advertise_routes", out);
-    ESP_LOGI(TAG, "ts_advertise_routes auto-maintain: %s → %s",
-             old_cidr ? old_cidr : "(none)", new_cidr);
-    return true;
+    /* Compare against the original so we don't churn NVS on no-op saves. */
+    bool changed = !routes || strcmp(routes, out) != 0;
+    free(routes);
+    if (changed) {
+        nvs_param_set_str("ts_advertise_routes", out);
+        ESP_LOGI(TAG, "ts_advertise_routes auto-maintain: %s → %s",
+                 old_cidr ? old_cidr : "(none)", new_cidr);
+    }
+    return changed;
 }
 
 static esp_err_t network_save_handler(httpd_req_t *req)
