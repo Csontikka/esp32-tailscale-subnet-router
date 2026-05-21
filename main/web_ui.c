@@ -338,6 +338,17 @@ static esp_err_t network_handler(httpd_req_t *req)
         if (n.gateway[0])   cJSON_AddStringToObject(sip, "gw",   n.gateway);
         if (n.dns[0])       cJSON_AddStringToObject(sip, "dns",  n.dns);
         cJSON_AddItemToObject(e, "static_ip", sip);
+        /* EAP / WPA2-Enterprise block — password is NEVER emitted; identity
+         * and username are because the SPA needs them to render the row
+         * and the operator should be able to see them at a glance. */
+        cJSON *eap = cJSON_CreateObject();
+        cJSON_AddNumberToObject(eap, "method", n.eap_method);
+        cJSON_AddNumberToObject(eap, "phase2", n.eap_phase2);
+        cJSON_AddBoolToObject  (eap, "cert_bundle", n.eap_use_cert_bundle != 0);
+        cJSON_AddStringToObject(eap, "identity", n.eap_identity);
+        cJSON_AddStringToObject(eap, "username", n.eap_username);
+        cJSON_AddBoolToObject  (eap, "has_password", n.eap_password[0] != '\0');
+        cJSON_AddItemToObject(e, "eap", eap);
         cJSON_AddItemToArray(nets, e);
     }
     cJSON_AddItemToObject(root, "networks", nets);
@@ -443,6 +454,24 @@ static bool lookup_existing_password(const char *ssid, char *out, size_t out_siz
         wifi_network_t n;
         if (wifi_networks_get(j, &n) && strcmp(n.ssid, ssid) == 0) {
             strlcpy(out, n.passwd, out_size);
+            return true;
+        }
+    }
+    return false;
+}
+
+/* Same omit-to-keep pattern for the EAP inner password — we never echo
+ * it in the GET response (security), so the SPA can't round-trip it on
+ * save. When the POST body omits eap_password (or sends an empty one)
+ * AND the SSID already exists with a non-empty stored credential, copy
+ * it across; otherwise the operator is providing a fresh credential. */
+static bool lookup_existing_eap_password(const char *ssid, char *out, size_t out_size)
+{
+    int count = wifi_networks_count();
+    for (int j = 0; j < count; j++) {
+        wifi_network_t n;
+        if (wifi_networks_get(j, &n) && strcmp(n.ssid, ssid) == 0) {
+            strlcpy(out, n.eap_password, out_size);
             return true;
         }
     }
@@ -647,6 +676,29 @@ static esp_err_t network_save_handler(httpd_req_t *req)
                 if (cJSON_IsString(mask)) strlcpy(n->subnet,    mask->valuestring, sizeof n->subnet);
                 if (cJSON_IsString(gw))   strlcpy(n->gateway,   gw->valuestring,   sizeof n->gateway);
                 if (cJSON_IsString(dns))  strlcpy(n->dns,       dns->valuestring,  sizeof n->dns);
+            }
+
+            /* EAP block — every field is optional. method=0 (DISABLED)
+             * keeps the plain-PSK behaviour. eap_password follows the
+             * same omit-to-keep pattern as the regular PSK password. */
+            cJSON *eap = cJSON_GetObjectItem(e, "eap");
+            if (cJSON_IsObject(eap)) {
+                const cJSON *m  = cJSON_GetObjectItem(eap, "method");
+                const cJSON *p2 = cJSON_GetObjectItem(eap, "phase2");
+                const cJSON *cb = cJSON_GetObjectItem(eap, "cert_bundle");
+                const cJSON *id = cJSON_GetObjectItem(eap, "identity");
+                const cJSON *un = cJSON_GetObjectItem(eap, "username");
+                const cJSON *pw = cJSON_GetObjectItem(eap, "password");
+                if (cJSON_IsNumber(m))  n->eap_method = (uint8_t)m->valueint;
+                if (cJSON_IsNumber(p2)) n->eap_phase2 = (uint8_t)p2->valueint;
+                if (cJSON_IsBool(cb))   n->eap_use_cert_bundle = cJSON_IsTrue(cb) ? 1 : 0;
+                if (cJSON_IsString(id)) strlcpy(n->eap_identity, id->valuestring, sizeof n->eap_identity);
+                if (cJSON_IsString(un)) strlcpy(n->eap_username, un->valuestring, sizeof n->eap_username);
+                if (cJSON_IsString(pw) && pw->valuestring[0]) {
+                    strlcpy(n->eap_password, pw->valuestring, sizeof n->eap_password);
+                } else {
+                    lookup_existing_eap_password(n->ssid, n->eap_password, sizeof n->eap_password);
+                }
             }
 
             n->valid = 1;
