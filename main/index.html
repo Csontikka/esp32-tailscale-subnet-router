@@ -2960,7 +2960,15 @@
 
     // Wrapper around fetch that redirects to login on 401
     function apiFetch(url, opts) {
-      return fetch(url, Object.assign({ credentials: 'same-origin' }, opts || {}))
+      /* cache: 'no-store' on every request — the backend never sets
+       * Cache-Control headers and Chrome/Firefox happily serve stale
+       * /api/tailscale responses out of HTTP cache, which made the
+       * SPA show empty advertise_routes even when the device served
+       * the freshly-saved value. Cheap to disable cache for JSON. */
+      return fetch(url, Object.assign({
+        credentials: 'same-origin',
+        cache:       'no-store'
+      }, opts || {}))
         .then(function (r) {
           if (r.status === 401) {
             showAuthOverlay('login');
