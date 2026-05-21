@@ -23,7 +23,15 @@ void lwip_route_hook_init(void);
  * default route", "netif_default fallback", etc.). */
 #include <stddef.h>
 #include <stdint.h>
-void route_explain(uint32_t dst_hbo,
+/* src_hbo: simulated source IPv4 in host byte order.
+ *   0 → "self-origin" (a socket on the ESP itself, src=any). This is
+ *       what the Tools tab traceroute does in practice.
+ *   non-zero → "forwarded packet" with the given source IP. Used to
+ *       inspect what would happen to a packet from an AP client (e.g.
+ *       the Pi at 192.168.31.5). The hook's full decision tree —
+ *       including the forwarded-WG-on-exit-node branch — is replayed
+ *       against this src. */
+void route_explain(uint32_t src_hbo, uint32_t dst_hbo,
                    char *out_netif, size_t out_netif_size,
                    char *out, size_t out_size);
 
