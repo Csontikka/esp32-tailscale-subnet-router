@@ -31,6 +31,7 @@
 #include "portmap.h"
 #include "mac_deny.h"
 #include "reset_history.h"
+#include "ota.h"
 #include <stdlib.h>
 #include <time.h>
 
@@ -2474,6 +2475,20 @@ static esp_err_t system_handler(httpd_req_t *req)
         free(log_buf);
     }
 
+    /* OTA — poller state + last result. The poller updates these from a
+     * background task; the manual upload path leaves them alone. */
+    {
+        ota_state_t os;
+        ota_get_state(&os);
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddBoolToObject  (o, "auto_enabled",  os.enabled);
+        cJSON_AddNumberToObject(o, "poll_s",        os.poll_s);
+        cJSON_AddNumberToObject(o, "last_check",    os.last_check);
+        cJSON_AddStringToObject(o, "last_version",  os.last_version);
+        cJSON_AddStringToObject(o, "last_status",   os.last_status);
+        cJSON_AddItemToObject(root, "ota", o);
+    }
+
     /* Reset history — last 10 boots, [0] is the most recent. The recorder
      * runs at app_main() time, the coredump backfill writes hist[0].crash
      * when a panic-from-prior-boot was decoded on this boot. */
@@ -2585,6 +2600,22 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         if (cJSON_IsBool(en))  telemetry_set_enabled(cJSON_IsTrue(en));
     }
 
+    /* OTA settings — auto-poll toggle + interval. The handler clamps
+     * the interval; sending poll_s=0 picks the default. */
+    const cJSON *o = cJSON_GetObjectItem(root, "ota");
+    if (cJSON_IsObject(o)) {
+        const cJSON *en = cJSON_GetObjectItem(o, "auto_enabled");
+        const cJSON *ps = cJSON_GetObjectItem(o, "poll_s");
+        bool     enabled = cJSON_IsBool(en) ? cJSON_IsTrue(en) : false;
+        uint32_t poll_s  = cJSON_IsNumber(ps) ? (uint32_t)ps->valuedouble : 0;
+        if (!cJSON_IsBool(en)) {
+            /* Operator left the toggle unchanged — preserve current. */
+            ota_state_t cur; ota_get_state(&cur);
+            enabled = cur.enabled;
+        }
+        ota_set_settings(enabled, poll_s);
+    }
+
     /* Syslog block — { enabled, server, port }. Toggling enabled fires
      * the appropriate enable/disable so the vprintf hook installs or
      * tears down immediately. */
@@ -2634,6 +2665,44 @@ static const httpd_uri_t uri_system_restart = {
 };
 static const httpd_uri_t uri_system_factory_reset = {
     .uri = "/api/system/factory_reset", .method = HTTP_POST, .handler = system_factory_reset_handler,
+};
+
+/* Manual OTA firmware upload. Body is raw .bin bytes (Content-Type is
+ * irrelevant to the writer); auth is required and gated here so the
+ * actual ota_upload_handler can stay agnostic. */
+static esp_err_t system_ota_upload_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    esp_err_t err = ota_upload_handler(req);
+    if (err == ESP_OK) {
+        /* Schedule a delayed reboot — same pattern as /api/system/restart
+         * so the success JSON has time to flush over the socket. */
+        xTaskCreate(delayed_restart_task, "reboot", 2048, NULL, 5, NULL);
+    }
+    return err;
+}
+static const httpd_uri_t uri_system_ota = {
+    .uri = "/api/system/ota", .method = HTTP_POST, .handler = system_ota_upload_handler,
+};
+
+/* Operator-driven "check GitHub now" button — synchronous one-shot. */
+static esp_err_t system_ota_poll_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    char status[64] = {0};
+    ota_poll_now(status, sizeof status);
+    cJSON *root = cJSON_CreateObject();
+    cJSON_AddBoolToObject  (root, "ok", true);
+    cJSON_AddStringToObject(root, "status", status);
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t e = httpd_resp_sendstr(req, body ? body : "{\"ok\":true}");
+    free(body);
+    return e;
+}
+static const httpd_uri_t uri_system_ota_poll = {
+    .uri = "/api/system/ota/poll", .method = HTTP_POST, .handler = system_ota_poll_handler,
 };
 
 /* ---- Session management -------------------------------------------------
@@ -3022,6 +3091,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_system_save);
     httpd_register_uri_handler(server, &uri_system_restart);
     httpd_register_uri_handler(server, &uri_system_factory_reset);
+    httpd_register_uri_handler(server, &uri_system_ota);
+    httpd_register_uri_handler(server, &uri_system_ota_poll);
     httpd_register_uri_handler(server, &uri_auth_status);
     httpd_register_uri_handler(server, &uri_auth_login);
     httpd_register_uri_handler(server, &uri_auth_logout);
