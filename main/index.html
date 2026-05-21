@@ -194,7 +194,9 @@
       border: none;
       background: transparent;
       user-select: none;
+      text-decoration: none;
     }
+    a.nav-tab:hover, a.nav-tab:focus, a.nav-tab:visited { text-decoration: none; color: var(--fg-primary); }
     .nav-tab svg { flex-shrink: 0; opacity: 0.7; }
 
     .nav-tab:hover {
@@ -1229,6 +1231,22 @@
       border-color: var(--border);
     }
     .btn-lock svg { flex-shrink: 0; }
+
+    /* Discreet idle-timeout countdown next to the lock button. Renders
+     * as muted text so it doesn't fight the buttons for attention; goes
+     * amber under 60 s, red under 10 s as a soft warning. */
+    .auth-countdown {
+      font-size: var(--text-xs, 0.75rem);
+      color: var(--fg-muted, var(--fg-secondary));
+      opacity: 0.65;
+      letter-spacing: 0.02em;
+      padding: 0 var(--sp-1, 4px);
+      user-select: none;
+      cursor: default;
+      transition: color var(--transition-fast), opacity var(--transition-fast);
+    }
+    .auth-countdown.warn   { color: var(--warning, #d97706); opacity: 0.95; }
+    .auth-countdown.danger { color: var(--danger,  #dc2626); opacity: 1; }
   </style>
 </head>
 <body>
@@ -1250,45 +1268,45 @@
     </div>
 
     <div class="nav-tabs" role="tablist">
-      <button class="nav-tab active" role="tab" data-page="status" aria-selected="true">
+      <a class="nav-tab active" role="tab" data-page="status" aria-selected="true" href="#status">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
         </svg>
         Status
-      </button>
-      <button class="nav-tab" role="tab" data-page="network" aria-selected="false">
+      </a>
+      <a class="nav-tab" role="tab" data-page="network" aria-selected="false" href="#network">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="5" r="2"/><circle cx="5" cy="19" r="2"/><circle cx="19" cy="19" r="2"/>
           <path d="M12 7v5M8.5 17.5L12 12M15.5 17.5L12 12"/>
         </svg>
         Network
-      </button>
-      <button class="nav-tab" role="tab" data-page="tailscale" aria-selected="false">
+      </a>
+      <a class="nav-tab" role="tab" data-page="tailscale" aria-selected="false" href="#tailscale">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="10"/>
           <path d="M2 12h20M12 2a15.3 15.3 0 010 20M12 2a15.3 15.3 0 000 20"/>
         </svg>
         Tailscale
-      </button>
-      <button class="nav-tab" role="tab" data-page="firewall" aria-selected="false">
+      </a>
+      <a class="nav-tab" role="tab" data-page="firewall" aria-selected="false" href="#firewall">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
         </svg>
         Firewall
-      </button>
-      <button class="nav-tab" role="tab" data-page="tools" aria-selected="false">
+      </a>
+      <a class="nav-tab" role="tab" data-page="tools" aria-selected="false" href="#tools">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
         </svg>
         Tools
-      </button>
-      <button class="nav-tab" role="tab" data-page="system" aria-selected="false">
+      </a>
+      <a class="nav-tab" role="tab" data-page="system" aria-selected="false" href="#system">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <circle cx="12" cy="12" r="3"/>
           <path d="M19.07 4.93l-1.41 1.41M12 2v2M4.93 4.93l1.41 1.41M2 12h2m16 0h2M4.93 19.07l1.41-1.41M12 22v-2m5.66.07l-1.41-1.41"/>
         </svg>
         System
-      </button>
+      </a>
     </div>
 
     <div class="nav-actions">
@@ -1298,6 +1316,7 @@
           <path d="M20.49 15a9 9 0 11-2.12-9.36L23 10"/>
         </svg>
       </button>
+      <span class="auth-countdown mono" id="authCountdown" style="display:none" title="Idle timeout — every click resets it. Configure in System → Web session." aria-live="off">--:--</span>
       <button class="btn-lock" id="lockBtn" title="Lock session" style="display:none" aria-label="Lock">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/>
@@ -2345,6 +2364,37 @@
         </div>
       </div>
 
+      <!-- ===== Web session ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Web session</span>
+          </div>
+          <span class="badge badge-neutral" id="sys-auth-to-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">After this much idle time the web UI logs you out and asks for the password again. Every click or tab refresh resets the countdown.</p>
+          <div class="form-group">
+            <label class="form-label" for="sys-auth-to">Idle timeout</label>
+            <select class="input" id="sys-auth-to" style="max-width:18rem;">
+              <option value="300">5 minutes</option>
+              <option value="900">15 minutes</option>
+              <option value="1800">30 minutes</option>
+              <option value="3600">1 hour</option>
+              <option value="7200">2 hours</option>
+              <option value="14400">4 hours</option>
+              <option value="28800">8 hours</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Applies immediately — your current session inherits the new window on the next request.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-primary btn-md" id="sys-auth-to-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ===== Change password ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -2492,37 +2542,60 @@
       var tabs = document.querySelectorAll('.nav-tab[data-page]');
       var sections = document.querySelectorAll('.page-section');
 
-      tabs.forEach(function (tab) {
-        tab.addEventListener('click', function () {
-          var page = this.dataset.page;
+      function switchToPage(page) {
+        var tab = document.querySelector('.nav-tab[data-page="' + page + '"]');
+        if (!tab) return false;
 
-          tabs.forEach(function (t) {
-            t.classList.remove('active');
-            t.setAttribute('aria-selected', 'false');
-          });
-          sections.forEach(function (s) { s.classList.remove('active'); });
-
-          this.classList.add('active');
-          this.setAttribute('aria-selected', 'true');
-          var target = document.getElementById('page-' + page);
-          if (target) target.classList.add('active');
-
-          /* Lazy-load page contents the first time the operator switches
-           * to a tab that has its own data fetcher. */
-          /* Every tab refetches its own state on switch so the operator
-           * never lands on stale cached DOM after coming back from an
-           * earlier session or after another tab modified shared state. */
-          if (page === 'status'    && typeof fetchStatus   === 'function') fetchStatus();
-          if (page === 'network'   && typeof loadNetwork   === 'function') loadNetwork();
-          if (page === 'tailscale' && typeof loadTailscale === 'function') loadTailscale();
-          if (page === 'firewall'  && typeof loadFirewall  === 'function') loadFirewall();
-          if (page === 'system'    && typeof loadSystem    === 'function') loadSystem();
-          /* Tools tab is fully lazy except for the PCAP card, which
-           * auto-loads its status so the operator sees the current mode
-           * without clicking Refresh first. */
-          if (page === 'tools'     && typeof pcapRefresh   === 'function') pcapRefresh();
-          if (page === 'tools'     && typeof loadPrecrashLog === 'function') loadPrecrashLog();
+        tabs.forEach(function (t) {
+          t.classList.remove('active');
+          t.setAttribute('aria-selected', 'false');
         });
+        sections.forEach(function (s) { s.classList.remove('active'); });
+
+        tab.classList.add('active');
+        tab.setAttribute('aria-selected', 'true');
+        var target = document.getElementById('page-' + page);
+        if (target) target.classList.add('active');
+
+        /* Every tab refetches its own state on switch so the operator
+         * never lands on stale cached DOM after coming back from an
+         * earlier session or after another tab modified shared state. */
+        if (page === 'status'    && typeof fetchStatus   === 'function') fetchStatus();
+        if (page === 'network'   && typeof loadNetwork   === 'function') loadNetwork();
+        if (page === 'tailscale' && typeof loadTailscale === 'function') loadTailscale();
+        if (page === 'firewall'  && typeof loadFirewall  === 'function') loadFirewall();
+        if (page === 'system'    && typeof loadSystem    === 'function') loadSystem();
+        /* Tools tab is fully lazy except for the PCAP card, which
+         * auto-loads its status so the operator sees the current mode
+         * without clicking Refresh first. */
+        if (page === 'tools'     && typeof pcapRefresh   === 'function') pcapRefresh();
+        if (page === 'tools'     && typeof loadPrecrashLog === 'function') loadPrecrashLog();
+        return true;
+      }
+
+      tabs.forEach(function (tab) {
+        /* Anchors have href="#<page>" so middle-click / Ctrl-click opens
+         * a new tab natively. Left-click is hijacked to do an in-place
+         * SPA switch + replaceState so we don't pollute history. */
+        tab.addEventListener('click', function (e) {
+          if (e.button !== 0 || e.ctrlKey || e.metaKey || e.shiftKey || e.altKey) return;
+          e.preventDefault();
+          var page = this.dataset.page;
+          if (switchToPage(page)) {
+            try { history.replaceState(null, '', '#' + page); } catch (_) {}
+          }
+        });
+      });
+
+      /* On first paint honour any #hash in the URL (set by a middle-click
+       * opening a deep link in a new tab). */
+      var initial = (location.hash || '').replace(/^#/, '');
+      if (initial) switchToPage(initial);
+
+      /* Back/forward navigation between tabs. */
+      window.addEventListener('hashchange', function () {
+        var page = (location.hash || '').replace(/^#/, '') || 'status';
+        switchToPage(page);
       });
     })();
 
@@ -2774,7 +2847,9 @@
       document.getElementById('ap-tx-power').textContent =
         (typeof txp === 'number') ? (txp + ' (' + (txp * 0.25).toFixed(2) + ' dBm)') : '—';
       document.getElementById('ap-traffic').textContent = formatTraffic(ap.bytes_in, ap.bytes_out);
-      document.getElementById('ap-clients-badge').textContent = (ap.clients != null ? ap.clients + ' client' + (ap.clients !== 1 ? 's' : '') : '—');
+      var apClientsBadge = document.getElementById('ap-clients-badge');
+      apClientsBadge.textContent = (ap.clients != null ? ap.clients + ' client' + (ap.clients !== 1 ? 's' : '') : '—');
+      apClientsBadge.className = (typeof ap.clients === 'number' && ap.clients > 0) ? 'badge badge-success' : 'badge badge-neutral';
 
       // Heap — backend reports free_heap + heap_total (in bytes).
       var heapFree  = data.free_heap  || 0;
@@ -2975,6 +3050,9 @@
 
       // Show/hide lock button based on auth state
       if (lockBtn) lockBtn.style.display = (which === null) ? 'inline-flex' : 'none';
+      /* Login / setup overlays own the screen — drop the countdown when
+       * either is up so it doesn't tick behind the modal. */
+      if (which !== null && typeof sessionCountdownTick === 'function') sessionCountdownTick();
     }
 
     function setAuthError(id, msg) {
@@ -3184,11 +3262,80 @@
       }, opts || {}))
         .then(function (r) {
           if (r.status === 401) {
+            sessionCountdownHide();
             showAuthOverlay('login');
             throw new Error('401');
           }
+          /* Any 2xx authenticated hit slides the server-side session
+           * window — mirror that on the client so the nav countdown
+           * matches what the device will actually do. */
+          if (r.ok) sessionCountdownReset();
           return r;
         });
+    }
+
+    /* =====================================================================
+     * SESSION COUNTDOWN — small muted timer next to the lock button.
+     * Reflects the sliding idle-timeout enforced server-side: every
+     * successful apiFetch resets the deadline to now + timeout_s, which
+     * matches what request_authenticated() does in web_ui.c.
+     * ===================================================================== */
+    var s_session_timeout_s = 0;
+    var s_session_deadline_ms = 0;
+    function sessionCountdownConfig(timeoutSec, remainingSec) {
+      var t = parseInt(timeoutSec, 10);
+      if (!t || t <= 0) { sessionCountdownHide(); return; }
+      s_session_timeout_s = t;
+      var rem = parseInt(remainingSec, 10);
+      if (!rem || rem <= 0 || rem > t) rem = t;
+      s_session_deadline_ms = Date.now() + rem * 1000;
+      sessionCountdownTick();
+    }
+    function sessionCountdownReset() {
+      if (!s_session_timeout_s) return;
+      s_session_deadline_ms = Date.now() + s_session_timeout_s * 1000;
+      sessionCountdownTick();
+    }
+    function sessionCountdownHide() {
+      s_session_deadline_ms = 0;
+      var el = document.getElementById('authCountdown');
+      if (el) el.style.display = 'none';
+    }
+    function sessionCountdownFormat(sec) {
+      if (sec < 0) sec = 0;
+      var h = Math.floor(sec / 3600);
+      var m = Math.floor((sec % 3600) / 60);
+      var s = sec % 60;
+      function pad(n) { return n < 10 ? '0' + n : '' + n; }
+      return h > 0 ? (h + ':' + pad(m) + ':' + pad(s)) : (pad(m) + ':' + pad(s));
+    }
+    function sessionCountdownTick() {
+      var el = document.getElementById('authCountdown');
+      if (!el) return;
+      if (!s_session_deadline_ms) { el.style.display = 'none'; return; }
+      /* Hide while either auth overlay is up — the login/setup screens
+       * already own the operator's attention. */
+      var setupVisible = document.getElementById('authSetup').style.display !== 'none';
+      var loginVisible = document.getElementById('authLogin').style.display !== 'none';
+      if (setupVisible || loginVisible) { el.style.display = 'none'; return; }
+      var remMs = s_session_deadline_ms - Date.now();
+      var remSec = Math.max(0, Math.round(remMs / 1000));
+      el.textContent = sessionCountdownFormat(remSec);
+      el.style.display = '';
+      el.classList.toggle('danger', remSec <= 10);
+      el.classList.toggle('warn',   remSec > 10 && remSec <= 60);
+    }
+    setInterval(sessionCountdownTick, 1000);
+
+    /* After login/setup we don't yet know the configured idle window,
+     * so pull it out of /api/auth/status before kicking off the
+     * dashboard. apiFetch's per-call reset uses s_session_timeout_s,
+     * which is zero until this completes. */
+    function fetchAuthStatusForCountdown() {
+      fetch('/api/auth/status', { credentials: 'same-origin', cache: 'no-store' })
+        .then(function (r) { return r.json(); })
+        .then(function (s) { sessionCountdownConfig(s.session_timeout_s, s.session_remaining_s); })
+        .catch(function () {});
     }
 
     // =====================================================================
@@ -3244,6 +3391,7 @@
           document.getElementById('setup-pw').value  = '';
           document.getElementById('setup-pw2').value = '';
           showAuthOverlay(null);
+          fetchAuthStatusForCountdown();
           loadDashboard();
           showToast('success', 'Password set', 'Admin password configured.');
         })
@@ -3289,6 +3437,7 @@
         .then(function () {
           document.getElementById('login-pw').value = '';
           showAuthOverlay(null);
+          fetchAuthStatusForCountdown();
           loadDashboard();
         })
         .catch(function (err) {
@@ -3313,6 +3462,7 @@
         method: 'POST',
         credentials: 'same-origin'
       }).finally(function () {
+        sessionCountdownHide();
         showAuthOverlay('login');
       });
     });
@@ -4859,6 +5009,30 @@
           slBadge.className   = sl.enabled ? 'badge badge-success' : 'badge badge-neutral';
           slBadge.textContent = sl.enabled ? 'On' : 'Off';
           document.getElementById('sys-syslog-save').disabled = true;
+
+          /* Idle session timeout — snap the select to whichever option
+           * matches the persisted value, falling back to 30 min if the
+           * server returned something we don't render as a choice. */
+          var to = parseInt(d.session_timeout_s, 10);
+          if (!to || to <= 0) to = 1800;
+          var sel = document.getElementById('sys-auth-to');
+          var match = false;
+          for (var i = 0; i < sel.options.length; i++) {
+            if (parseInt(sel.options[i].value, 10) === to) { match = true; break; }
+          }
+          sel.value = match ? String(to) : '1800';
+          document.getElementById('sys-auth-to-save').disabled = true;
+          var toBadge = document.getElementById('sys-auth-to-badge');
+          var label;
+          if (to >= 3600) label = (to / 3600) + ' h';
+          else            label = (to / 60)   + ' min';
+          toBadge.className   = 'badge badge-neutral';
+          toBadge.textContent = label;
+
+          /* Keep the countdown in sync if the operator visits the System
+           * tab — apiFetch already reset it on this call, but the
+           * timeout length may have been changed by another tab. */
+          sessionCountdownConfig(d.session_timeout_s, d.session_remaining_s);
         }).catch(function () {});
     }
 
@@ -5085,6 +5259,30 @@
       })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function () { showToast('success', 'Syslog saved', '', 3000); loadSystem(); })
+        .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
+    });
+
+    /* Idle-timeout dropdown — dirty-track + save. The new value also
+     * resets the SPA-side countdown so the operator sees the new window
+     * length immediately instead of after the next request. */
+    document.getElementById('sys-auth-to').addEventListener('change', function () {
+      document.getElementById('sys-auth-to-save').disabled = false;
+    });
+    document.getElementById('sys-auth-to-save').addEventListener('click', function () {
+      var v = parseInt(document.getElementById('sys-auth-to').value, 10) || 1800;
+      var btn = this;
+      btn.disabled = true;
+      apiFetch('/api/system', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ session_timeout_s: v })
+      })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function () {
+          sessionCountdownConfig(v, v);
+          showToast('success', 'Session timeout saved', '', 3000);
+          loadSystem();
+        })
         .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
     });
 
@@ -5473,6 +5671,7 @@
           showAuthOverlay('setup');
         } else if (s.authenticated) {
           showAuthOverlay(null);
+          sessionCountdownConfig(s.session_timeout_s, s.session_remaining_s);
           loadDashboard();
         } else {
           showAuthOverlay('login');

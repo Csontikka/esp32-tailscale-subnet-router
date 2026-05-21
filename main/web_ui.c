@@ -19,6 +19,7 @@
 #include "tailscale_config.h"
 #include "nvs_params.h"
 #include "microlink.h"
+#include "dns_relay.h"
 #include "lwip_route_hook.h"
 #include "acl.h"
 #include "syslog_client.h"
@@ -357,6 +358,26 @@ static esp_err_t network_handler(httpd_req_t *req)
     uint8_t ap_hidden = 0;
     nvs_param_get_u8("ap_hidden", &ap_hidden);
     cJSON_AddBoolToObject(ap, "hidden", ap_hidden != 0);
+
+    /* DNS relay state — the "AP clients see ESP as resolver" mode. */
+    {
+        cJSON *dr = cJSON_CreateObject();
+        cJSON_AddBoolToObject(dr, "enabled",  dns_relay_is_enabled());
+        cJSON_AddBoolToObject(dr, "healthy",  dns_relay_is_healthy());
+        uint32_t up_nbo = dns_relay_get_upstream();
+        if (up_nbo) {
+            char buf[16];
+            snprintf(buf, sizeof buf, "%u.%u.%u.%u",
+                     (unsigned)( up_nbo        & 0xff),
+                     (unsigned)((up_nbo >>  8) & 0xff),
+                     (unsigned)((up_nbo >> 16) & 0xff),
+                     (unsigned)((up_nbo >> 24) & 0xff));
+            cJSON_AddStringToObject(dr, "upstream", buf);
+        } else {
+            cJSON_AddStringToObject(dr, "upstream", "");
+        }
+        cJSON_AddItemToObject(ap, "dns_relay", dr);
+    }
     cJSON_AddItemToObject(root, "ap", ap);
 
     char *body = cJSON_PrintUnformatted(root);
@@ -686,6 +707,36 @@ static esp_err_t network_save_handler(httpd_req_t *req)
         const cJSON *hidden_j = cJSON_GetObjectItem(ap, "hidden");
         if (cJSON_IsBool(hidden_j)) {
             nvs_param_set_u8("ap_hidden", cJSON_IsTrue(hidden_j) ? 1 : 0);
+        }
+
+        /* DNS relay — live apply (no restart needed; the forwarder
+         * picks up enable/upstream right away, and we re-run
+         * softap_set_dns_addr so the DHCP-advertised resolver flips
+         * for new lease requests). */
+        const cJSON *dr = cJSON_GetObjectItem(ap, "dns_relay");
+        bool dns_relay_touched = false;
+        if (cJSON_IsObject(dr)) {
+            const cJSON *en = cJSON_GetObjectItem(dr, "enabled");
+            if (cJSON_IsBool(en)) {
+                dns_relay_set_enabled(cJSON_IsTrue(en));
+                dns_relay_touched = true;
+            }
+            const cJSON *up = cJSON_GetObjectItem(dr, "upstream");
+            if (cJSON_IsString(up)) {
+                uint32_t nbo = 0;
+                if (up->valuestring[0]) {
+                    ip4_addr_t a;
+                    if (ip4addr_aton(up->valuestring, &a)) nbo = a.addr;
+                }
+                dns_relay_set_upstream(nbo);
+                dns_relay_touched = true;
+            }
+        }
+        if (dns_relay_touched) {
+            esp_netif_t *ap_n  = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+            esp_netif_t *sta_n = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+            extern void softap_set_dns_addr(esp_netif_t *ap, esp_netif_t *sta);
+            if (ap_n && sta_n) softap_set_dns_addr(ap_n, sta_n);
         }
 
         char new_cidr[32];
@@ -2303,6 +2354,12 @@ static esp_err_t system_handler(httpd_req_t *req)
         else    { cJSON_AddStringToObject(root, "tz", ""); }
     }
 
+    /* Web-session idle timeout — operator-configurable from the System
+     * tab. session_remaining_s lets the SPA render a discrete countdown
+     * next to the lock button without needing its own /api/auth poll. */
+    cJSON_AddNumberToObject(root, "session_timeout_s",   s_session_timeout_s);
+    cJSON_AddNumberToObject(root, "session_remaining_s", session_remaining_s());
+
     /* TX-power override (0 = IDF default ≈ 20 dBm, 8..84 = custom in
      * 0.25 dBm steps). Reading via the live API gives whatever was
      * actually applied, not the NVS persisted value — they match
@@ -2408,6 +2465,20 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         tzset();
     }
 
+    /* Web-session idle timeout (seconds). Persisted under NVS "auth_to_s"
+     * and clamped server-side to [60, 28800] so a misbehaving client
+     * can't lock everyone out with 0 or set a year-long window. The
+     * sliding-window logic in request_authenticated() uses the new value
+     * on the very next authenticated hit — no reboot needed. */
+    const cJSON *st = cJSON_GetObjectItem(root, "session_timeout_s");
+    if (cJSON_IsNumber(st)) {
+        uint32_t v = (uint32_t)st->valuedouble;
+        v = session_timeout_clamp(v);
+        nvs_param_set_u32("auth_to_s", v);
+        s_session_timeout_s = v;
+        if (session_alive()) session_extend();
+    }
+
     /* TX-power override — clamp + persist + apply live. 0 disables the
      * override (next boot will skip the call and let the IDF default
      * stand). */
@@ -2483,19 +2554,43 @@ static const httpd_uri_t uri_system_factory_reset = {
 
 /* ---- Session management -------------------------------------------------
  * Single in-memory session, like the OLD repo. 32-byte random token hex-
- * encoded into a cookie that expires after 30 min of inactivity. The
- * token never touches NVS — reboot logs everyone out, which is the
- * intended fail-safe for a router that may be repurposed. */
-#define WEB_UI_SESSION_TOKEN_LEN  32
-#define WEB_UI_SESSION_TIMEOUT_S  (30 * 60)
+ * encoded into a cookie. The token never touches NVS — reboot logs
+ * everyone out, which is the intended fail-safe for a router that may
+ * be repurposed. Timeout is an idle/sliding window: every authenticated
+ * request bumps the expiry to now + s_session_timeout_s, so the
+ * operator only gets kicked out after that many seconds of real
+ * inactivity. The window length itself is operator-configurable from
+ * the System tab and persisted under NVS key "auth_to_s". */
+#define WEB_UI_SESSION_TOKEN_LEN     32
+#define WEB_UI_SESSION_TIMEOUT_DEF_S (30 * 60)
+#define WEB_UI_SESSION_TIMEOUT_MIN_S 60
+#define WEB_UI_SESSION_TIMEOUT_MAX_S (8 * 60 * 60)
 
 static char     s_session_token[WEB_UI_SESSION_TOKEN_LEN * 2 + 1] = {0};
 static uint64_t s_session_expires_us = 0;
+static uint32_t s_session_timeout_s  = WEB_UI_SESSION_TIMEOUT_DEF_S;
 
 static void hex_encode(const uint8_t *src, size_t len, char *out)
 {
     for (size_t i = 0; i < len; i++) sprintf(out + i * 2, "%02x", src[i]);
     out[len * 2] = '\0';
+}
+
+static uint32_t session_timeout_clamp(uint32_t v)
+{
+    if (v < WEB_UI_SESSION_TIMEOUT_MIN_S) return WEB_UI_SESSION_TIMEOUT_MIN_S;
+    if (v > WEB_UI_SESSION_TIMEOUT_MAX_S) return WEB_UI_SESSION_TIMEOUT_MAX_S;
+    return v;
+}
+
+static void session_timeout_load(void)
+{
+    uint32_t v = 0;
+    if (nvs_param_get_u32("auth_to_s", &v) == ESP_OK && v) {
+        s_session_timeout_s = session_timeout_clamp(v);
+    } else {
+        s_session_timeout_s = WEB_UI_SESSION_TIMEOUT_DEF_S;
+    }
 }
 
 static bool session_alive(void)
@@ -2509,13 +2604,26 @@ static void session_clear(void)
     s_session_expires_us = 0;
 }
 
+static void session_extend(void)
+{
+    s_session_expires_us = (uint64_t)esp_timer_get_time()
+                         + (uint64_t)s_session_timeout_s * 1000000ULL;
+}
+
 static void session_create(void)
 {
     uint8_t raw[WEB_UI_SESSION_TOKEN_LEN];
     esp_fill_random(raw, sizeof raw);
     hex_encode(raw, sizeof raw, s_session_token);
-    s_session_expires_us = (uint64_t)esp_timer_get_time()
-                         + (uint64_t)WEB_UI_SESSION_TIMEOUT_S * 1000000ULL;
+    session_extend();
+}
+
+static uint32_t session_remaining_s(void)
+{
+    if (!s_session_token[0]) return 0;
+    uint64_t now = (uint64_t)esp_timer_get_time();
+    if (now >= s_session_expires_us) return 0;
+    return (uint32_t)((s_session_expires_us - now) / 1000000ULL);
 }
 
 static bool request_authenticated(httpd_req_t *req)
@@ -2533,7 +2641,13 @@ static bool request_authenticated(httpd_req_t *req)
     if (!p) return false;
     p += strlen("ts_session=");
     size_t n = strlen(s_session_token);
-    return strncmp(p, s_session_token, n) == 0 && (p[n] == '\0' || p[n] == ';');
+    if (strncmp(p, s_session_token, n) != 0 || (p[n] != '\0' && p[n] != ';')) {
+        return false;
+    }
+    /* Sliding window: every authenticated hit pushes the expiry out,
+     * so a tab the operator is actively poking never times out. */
+    session_extend();
+    return true;
 }
 
 /* Read the operator-defined device label out of NVS, falling back to a
@@ -2554,6 +2668,12 @@ static esp_err_t auth_status_handler(httpd_req_t *req)
     /* Device name is fine to expose pre-auth — it's a label, not a secret. */
     char *name = device_name_dup();
     if (name) { cJSON_AddStringToObject(root, "device_name", name); free(name); }
+    /* Idle-timeout window + remaining seconds so the SPA can drive the
+     * discreet countdown next to the lock button without an extra round
+     * trip. Both are safe pre-auth — they tell you the policy, not who's
+     * logged in. */
+    cJSON_AddNumberToObject(root, "session_timeout_s",   s_session_timeout_s);
+    cJSON_AddNumberToObject(root, "session_remaining_s", session_remaining_s());
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     httpd_resp_set_type(req, "application/json");
@@ -2596,8 +2716,8 @@ static esp_err_t auth_login_handler(httpd_req_t *req)
     session_create();
     char cookie[160];
     snprintf(cookie, sizeof cookie,
-             "ts_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d",
-             s_session_token, WEB_UI_SESSION_TIMEOUT_S);
+             "ts_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%u",
+             s_session_token, (unsigned)s_session_timeout_s);
     httpd_resp_set_hdr(req, "Set-Cookie", cookie);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -2688,8 +2808,8 @@ static esp_err_t auth_setup_handler(httpd_req_t *req)
     session_create();
     char cookie[160];
     snprintf(cookie, sizeof cookie,
-             "ts_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%d",
-             s_session_token, WEB_UI_SESSION_TIMEOUT_S);
+             "ts_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%u",
+             s_session_token, (unsigned)s_session_timeout_s);
     httpd_resp_set_hdr(req, "Set-Cookie", cookie);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -2768,6 +2888,11 @@ void web_ui_init(void)
 {
     static httpd_handle_t server = NULL;
     if (server) return;
+
+    /* Pick up the operator-configured session idle timeout before we
+     * start handing out cookies, so the very first login uses the
+     * persisted Max-Age instead of the compile-time default. */
+    session_timeout_load();
 
     httpd_config_t config   = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn     = httpd_uri_match_wildcard;
