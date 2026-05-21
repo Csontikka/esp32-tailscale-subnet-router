@@ -21,7 +21,11 @@
 #define DNS_RELAY_UP_TIMEOUT_MS 3500
 #define DNS_RELAY_TASK_STACK    6144     /* recvfrom + lwIP socket + ESP_LOG overhead; 4 KB was tight. */
 #define DNS_RELAY_TASK_PRIO     4
-#define DNS_RELAY_BOOT_DELAY_MS 12000    /* Settle window before we bind 53/udp — gives WiFi+netif+microlink time to come up cleanly. */
+#define DNS_RELAY_BOOT_DELAY_MS 3000     /* Settle window before our first bind attempt. 12 s was the original
+                                          * post-panic safety margin, but the s_bind_nbo==0 guard already keeps
+                                          * us from binding before wifi_init_softap publishes the AP IP, and
+                                          * the operator-toggle latency cuts the relay→healthy transition from
+                                          * ~14 s to ~5 s — closing the NM-cache race window. */
 
 #define DNS_RELAY_NVS_NS        "tsr"
 #define KEY_ENABLED             "dns_relay_en"
