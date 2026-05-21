@@ -62,6 +62,11 @@ extern const size_t index_html_len;
 static esp_err_t index_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
+    /* Without this the browser happily reuses last session's SPA HTML
+     * out of HTTP cache, so any client-side fix we ship requires the
+     * operator to force-refresh before it takes effect. The SPA is
+     * tiny and served from RAM — no reason to cache. */
+    httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
     return httpd_resp_send(req, index_html_start, index_html_len);
 }
 
