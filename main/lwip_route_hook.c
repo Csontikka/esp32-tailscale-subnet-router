@@ -458,7 +458,7 @@ static void short_peer_name(const char *src, char *dst, size_t dst_size)
     dst[n] = '\0';
 }
 
-void route_explain(uint32_t dst_hbo,
+void route_explain(uint32_t src_hbo, uint32_t dst_hbo,
                    char *out_netif, size_t out_netif_size,
                    char *out, size_t out_size)
 {
@@ -468,10 +468,20 @@ void route_explain(uint32_t dst_hbo,
     out[0] = '\0';
     name_netif(NULL, out_netif, out_netif_size);
 
-    /* Same shape as the hook with src=NULL (i.e. simulating "asking
-     * lwIP where this destination would go on a fresh local socket"). */
     ip4_addr_t dst;
     dst.addr = lwip_htonl(dst_hbo);
+
+    /* Treat src_hbo==0 as "self-origin" (matches the hook's src==NULL /
+     * src==INADDR_ANY case). Non-zero src is a forwarded packet. We also
+     * flag a non-zero src that exactly matches one of our own netif IPs
+     * as self — that's how the live hook decides between self vs forward. */
+    bool src_is_self = (src_hbo == 0);
+    if (!src_is_self) {
+        for (struct netif *n = netif_list; n; n = n->next) {
+            const ip4_addr_t *na = netif_ip4_addr(n);
+            if (na && lwip_ntohl(na->addr) == src_hbo) { src_is_self = true; break; }
+        }
+    }
 
     /* 1. CGNAT. */
     if (ip_in_cgnat(dst_hbo)) {
@@ -482,8 +492,11 @@ void route_explain(uint32_t dst_hbo,
         return;
     }
 
-    /* 1b. Accept-routes table lookup. */
-    if (tailscale_accept_routes && tailscale_accepted_routes_count > 0) {
+    /* 1b. Accept-routes table lookup — only kicks in for FORWARDED
+     * traffic (mirrors the hook: peer subnet routes are programmed
+     * only for AP-client packets, not for the ESP's own LAN probes). */
+    if (!src_is_self &&
+        tailscale_accept_routes && tailscale_accepted_routes_count > 0) {
         for (int i = 0; i < tailscale_accepted_routes_count; i++) {
             uint8_t plen = tailscale_accepted_routes[i].prefix_len;
             if (plen == 0 || plen > 32) continue;
@@ -555,23 +568,46 @@ void route_explain(uint32_t dst_hbo,
         }
     }
 
-    /* 2c. Self-origin public destination bypass (mirrors the same
-     * step in __wrap_ip4_route_src_hook above). With exit-node on,
-     * the ESP's own outbound packets (src=NULL/self) to a public IP
-     * egress via STA instead of looping into the tunnel. The /diag
-     * Route lookup simulates src=NULL implicitly, so the check is
-     * just "exit-node on + dst non-private + STA available". */
+    /* 2c. Exit-node split — mirrors the live hook's step 3. Self-origin
+     * public destinations egress via STA (chicken-and-egg bypass for the
+     * ESP's own DERP/STUN sessions); forwarded public destinations egress
+     * via the WG tunnel (the actual exit-node forwarding path). */
     if (tailscale_exit_node_ip != 0) {
         bool is_priv = ((dst_hbo & 0xFF000000UL) == 0x0A000000UL) ||
                        ((dst_hbo & 0xFFF00000UL) == 0xAC100000UL) ||
                        ((dst_hbo & 0xFFFF0000UL) == 0xC0A80000UL);
         if (!is_priv) {
-            for (struct netif *n = netif_list; n; n = n->next) {
-                if (netif_is_sta(n) && netif_is_up(n) && netif_is_link_up(n)) {
-                    name_netif(n, out_netif, out_netif_size);
+            if (src_is_self) {
+                for (struct netif *n = netif_list; n; n = n->next) {
+                    if (netif_is_sta(n) && netif_is_up(n) && netif_is_link_up(n)) {
+                        name_netif(n, out_netif, out_netif_size);
+                        snprintf(out, out_size,
+                                 "self-origin public dst → STA "
+                                 "(bypassing exit-node to break chicken-and-egg)");
+                        return;
+                    }
+                }
+            } else {
+                struct netif *wg = find_wg_netif();
+                if (wg && netif_is_up(wg)) {
+                    /* Look up the exit-node peer's hostname. */
+                    char en_host[40] = "exit-node peer";
+                    microlink_t *ml = tailscale_get_microlink();
+                    if (ml) {
+                        int pn = microlink_get_peer_count(ml);
+                        for (int p = 0; p < pn; p++) {
+                            microlink_peer_info_t pi;
+                            if (microlink_get_peer_info(ml, p, &pi) != ESP_OK) continue;
+                            if (pi.vpn_ip == tailscale_exit_node_ip) {
+                                short_peer_name(pi.hostname, en_host, sizeof(en_host));
+                                break;
+                            }
+                        }
+                    }
+                    name_netif(wg, out_netif, out_netif_size);
                     snprintf(out, out_size,
-                             "self-origin public dst → STA "
-                             "(bypassing exit-node to break chicken-and-egg)");
+                             "forwarded public dst → WG tunnel via exit-node %s",
+                             en_host);
                     return;
                 }
             }
