@@ -422,6 +422,97 @@ static bool lookup_existing_password(const char *ssid, char *out, size_t out_siz
     return false;
 }
 
+/* Count leading 1-bits in a host-byte-order subnet mask. Returns -1
+ * if the mask is non-contiguous (which lwIP rejects anyway). */
+static int subnet_mask_prefix_len(uint32_t mask_nbo)
+{
+    uint32_t bits = ntohl(mask_nbo);
+    int prefix = 0;
+    while (bits & 0x80000000u) { prefix++; bits <<= 1; }
+    return bits ? -1 : prefix;
+}
+
+/* Read NVS ap_ip / ap_mask (falling back to the firmware default
+ * 192.168.4.0/24 when either is empty) and write the resulting CIDR
+ * string "a.b.c.d/N" into `out`. Used as a stable identifier of the
+ * AP-side subnet for the advertised-routes auto-maintenance. */
+static void compute_ap_cidr_from_nvs(char *out, size_t out_size)
+{
+    const char *def = "192.168.4.0/24";
+    char *ip_str   = nvs_param_get_str("ap_ip");
+    char *mask_str = nvs_param_get_str("ap_mask");
+    ip4_addr_t ip = {0}, mask = {0};
+    int prefix = -1;
+    if (ip_str && ip_str[0] && mask_str && mask_str[0]
+        && ip4addr_aton(ip_str,   &ip)
+        && ip4addr_aton(mask_str, &mask)
+        && (prefix = subnet_mask_prefix_len(mask.addr)) >= 0) {
+        ip4_addr_t net = { .addr = ip.addr & mask.addr };
+        char buf[16];
+        snprintf(buf, sizeof buf, IPSTR, IP2STR(&net));
+        /* Cast to unsigned + %u so GCC's snprintf size analysis sees
+         * a 0-32 range instead of the full int(11+sign) worst-case. */
+        snprintf(out, out_size, "%s/%u", buf, (unsigned)prefix);
+    } else {
+        strlcpy(out, def, out_size);
+    }
+    free(ip_str);
+    free(mask_str);
+}
+
+/* Maintain a single auto-AP line inside ts_advertise_routes when the
+ * AP CIDR changes:
+ *   1. If routes is empty → set to new_cidr.
+ *   2. Else: walk lines; drop any line == old_cidr; if new_cidr isn't
+ *      already in the result, append it.
+ * Operator-added custom routes stay put — only the AP entry is moved. */
+static void maintain_ap_cidr_in_routes(const char *old_cidr,
+                                       const char *new_cidr)
+{
+    if (!new_cidr || !*new_cidr) return;
+    if (old_cidr && strcmp(old_cidr, new_cidr) == 0) return;
+
+    char *routes = nvs_param_get_str("ts_advertise_routes");
+    char  out[512];
+    out[0] = '\0';
+    bool has_new = false;
+
+    if (routes && routes[0]) {
+        const char *p = routes;
+        while (*p) {
+            const char *eol = p;
+            while (*eol && *eol != '\n' && *eol != '\r') eol++;
+            size_t llen = (size_t)(eol - p);
+            /* trim trailing whitespace */
+            while (llen > 0 && (p[llen - 1] == ' ' || p[llen - 1] == '\t')) llen--;
+            if (llen > 0) {
+                bool is_old = old_cidr && strlen(old_cidr) == llen
+                              && strncmp(p, old_cidr, llen) == 0;
+                bool is_new = strlen(new_cidr) == llen
+                              && strncmp(p, new_cidr, llen) == 0;
+                if (!is_old) {
+                    if (out[0]) strlcat(out, "\n", sizeof out);
+                    strncat(out, p, llen);
+                    if (is_new) has_new = true;
+                }
+            }
+            p = eol;
+            while (*p == '\n' || *p == '\r') p++;
+        }
+    }
+    if (!has_new) {
+        if (out[0]) strlcat(out, "\n", sizeof out);
+        strlcat(out, new_cidr, sizeof out);
+    }
+    free(routes);
+
+    nvs_param_set_str("ts_advertise_routes", out);
+    ESP_LOGI(TAG, "ts_advertise_routes auto-maintain: %s%s → %s%s",
+             old_cidr ? old_cidr : "(none)",
+             (old_cidr && strcmp(old_cidr, new_cidr) == 0) ? " (unchanged)" : "",
+             new_cidr, has_new ? " (kept)" : " (added)");
+}
+
 static esp_err_t network_save_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -521,6 +612,12 @@ static esp_err_t network_save_handler(httpd_req_t *req)
 
     cJSON *ap = cJSON_GetObjectItem(root, "ap");
     if (cJSON_IsObject(ap)) {
+        /* Snapshot the AP CIDR BEFORE the save so we can swap it out of
+         * ts_advertise_routes after — keeps operator-added manual
+         * routes intact and just maintains the auto-AP entry. */
+        char old_cidr[32];
+        compute_ap_cidr_from_nvs(old_cidr, sizeof old_cidr);
+
         save_str_if_present(ap, "ssid",     "ap_ssid");
         save_str_if_present(ap, "password", "ap_passwd");
         save_int_if_present(ap, "channel",  "ap_channel");
@@ -531,6 +628,10 @@ static esp_err_t network_save_handler(httpd_req_t *req)
         if (cJSON_IsBool(hidden_j)) {
             nvs_param_set_u8("ap_hidden", cJSON_IsTrue(hidden_j) ? 1 : 0);
         }
+
+        char new_cidr[32];
+        compute_ap_cidr_from_nvs(new_cidr, sizeof new_cidr);
+        maintain_ap_cidr_in_routes(old_cidr, new_cidr);
     }
 
     cJSON_Delete(root);
