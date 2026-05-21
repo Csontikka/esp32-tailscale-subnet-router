@@ -47,6 +47,7 @@
 #include "nvs_params.h"
 #include "esp_core_dump.h"
 #include "nvs.h"
+#include "dns_relay.h"
 #include "pcap_capture.h"
 #include "wifi_networks.h"
 #include "dhcp_reservations.h"
@@ -114,7 +115,20 @@ int ap_connect   = 0;
 int connect_count = 0;
 
 /* Forward declarations — definitions land further down in this file. */
-static void softap_set_dns_addr(esp_netif_t *esp_netif_ap, esp_netif_t *esp_netif_sta);
+/* Non-static — also called from web_ui.c when DNS-relay state changes,
+ * so the new DHCP-offered DNS takes effect immediately for new leases. */
+void softap_set_dns_addr(esp_netif_t *esp_netif_ap, esp_netif_t *esp_netif_sta);
+
+/* Override the weak dns_relay_on_healthy hook so the moment the relay
+ * task finishes its boot-delay + bind cycle, the DHCP-offered DNS
+ * flips from STA-learned to AP IP without waiting for an extra Save
+ * click or STA reconnect. */
+void dns_relay_on_healthy(void)
+{
+    esp_netif_t *ap  = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
+    esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (ap && sta) softap_set_dns_addr(ap, sta);
+}
 
 /* Multi-network rotation state. Index 0 is preferred; on association
  * failure we tick s_net_retries and, after WIFI_RETRIES_PER_NETWORK,
@@ -399,24 +413,46 @@ esp_netif_t *wifi_init_sta(void)
 void softap_set_dns_addr(esp_netif_t *esp_netif_ap,esp_netif_t *esp_netif_sta)
 {
     /* Choose the DNS we hand out to AP clients via DHCP Option 6:
+     *   0. DNS relay ON → we are the resolver — hand out our own AP IP.
      *   1. NVS "ap_dns" if the operator set a custom one (e.g. 1.1.1.1
      *      to bypass the upstream router's resolver).
      *   2. Otherwise mirror whatever the STA learned upstream, which is
-     *      what the AP DHCP server traditionally did. */
+     *      what the AP DHCP server traditionally did.
+     *   3. Final fallback 1.1.1.1 so clients never cache the AP IP as a
+     *      "DNS server" by accident when neither STA nor override is set
+     *      (boot-time window — the old repo had this constant, the new
+     *      one regressed without it). */
     esp_netif_dns_info_t dns = {0};
-    char *ap_dns_str = nvs_param_get_str("ap_dns");
     bool used_override = false;
-    if (ap_dns_str && ap_dns_str[0]) {
-        ip4_addr_t a;
-        if (ip4addr_aton(ap_dns_str, &a) && a.addr) {
+    if (dns_relay_is_enabled() && dns_relay_is_healthy()) {
+        esp_netif_ip_info_t ap_ip = {0};
+        if (esp_netif_get_ip_info(esp_netif_ap, &ap_ip) == ESP_OK && ap_ip.ip.addr) {
             dns.ip.type = ESP_IPADDR_TYPE_V4;
-            dns.ip.u_addr.ip4.addr = a.addr;
+            dns.ip.u_addr.ip4.addr = ap_ip.ip.addr;
             used_override = true;
+            ESP_LOGI(TAG_AP, "DNS relay ON — DHCP advertises AP IP as resolver");
         }
     }
-    free(ap_dns_str);
+    if (!used_override) {
+        char *ap_dns_str = nvs_param_get_str("ap_dns");
+        if (ap_dns_str && ap_dns_str[0]) {
+            ip4_addr_t a;
+            if (ip4addr_aton(ap_dns_str, &a) && a.addr) {
+                dns.ip.type = ESP_IPADDR_TYPE_V4;
+                dns.ip.u_addr.ip4.addr = a.addr;
+                used_override = true;
+            }
+        }
+        free(ap_dns_str);
+    }
     if (!used_override) {
         esp_netif_get_dns_info(esp_netif_sta, ESP_NETIF_DNS_MAIN, &dns);
+    }
+    if (dns.ip.u_addr.ip4.addr == 0) {
+        ip4_addr_t a;
+        ip4addr_aton("1.1.1.1", &a);
+        dns.ip.type = ESP_IPADDR_TYPE_V4;
+        dns.ip.u_addr.ip4.addr = a.addr;
     }
 
     uint8_t dhcps_offer_option = DHCPS_OFFER_DNS;
@@ -452,6 +488,11 @@ void app_main(void)
      * the /log page (live ring) and from /diag after a PANIC/WDT
      * (the pre-crash slice in slow RTC RAM survives reboot). */
     log_capture_init(0);
+
+    /* AP-side DNS forwarder. Spawn early so the task is up by the time
+     * wifi_init_softap publishes the AP IP — set_bind_addr triggers the
+     * (re-)bind. Loads enable + upstream-override from NVS itself. */
+    dns_relay_init();
 
     /* If a core dump was saved on the previous boot, extract a one-line
      * summary (task name + PC + first backtrace frames) and persist it
@@ -548,6 +589,15 @@ void app_main(void)
     /* Initialize AP */
     ESP_LOGI(TAG_AP, "ESP_WIFI_MODE_AP");
     esp_netif_t *esp_netif_ap = wifi_init_softap();
+
+    /* Tell the DNS relay which IP to bind on (the freshly-configured
+     * AP IP). The relay task watches this and (re-)binds on change. */
+    {
+        esp_netif_ip_info_t ap_ip = {0};
+        if (esp_netif_get_ip_info(esp_netif_ap, &ap_ip) == ESP_OK && ap_ip.ip.addr) {
+            dns_relay_set_bind_addr(ap_ip.ip.addr);
+        }
+    }
 
     /* Initialize STA */
     ESP_LOGI(TAG_STA, "ESP_WIFI_MODE_STA");

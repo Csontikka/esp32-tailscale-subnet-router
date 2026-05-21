@@ -42,7 +42,7 @@ idf_component_register(SRCS "main.c"
                                   esp_http_server json esp_app_format
                                   acl syslog pcap_capture remote_console
                                   web_password net_diag dhcpserver
-                                  espcoredump
+                                  espcoredump dns_relay
                     INCLUDE_DIRS ".")
 
 # Phase 1.9k: wrap ip_napt_forward to skip NAPT for tailnet CGNAT
