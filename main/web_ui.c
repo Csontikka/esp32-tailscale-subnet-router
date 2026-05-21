@@ -1733,6 +1733,21 @@ static esp_err_t system_handler(httpd_req_t *req)
         else    { cJSON_AddStringToObject(root, "tz", ""); }
     }
 
+    /* TX-power override (0 = IDF default ≈ 20 dBm, 8..84 = custom in
+     * 0.25 dBm steps). Reading via the live API gives whatever was
+     * actually applied, not the NVS persisted value — they match
+     * unless the operator changed it without a reboot. */
+    {
+        int8_t live_pwr = 0;
+        if (esp_wifi_get_max_tx_power(&live_pwr) == ESP_OK) {
+            cJSON_AddNumberToObject(root, "tx_power", live_pwr);
+        }
+        uint8_t nvs_pwr = 0;
+        if (nvs_param_get_u8("tx_pwr", &nvs_pwr) == ESP_OK) {
+            cJSON_AddNumberToObject(root, "tx_power_nvs", nvs_pwr);
+        }
+    }
+
     /* Telemetry status — the API key is intentionally not exposed. */
     telemetry_state_t tm = telemetry_get_state();
     cJSON *t = cJSON_CreateObject();
@@ -1821,6 +1836,19 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         nvs_param_set_str("tz", tz_j->valuestring);
         setenv("TZ", tz_j->valuestring[0] ? tz_j->valuestring : "UTC0", 1);
         tzset();
+    }
+
+    /* TX-power override — clamp + persist + apply live. 0 disables the
+     * override (next boot will skip the call and let the IDF default
+     * stand). */
+    const cJSON *tx_j = cJSON_GetObjectItem(root, "tx_power");
+    if (cJSON_IsNumber(tx_j)) {
+        int v = (int)tx_j->valuedouble;
+        if (v < 0)  v = 0;
+        if (v > 84) v = 84;
+        if (v != 0 && v < 8) v = 8;        /* IDF rejects values below 8 */
+        nvs_param_set_u8("tx_pwr", (uint8_t)v);
+        if (v >= 8) esp_wifi_set_max_tx_power((int8_t)v);
     }
 
     /* Telemetry block — only the enabled toggle is editable from the UI.
