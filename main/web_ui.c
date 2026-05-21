@@ -2197,15 +2197,19 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
         }
 
         /* exit_node_ip is a dotted-quad string in the JSON, stored in
-         * NVS as the host-order int that tailscale_init reads back.
-         * Mirror the parsed value into the global too so /api/tailscale
-         * + /api/status reflect the change without a reboot. */
+         * NVS as the host-order int that tailscale_init reads back, and
+         * consumed by lwip_route_hook + keepalive_start which both
+         * expect host byte order. ip4addr_aton fills a.addr in network
+         * byte order, so we MUST ntohl before persisting and mirroring;
+         * otherwise byte-reversed comparisons miss the chosen peer and
+         * the supervisor never flips netif_default. */
         const cJSON *exit_node = cJSON_GetObjectItem(s, "exit_node_ip");
         if (cJSON_IsString(exit_node)) {
             ip4_addr_t a = { 0 };
             if (exit_node->valuestring[0] == '\0' || ip4addr_aton(exit_node->valuestring, &a)) {
-                nvs_param_set_int("ts_exit_node", (int32_t)a.addr);
-                tailscale_exit_node_ip = a.addr;
+                uint32_t hbo = lwip_ntohl(a.addr);
+                nvs_param_set_int("ts_exit_node", (int32_t)hbo);
+                tailscale_exit_node_ip = hbo;
             }
         }
     }

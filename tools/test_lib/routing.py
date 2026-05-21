@@ -33,8 +33,13 @@ def _pi_ping(pi: SshClient, target: str, count: int = 2) -> bool:
 
 
 def _pi_curl_public_ip(pi: SshClient) -> str | None:
-    rc, out, _ = pi.run("curl -s --max-time 6 https://api.ipify.org || curl -s --max-time 6 https://ifconfig.me",
-                        timeout=15)
+    # IP-based endpoint — sidesteps DNS, which on the AP-side Pi points
+    # at the ESP gateway and may not resolve upstream queries.
+    # -k skips cert check (1.1.1.1 IP doesn't match the cloudflare cert SAN);
+    # -L follows the 301 http→https redirect.
+    rc, out, _ = pi.run(
+        "curl -skL --max-time 8 https://1.1.1.1/cdn-cgi/trace | sed -n 's/^ip=//p'",
+        timeout=15)
     out = out.strip()
     if rc == 0 and out and len(out) < 64:
         return out
