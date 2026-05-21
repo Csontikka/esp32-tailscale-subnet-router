@@ -559,6 +559,13 @@ static bool maintain_ap_cidr_in_routes(const char *old_cidr,
     free(routes);
     if (changed) {
         nvs_param_set_str("ts_advertise_routes", out);
+        /* Refresh the cached global — tailscale_init only reads it at
+         * boot, and the live /api/tailscale GET serialises this
+         * pointer. Without the refresh, the operator would see the
+         * stale empty value until they reboot. free + strdup mirrors
+         * what nvs_str_or_empty does on first load. */
+        free(tailscale_advertise_routes);
+        tailscale_advertise_routes = strdup(out);
         ESP_LOGI(TAG, "ts_advertise_routes auto-maintain: %s → %s",
                  old_cidr ? old_cidr : "(none)", new_cidr);
     }
