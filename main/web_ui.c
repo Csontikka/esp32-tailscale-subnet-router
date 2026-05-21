@@ -252,6 +252,17 @@ static esp_err_t status_handler(httpd_req_t *req)
     }
     cJSON_AddNumberToObject(ts, "peers_online", online);
     cJSON_AddNumberToObject(ts, "peers_total",  total);
+    /* Auth-failure surface — same field the Tailscale tab reads; the
+     * Status page consumes it for the small TS badge in the AP card. */
+    if (ml) {
+        microlink_diag_t diag;
+        if (microlink_get_diag(ml, &diag) == ESP_OK) {
+            cJSON_AddNumberToObject(ts, "register_user_id", diag.register_user_id);
+            if (diag.register_user_name[0]) {
+                cJSON_AddStringToObject(ts, "register_user_name", diag.register_user_name);
+            }
+        }
+    }
     cJSON_AddItemToObject(root, "tailscale", ts);
 
     /* Telemetry summary — full counters in /api/system. */
