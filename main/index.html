@@ -4000,9 +4000,18 @@
           /* Tailnet IP + header badge. */
           document.getElementById('ts-tunnel-ip').textContent = r.tunnel_ip || '—';
           var badge = document.getElementById('ts-page-badge');
-          if (r.connected) {
+          /* register_user_id === 0 means the control plane took the
+           * Register but didn't bind us to a real user — almost always
+           * an invalid/expired auth_key or a stale node-key whose
+           * server-side record is gone. Flag it loudly so the operator
+           * isn't left staring at "Registering…" forever. */
+          if (r.register_user_id === 0) {
+            badge.className = 'badge badge-danger';
+            badge.innerHTML = '<span class="badge-dot"></span> Auth key invalid';
+          } else if (r.connected) {
             badge.className = 'badge badge-success';
-            badge.innerHTML = '<span class="badge-dot badge-dot-pulse"></span> Connected';
+            badge.innerHTML = '<span class="badge-dot badge-dot-pulse"></span> Connected'
+                            + (r.register_user_name ? ' as ' + escapeHtml(r.register_user_name) : '');
           } else if (s.enabled) {
             badge.className = 'badge badge-warning';
             badge.innerHTML = '<span class="badge-dot"></span> Registering…';

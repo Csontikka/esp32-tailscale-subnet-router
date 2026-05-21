@@ -1795,6 +1795,24 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
         ip4_to_str(tailscale_tunnel_ip, buf, sizeof buf);
         cJSON_AddStringToObject(runtime, "tunnel_ip", buf);
     }
+    /* Last RegisterResponse User block — surfaces auth_key failures
+     * that Headscale wraps in a 200-OK (User.ID=0 + empty name → auth
+     * invalid or stale node-key). microlink_get_diag is the cheap path:
+     * it just copies cached fields, no extra round-trips. */
+    {
+        struct microlink_s *mlh = tailscale_get_microlink();
+        if (mlh) {
+            microlink_diag_t diag;
+            if (microlink_get_diag(mlh, &diag) == ESP_OK) {
+                cJSON_AddNumberToObject(runtime, "register_user_id",
+                                        diag.register_user_id);
+                if (diag.register_user_name[0]) {
+                    cJSON_AddStringToObject(runtime, "register_user_name",
+                                            diag.register_user_name);
+                }
+            }
+        }
+    }
     cJSON_AddItemToObject(root, "runtime", runtime);
 
     /* Peers — empty array when microlink isn't running. */
