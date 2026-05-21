@@ -28,6 +28,7 @@
 #include "dhcp_reservations.h"
 #include "dhcps_ext.h"
 #include "portmap.h"
+#include "mac_deny.h"
 #include <stdlib.h>
 #include <time.h>
 
@@ -1462,6 +1463,131 @@ static const httpd_uri_t uri_portmap_save = {
     .user_ctx = NULL,
 };
 
+/* ─────────────────── MAC denylist ─────────────────── */
+
+static esp_err_t mac_deny_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    cJSON *arr  = cJSON_CreateArray();
+    if (!root || !arr) {
+        cJSON_Delete(root); cJSON_Delete(arr);
+        httpd_resp_send_500(req); return ESP_FAIL;
+    }
+
+    for (int i = 0; i < MAC_DENY_MAX; i++) {
+        mac_deny_entry_t e;
+        if (!mac_deny_get(i, &e)) continue;
+
+        char mac_str[18];
+        snprintf(mac_str, sizeof mac_str, "%02x:%02x:%02x:%02x:%02x:%02x",
+                 e.mac[0], e.mac[1], e.mac[2], e.mac[3], e.mac[4], e.mac[5]);
+
+        cJSON *j = cJSON_CreateObject();
+        cJSON_AddStringToObject(j, "mac",  mac_str);
+        cJSON_AddStringToObject(j, "name", e.name);
+        cJSON_AddItemToArray(arr, j);
+    }
+    cJSON_AddItemToObject(root, "denylist", arr);
+    cJSON_AddNumberToObject(root, "max", MAC_DENY_MAX);
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static esp_err_t mac_deny_save_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    size_t buf_size = 2048;
+    char *buf = malloc(buf_size);
+    if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
+    if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+
+    cJSON *arr = cJSON_GetObjectItem(root, "denylist");
+    if (!cJSON_IsArray(arr)) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "missing denylist[]");
+        return ESP_FAIL;
+    }
+
+    mac_deny_entry_t out[MAC_DENY_MAX];
+    memset(out, 0, sizeof out);
+    int n_in  = cJSON_GetArraySize(arr);
+    int n_out = 0;
+
+    for (int i = 0; i < n_in && n_out < MAC_DENY_MAX; i++) {
+        cJSON *e = cJSON_GetArrayItem(arr, i);
+        if (!cJSON_IsObject(e)) continue;
+        cJSON *mac_j  = cJSON_GetObjectItem(e, "mac");
+        cJSON *name_j = cJSON_GetObjectItem(e, "name");
+        if (!cJSON_IsString(mac_j)) continue;
+
+        mac_deny_entry_t *r = &out[n_out];
+        if (!parse_mac_str(mac_j->valuestring, r->mac)) continue;
+        if (cJSON_IsString(name_j)) {
+            strlcpy(r->name, name_j->valuestring, sizeof r->name);
+        }
+        r->valid = 1;
+        n_out++;
+    }
+    cJSON_Delete(root);
+
+    esp_err_t err = mac_deny_set_all(out, n_out);
+
+    /* Kick any currently-connected station whose MAC is now denied —
+     * otherwise the operator has to manually click Kick. */
+    if (err == ESP_OK) {
+        wifi_sta_list_t sl;
+        memset(&sl, 0, sizeof sl);
+        if (esp_wifi_ap_get_sta_list(&sl) == ESP_OK) {
+            for (int i = 0; i < sl.num; i++) {
+                if (mac_deny_is_blocked(sl.sta[i].mac)) {
+                    uint16_t aid = 0;
+                    if (esp_wifi_ap_get_sta_aid(sl.sta[i].mac, &aid) == ESP_OK
+                        && aid > 0) {
+                        esp_wifi_deauth_sta(aid);
+                    }
+                }
+            }
+        }
+    }
+
+    httpd_resp_set_type(req, "application/json");
+    if (err == ESP_OK) {
+        char resp[64];
+        snprintf(resp, sizeof resp, "{\"ok\":true,\"count\":%d}", n_out);
+        return httpd_resp_sendstr(req, resp);
+    }
+    return httpd_resp_sendstr(req, "{\"ok\":false}");
+}
+
+static const httpd_uri_t uri_mac_deny = {
+    .uri      = "/api/mac/denylist",
+    .method   = HTTP_GET,
+    .handler  = mac_deny_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t uri_mac_deny_save = {
+    .uri      = "/api/mac/denylist",
+    .method   = HTTP_POST,
+    .handler  = mac_deny_save_handler,
+    .user_ctx = NULL,
+};
+
 /* ─────────────────── Pre-crash log buffer ───────────────────
  * The RTC slow-RAM ring captures log lines all the way to the panic
  * and survives soft reset / watchdog / abort. Cleared on cold boot or
@@ -2242,6 +2368,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_dhcp_kick);
     httpd_register_uri_handler(server, &uri_portmap);
     httpd_register_uri_handler(server, &uri_portmap_save);
+    httpd_register_uri_handler(server, &uri_mac_deny);
+    httpd_register_uri_handler(server, &uri_mac_deny_save);
     httpd_register_uri_handler(server, &uri_log_precrash);
     httpd_register_uri_handler(server, &uri_log_precrash_clear);
     httpd_register_uri_handler(server, &uri_tailscale);
