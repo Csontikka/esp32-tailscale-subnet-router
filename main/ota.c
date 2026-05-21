@@ -31,25 +31,37 @@ static const char *TAG = "ota";
 #define OTA_HTTP_RX_BUF     2048
 #define OTA_API_JSON_MAX    16384        /* GitHub releases.latest JSON is ~5 KB. */
 
-/* Cached settings + last-poll telemetry. ota_get_state reads these
- * under no lock — single-task writer (the poller task or the operator
- * via ota_set_settings) keeps races confined to single u32 fields. */
+/* Cached settings + last-poll telemetry. The string buffers are
+ * written from both the poller task and httpd-tasks that call
+ * ota_poll_now(); a mutex serialises access. The u32 settings stay
+ * volatile-and-atomic since they fit in a single store. */
 static volatile bool     s_enabled       = false;
 static volatile uint32_t s_poll_s        = OTA_DEFAULT_POLL_S;
 static volatile uint32_t s_last_check    = 0;
 static char              s_last_version[32]  = {0};
 static char              s_last_status[64]   = {0};
 
-static TaskHandle_t      s_poll_task = NULL;
-static SemaphoreHandle_t s_poll_wake = NULL;
+static TaskHandle_t      s_poll_task   = NULL;
+static SemaphoreHandle_t s_poll_wake   = NULL;
+static SemaphoreHandle_t s_state_mutex = NULL;
+
+#define WITH_STATE_LOCK(BLK) do {                                  \
+    if (s_state_mutex) xSemaphoreTake(s_state_mutex, portMAX_DELAY); \
+    BLK                                                            \
+    if (s_state_mutex) xSemaphoreGive(s_state_mutex);              \
+} while (0)
 
 static void set_status(const char *fmt, ...)
 {
+    char tmp[sizeof s_last_status];
     va_list ap;
     va_start(ap, fmt);
-    vsnprintf(s_last_status, sizeof s_last_status, fmt, ap);
+    vsnprintf(tmp, sizeof tmp, fmt, ap);
     va_end(ap);
-    ESP_LOGI(TAG, "%s", s_last_status);
+    WITH_STATE_LOCK({
+        strlcpy(s_last_status, tmp, sizeof s_last_status);
+    });
+    ESP_LOGI(TAG, "%s", tmp);
 }
 
 /* ===== manual upload via /api/system/ota ===== */
@@ -189,14 +201,39 @@ out:
     return ok;
 }
 
-static bool version_differs(const char *remote_tag)
+/* Parse the leading "X.Y.Z" (any of the three optional) into a tuple
+ * (major, minor, patch). Suffixes after the last digit are ignored.
+ * Used by version_is_newer to compare numerically — strcmp != is a
+ * downgrade trap when a release is yanked and re-tagged at an older
+ * value. */
+static void parse_version_tuple(const char *s, int *maj, int *min, int *pat)
+{
+    *maj = *min = *pat = 0;
+    if (!s) return;
+    if (*s == 'v' || *s == 'V') s++;
+    *maj = atoi(s);
+    const char *p = strchr(s, '.');
+    if (!p) return;
+    *min = atoi(p + 1);
+    p = strchr(p + 1, '.');
+    if (!p) return;
+    *pat = atoi(p + 1);
+}
+
+/* True iff `remote` is strictly newer than the running app. Equal
+ * versions and downgrades (remote older) both return false — we only
+ * apply OTAs that move forward, so a yanked release that lands an
+ * older tag on /releases/latest can't flash-wear-loop the device. */
+static bool version_is_newer(const char *remote_tag)
 {
     const esp_app_desc_t *desc = esp_app_get_description();
     const char *local = desc ? desc->version : "";
-    /* Strip a leading 'v' on either side so "v0.2.1" matches "0.2.1". */
-    if (*remote_tag == 'v') remote_tag++;
-    if (*local      == 'v') local++;
-    return strcmp(remote_tag, local) != 0;
+    int rM = 0, rm = 0, rp = 0, lM = 0, lm = 0, lp = 0;
+    parse_version_tuple(remote_tag, &rM, &rm, &rp);
+    parse_version_tuple(local,      &lM, &lm, &lp);
+    if (rM != lM) return rM > lM;
+    if (rm != lm) return rm > lm;
+    return rp > lp;
 }
 
 static esp_err_t do_https_ota(const char *url)
@@ -235,9 +272,9 @@ static void poll_once(void)
         return;
     }
     free(json);
-    strlcpy(s_last_version, tag, sizeof s_last_version);
+    WITH_STATE_LOCK({ strlcpy(s_last_version, tag, sizeof s_last_version); });
 
-    if (!version_differs(tag)) {
+    if (!version_is_newer(tag)) {
         set_status("up to date (%s)", tag);
         return;
     }
@@ -302,7 +339,8 @@ void ota_init(void)
         nvs_close(h);
     }
 
-    if (!s_poll_wake) s_poll_wake = xSemaphoreCreateBinary();
+    if (!s_state_mutex) s_state_mutex = xSemaphoreCreateMutex();
+    if (!s_poll_wake)   s_poll_wake   = xSemaphoreCreateBinary();
     if (!s_poll_task) {
         xTaskCreate(poll_task, "ota_poll", 6144, NULL, 3, &s_poll_task);
     }
@@ -316,8 +354,10 @@ void ota_get_state(ota_state_t *out)
     out->enabled    = s_enabled;
     out->poll_s     = s_poll_s;
     out->last_check = s_last_check;
-    strlcpy(out->last_version, s_last_version, sizeof out->last_version);
-    strlcpy(out->last_status,  s_last_status,  sizeof out->last_status);
+    WITH_STATE_LOCK({
+        strlcpy(out->last_version, s_last_version, sizeof out->last_version);
+        strlcpy(out->last_status,  s_last_status,  sizeof out->last_status);
+    });
 }
 
 esp_err_t ota_set_settings(bool enabled, uint32_t poll_s)
@@ -336,6 +376,16 @@ esp_err_t ota_set_settings(bool enabled, uint32_t poll_s)
 
 void ota_poll_now(char *out_status, size_t status_len)
 {
+    /* Run under the state mutex so we don't race the poll_task: the
+     * mutex blocks the task's own poll_once() (via the set_status it
+     * does on every transition), which serialises the two writers
+     * against the shared status/version buffers. The HTTP fetch itself
+     * is slow (~3 s) so the held window is real, but ota_poll_now is
+     * an explicit operator click, not a request-path hot loop. */
+    if (s_state_mutex) xSemaphoreTake(s_state_mutex, portMAX_DELAY);
     poll_once();
-    if (out_status && status_len) strlcpy(out_status, s_last_status, status_len);
+    if (out_status && status_len) {
+        strlcpy(out_status, s_last_status, status_len);
+    }
+    if (s_state_mutex) xSemaphoreGive(s_state_mutex);
 }
