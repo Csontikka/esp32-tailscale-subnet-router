@@ -1771,6 +1771,11 @@
             </div>
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
+            <label class="form-label" for="net-ap-dns">DNS served to AP clients</label>
+            <input class="input mono" type="text" id="net-ap-dns" placeholder="empty = upstream STA DNS">
+            <span class="form-hint">Override DHCP Option 6 — e.g. <code class="mono">1.1.1.1</code> to bypass the upstream router's resolver. Empty mirrors whatever the STA learned.</span>
+          </div>
+          <div class="form-group" style="margin-top:0.25rem;">
             <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
               <input type="checkbox" id="net-ap-hidden"> Hide SSID (do not broadcast in beacons)
             </label>
@@ -3187,6 +3192,7 @@
           }
           document.getElementById('net-ap-ip').value        = ap.ip   || '';
           document.getElementById('net-ap-mask').value      = ap.mask || '';
+          document.getElementById('net-ap-dns').value       = ap.dns  || '';
           document.getElementById('net-ap-hidden').checked  = !!ap.hidden;
           document.getElementById('net-ap-save').disabled   = true;
         }).catch(function () {});
@@ -3357,7 +3363,7 @@
     });
 
     /* AP — same dirty-track + save pattern. */
-    ['net-ap-ssid', 'net-ap-pw', 'net-ap-channel', 'net-ap-ip', 'net-ap-mask'].forEach(function (id) {
+    ['net-ap-ssid', 'net-ap-pw', 'net-ap-channel', 'net-ap-ip', 'net-ap-mask', 'net-ap-dns'].forEach(function (id) {
       var el = document.getElementById(id);
       var ev = (el.tagName === 'SELECT') ? 'change' : 'input';
       el.addEventListener(ev, function () {
@@ -3374,6 +3380,7 @@
       var channel = parseInt(document.getElementById('net-ap-channel').value, 10);
       var ip      = document.getElementById('net-ap-ip')  .value.trim();
       var mask    = document.getElementById('net-ap-mask').value.trim();
+      var dns     = document.getElementById('net-ap-dns') .value.trim();
       if (!ssid) { showToast('error', 'AP SSID required', 'Enter an SSID for the access point.', 5000); return; }
       if ((ip && !mask) || (mask && !ip)) {
         showToast('error', 'IP + mask both required', 'Set both fields, or leave both empty for the default 192.168.4.1/24.', 5000);
@@ -3381,7 +3388,7 @@
       }
       var body = {
         ap: {
-          ssid: ssid, channel: channel, ip: ip, mask: mask,
+          ssid: ssid, channel: channel, ip: ip, mask: mask, dns: dns,
           hidden: document.getElementById('net-ap-hidden').checked
         }
       };
