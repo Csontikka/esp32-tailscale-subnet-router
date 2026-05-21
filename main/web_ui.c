@@ -1653,6 +1653,97 @@ static const httpd_uri_t uri_log_precrash_clear = {
     .user_ctx = NULL,
 };
 
+/* GET /api/log/raw?since=<seq> — JSON delta endpoint for the live log
+ * tail poller. since=0 (the default) returns the full preserved ring;
+ * non-zero asks for "everything appended after I last saw seq N".
+ * "lost":true means the ring wrapped past the caller's cursor, so the
+ * client should clear its view and treat data as a fresh dump. */
+static esp_err_t log_raw_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    uint64_t since = 0;
+    size_t qlen = httpd_req_get_url_query_len(req) + 1;
+    if (qlen > 1) {
+        char *q = malloc(qlen);
+        if (q && httpd_req_get_url_query_str(req, q, qlen) == ESP_OK) {
+            char val[32] = {0};
+            if (httpd_query_key_value(q, "since", val, sizeof val) == ESP_OK) {
+                since = strtoull(val, NULL, 10);
+            }
+        }
+        free(q);
+    }
+
+    size_t cap = log_capture_capacity();
+    size_t scratch_sz = cap < 4096 ? cap : 4096;
+    char *scratch = malloc(scratch_sz + 1);
+    if (!scratch) {
+        httpd_resp_set_status(req, "500 Internal Server Error");
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req, "{\"error\":\"oom\"}");
+    }
+
+    uint64_t new_seq = 0;
+    size_t n_raw = log_capture_read_since(since, scratch, scratch_sz + 1, &new_seq);
+    bool lost = (since != 0) && ((new_seq - n_raw) > since);
+
+    httpd_resp_set_type(req, "application/json; charset=utf-8");
+    char hdr[160];
+    snprintf(hdr, sizeof hdr,
+             "{\"seq\":%llu,\"lost\":%s,\"size\":%u,\"cap\":%u,\"data\":\"",
+             (unsigned long long)new_seq, lost ? "true" : "false",
+             (unsigned)log_capture_size(),
+             (unsigned)log_capture_capacity());
+    httpd_resp_sendstr_chunk(req, hdr);
+
+    /* Stream JSON-escaped payload. Small esc buffer avoids one strdup per
+     * special byte. */
+    for (size_t i = 0; i < n_raw; i++) {
+        unsigned char c = (unsigned char)scratch[i];
+        if      (c == '"')  httpd_resp_sendstr_chunk(req, "\\\"");
+        else if (c == '\\') httpd_resp_sendstr_chunk(req, "\\\\");
+        else if (c == '\n') httpd_resp_sendstr_chunk(req, "\\n");
+        else if (c == '\r') httpd_resp_sendstr_chunk(req, "\\r");
+        else if (c == '\t') httpd_resp_sendstr_chunk(req, "\\t");
+        else if (c < 0x20) {
+            char esc[8];
+            snprintf(esc, sizeof esc, "\\u%04x", c);
+            httpd_resp_sendstr_chunk(req, esc);
+        } else {
+            char one[2] = { (char)c, 0 };
+            httpd_resp_send_chunk(req, one, 1);
+        }
+    }
+    free(scratch);
+    httpd_resp_sendstr_chunk(req, "\"}");
+    httpd_resp_sendstr_chunk(req, NULL);
+    return ESP_OK;
+}
+
+/* POST /api/log/clear — wipes the live ring (precrash buffer is on its
+ * own clear endpoint). */
+static esp_err_t log_clear_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    log_capture_clear();
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"ok\":true}");
+}
+
+static const httpd_uri_t uri_log_raw = {
+    .uri      = "/api/log/raw",
+    .method   = HTTP_GET,
+    .handler  = log_raw_handler,
+    .user_ctx = NULL,
+};
+static const httpd_uri_t uri_log_clear = {
+    .uri      = "/api/log/clear",
+    .method   = HTTP_POST,
+    .handler  = log_clear_handler,
+    .user_ctx = NULL,
+};
+
 /* Format a host-byte-order IPv4 as "a.b.c.d" — used for the accepted-
  * routes table where host order is the documented storage. */
 static void ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size)
@@ -2370,6 +2461,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_portmap_save);
     httpd_register_uri_handler(server, &uri_mac_deny);
     httpd_register_uri_handler(server, &uri_mac_deny_save);
+    httpd_register_uri_handler(server, &uri_log_raw);
+    httpd_register_uri_handler(server, &uri_log_clear);
     httpd_register_uri_handler(server, &uri_log_precrash);
     httpd_register_uri_handler(server, &uri_log_precrash_clear);
     httpd_register_uri_handler(server, &uri_tailscale);
