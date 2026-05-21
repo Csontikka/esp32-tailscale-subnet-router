@@ -43,12 +43,15 @@ static char              s_last_status[64]   = {0};
 
 static TaskHandle_t      s_poll_task   = NULL;
 static SemaphoreHandle_t s_poll_wake   = NULL;
+/* Recursive — `ota_poll_now` takes it around the whole poll_once(), and
+ * poll_once() internally calls set_status() which takes it again. A
+ * non-recursive mutex would deadlock the second take from the same task. */
 static SemaphoreHandle_t s_state_mutex = NULL;
 
-#define WITH_STATE_LOCK(BLK) do {                                  \
-    if (s_state_mutex) xSemaphoreTake(s_state_mutex, portMAX_DELAY); \
-    BLK                                                            \
-    if (s_state_mutex) xSemaphoreGive(s_state_mutex);              \
+#define WITH_STATE_LOCK(BLK) do {                                          \
+    if (s_state_mutex) xSemaphoreTakeRecursive(s_state_mutex, portMAX_DELAY); \
+    BLK                                                                    \
+    if (s_state_mutex) xSemaphoreGiveRecursive(s_state_mutex);             \
 } while (0)
 
 static void set_status(const char *fmt, ...)
@@ -339,7 +342,7 @@ void ota_init(void)
         nvs_close(h);
     }
 
-    if (!s_state_mutex) s_state_mutex = xSemaphoreCreateMutex();
+    if (!s_state_mutex) s_state_mutex = xSemaphoreCreateRecursiveMutex();
     if (!s_poll_wake)   s_poll_wake   = xSemaphoreCreateBinary();
     if (!s_poll_task) {
         xTaskCreate(poll_task, "ota_poll", 6144, NULL, 3, &s_poll_task);
@@ -376,16 +379,16 @@ esp_err_t ota_set_settings(bool enabled, uint32_t poll_s)
 
 void ota_poll_now(char *out_status, size_t status_len)
 {
-    /* Run under the state mutex so we don't race the poll_task: the
-     * mutex blocks the task's own poll_once() (via the set_status it
-     * does on every transition), which serialises the two writers
-     * against the shared status/version buffers. The HTTP fetch itself
-     * is slow (~3 s) so the held window is real, but ota_poll_now is
-     * an explicit operator click, not a request-path hot loop. */
-    if (s_state_mutex) xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-    poll_once();
-    if (out_status && status_len) {
-        strlcpy(out_status, s_last_status, status_len);
-    }
-    if (s_state_mutex) xSemaphoreGive(s_state_mutex);
+    /* Hold the recursive state mutex across the whole poll so the
+     * background poll_task can't race us mid-poll. set_status() and
+     * the strlcpy() of s_last_version inside poll_once() each re-enter
+     * the same mutex; recursive semantics keep that safe. The HTTP
+     * fetch is slow (~3 s) so the held window is real, but
+     * ota_poll_now is an explicit operator click, not a hot path. */
+    WITH_STATE_LOCK({
+        poll_once();
+        if (out_status && status_len) {
+            strlcpy(out_status, s_last_status, status_len);
+        }
+    });
 }
