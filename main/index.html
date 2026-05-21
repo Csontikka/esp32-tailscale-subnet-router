@@ -3309,6 +3309,12 @@
           btn.textContent = 'Save';
           showToast('success', 'Saved', 'Network settings written to NVS.', 4000);
           if (resp.restart_required) setPendingReboot(true);
+          /* AP IP saves can update ts_advertise_routes silently
+           * (first-time fill / old-CIDR replacement). If the operator
+           * is sitting on the Tailscale tab, refresh its cached view
+           * so the textarea reflects the new value without forcing a
+           * manual Reload. No-op when the function isn't loaded yet. */
+          if (typeof loadTailscale === 'function') loadTailscale();
           /* AP CIDR shifted but the new subnet isn't in the Tailscale
            * advertised-routes list — the backend honoured the
            * operator's prior deletion. Offer to add it now rather than
