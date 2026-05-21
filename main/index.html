@@ -1528,6 +1528,10 @@
               <span class="stat-label">Exit node</span>
               <span class="stat-value mono text-muted" id="ts-exit">—</span>
             </div>
+            <div class="stat-row">
+              <span class="stat-label">Identity</span>
+              <span class="stat-value mono" id="ts-identity">—</span>
+            </div>
           </div>
           <!-- Peer mini-list -->
           <div class="section-heading">Peers</div>
@@ -1891,6 +1895,16 @@
           <div class="stat-row">
             <span class="stat-label">Tailnet IP</span>
             <span class="stat-value mono" id="ts-tunnel-ip">—</span>
+          </div>
+          <div class="stat-row">
+            <span class="stat-label">Node identity</span>
+            <span class="stat-value mono" id="ts-identity-full">—</span>
+          </div>
+          <div style="display:flex; justify-content:flex-end; margin:0 0 0.5rem 0;">
+            <button class="btn btn-ghost btn-sm text-danger" id="ts-reset-identity" type="button"
+                    title="Erase the device's stored node-key and reboot. Use when the control plane no longer recognises the current node-key.">
+              Regenerate identity…
+            </button>
           </div>
 
           <div class="form-group">
@@ -2802,6 +2816,21 @@
       document.getElementById('ts-peers').textContent    = (ts.peers_total != null ? ts.peers_online + ' / ' + ts.peers_total : '—');
       document.getElementById('ts-routes').textContent   = ts.advertise_routes || '—';
       document.getElementById('ts-exit').textContent     = ts.exit_node_ip || '—';
+      /* Identity badge — persistent (green) means the device has a
+       * stable node-key from NVS; fresh (yellow) means the keys were
+       * generated this boot. pubkey prefix gives the operator something
+       * to eyeball-match against `headscale nodes list`. */
+      (function () {
+        var ident = document.getElementById('ts-identity');
+        var pfx = ts.identity_pubkey_prefix ? ' ' + ts.identity_pubkey_prefix + '…' : '';
+        if (ts.identity_persistent === true) {
+          ident.innerHTML = '<span class="badge badge-success" style="vertical-align:middle;">persistent</span><span class="mono" style="margin-left:0.4rem;">' + escapeHtml(pfx.trim()) + '</span>';
+        } else if (ts.identity_persistent === false) {
+          ident.innerHTML = '<span class="badge badge-warning" style="vertical-align:middle;">fresh</span><span class="mono" style="margin-left:0.4rem;">' + escapeHtml(pfx.trim()) + '</span>';
+        } else {
+          ident.textContent = '—';
+        }
+      })();
 
       /* Peer list is fed by /api/tailscale (it carries the full peer
        * array); /api/status only carries summary counts. Lazy-fetch
@@ -3968,6 +3997,22 @@
 
           /* Tailnet IP + header badge. */
           document.getElementById('ts-tunnel-ip').textContent = r.tunnel_ip || '—';
+          /* Detailed identity row in the Tailscale config card — pubkey
+           * prefix in mono so it's eyeball-comparable against
+           * "headscale nodes list" output. */
+          (function () {
+            var ident = document.getElementById('ts-identity-full');
+            var pfx   = r.identity_pubkey_prefix || '';
+            if (r.identity_persistent === true) {
+              ident.innerHTML = '<span class="badge badge-success" style="vertical-align:middle;">persistent</span>'
+                              + '<span class="mono" style="margin-left:0.5rem;">' + escapeHtml(pfx) + (pfx ? '…' : '') + '</span>';
+            } else if (r.identity_persistent === false) {
+              ident.innerHTML = '<span class="badge badge-warning" style="vertical-align:middle;">fresh</span>'
+                              + '<span class="mono" style="margin-left:0.5rem;">' + escapeHtml(pfx) + (pfx ? '…' : '') + '</span>';
+            } else {
+              ident.textContent = '—';
+            }
+          })();
           var badge = document.getElementById('ts-page-badge');
           /* register_user_id === 0 means the control plane took the
            * Register but didn't bind us to a real user — almost always
@@ -4041,6 +4086,30 @@
       });
     });
     document.getElementById('ts-reload').addEventListener('click', loadTailscale);
+
+    /* Regenerate identity — destructive: wipes the device's stored
+     * machine/wg/disco keys + cached peers, then reboots. The next
+     * register attempt gets a fresh node-key the control plane will
+     * see as a brand-new node. */
+    document.getElementById('ts-reset-identity').addEventListener('click', function () {
+      if (!confirm('Regenerate the device node identity?\n\n• Erases the stored WireGuard / machine / DISCO keys\n• Erases the cached peer table\n• Reboots the device\n\nAfter the reboot, the next Tailscale register will look like a brand-new node to the control plane.\n\nThe operator auth-key on the Headscale side may need to be valid + unused for the new register to succeed.')) return;
+      var btn = this;
+      btn.disabled = true; btn.textContent = 'Regenerating…';
+      apiFetch('/api/tailscale/reset_identity', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.ok) {
+            showToast('success', 'Identity wiped', 'Device is rebooting — refresh in ~10 s.', 8000);
+          } else {
+            showToast('error', 'Reset failed', d.reason || 'unknown', 6000);
+            btn.disabled = false; btn.textContent = 'Regenerate identity…';
+          }
+        })
+        .catch(function () {
+          showToast('error', 'Reset failed', 'Network error.', 5000);
+          btn.disabled = false; btn.textContent = 'Regenerate identity…';
+        });
+    });
     document.getElementById('ts-auth-show').addEventListener('click', function () {
       var inp = document.getElementById('ts-auth-key');
       inp.type = (inp.type === 'password') ? 'text' : 'password';
