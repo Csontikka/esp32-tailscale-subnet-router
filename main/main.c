@@ -478,6 +478,18 @@ void app_main(void)
     /* Start WiFi */
     ESP_ERROR_CHECK(esp_wifi_start() );
 
+    /* Optional TX-power override. NVS "tx_pwr" is a u8 in 0.25 dBm
+     * steps (matches esp_wifi_set_max_tx_power): valid range is 8..84
+     * (≈ 2..21 dBm). 0/unset means leave the IDF default in place. */
+    {
+        uint8_t tx_pwr = 0;
+        nvs_param_get_u8("tx_pwr", &tx_pwr);
+        if (tx_pwr >= 8 && tx_pwr <= 84) {
+            esp_wifi_set_max_tx_power((int8_t)tx_pwr);
+            ESP_LOGI("main", "TX power → %u (%.2f dBm)", tx_pwr, tx_pwr * 0.25f);
+        }
+    }
+
     /* Bring the rest of the router up immediately. Earlier this code
      * blocked on xEventGroupWaitBits until the STA either connected or
      * gave up — but the AP-side services (web UI, NAPT, ACL hooks)

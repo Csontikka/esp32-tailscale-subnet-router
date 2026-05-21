@@ -2209,6 +2209,14 @@
               <span class="form-hint">e.g. <code class="mono">CET-1CEST,M3.5.0,M10.5.0/3</code> for Hungary, or <code class="mono">UTC0</code>. Applied at next boot for log timestamps.</span>
             </div>
           </div>
+          <div class="form-group" style="margin:0.25rem 0 0 0;">
+            <label class="form-label" for="sys-tx-power">TX power (0 = default, 8–84 in 0.25 dBm steps)</label>
+            <div style="display:flex; gap:0.75rem; align-items:center;">
+              <input class="input mono" type="number" id="sys-tx-power" min="0" max="84" step="1" style="width:7rem;">
+              <span class="form-hint mono" id="sys-tx-power-dbm" style="white-space:nowrap;">—</span>
+            </div>
+            <span class="form-hint">Lower values cut interference at the cost of AP range. <strong>80 ≈ 20 dBm</strong> is the IDF default. Applied live + at next boot.</span>
+          </div>
           <div class="stat-row"><span class="stat-label">Firmware version</span><span class="stat-value mono" id="sys-version">—</span></div>
           <div class="stat-row"><span class="stat-label">Built</span>            <span class="stat-value mono" id="sys-build">—</span></div>
           <div class="stat-row"><span class="stat-label">ESP-IDF</span>          <span class="stat-value mono" id="sys-idf">—</span></div>
@@ -4292,6 +4300,14 @@
         .then(function (d) {
           document.getElementById('sys-device-name').value   = d.device_name || '';
           document.getElementById('sys-tz').value            = d.tz          || '';
+          /* Prefer the persisted NVS value so the field reflects what'll
+           * survive a reboot; fall back to the live value when there is
+           * no override yet. */
+          var txShown = (typeof d.tx_power_nvs === 'number' && d.tx_power_nvs > 0)
+                          ? d.tx_power_nvs
+                          : (typeof d.tx_power === 'number' ? d.tx_power : 0);
+          document.getElementById('sys-tx-power').value      = txShown || 0;
+          updateTxPowerDbm(txShown);
           document.getElementById('sys-device-name-save').disabled = true;
           document.getElementById('sys-version').textContent = d.version || '—';
           document.getElementById('sys-build').textContent   = (d.build_date || '') + ' ' + (d.build_time || '');
@@ -4318,22 +4334,34 @@
         }).catch(function () {});
     }
 
-    /* Device-card dirty-track + save — covers both Friendly name and
-     * Timezone since they share one Save button. */
-    ['sys-device-name', 'sys-tz'].forEach(function (id) {
+    /* Render the dBm conversion next to the TX-power input so the
+     * operator doesn't have to do the 0.25 multiplication in their
+     * head. 0 stays a special "default" indicator. */
+    function updateTxPowerDbm(raw) {
+      var el = document.getElementById('sys-tx-power-dbm');
+      var v  = parseInt(raw, 10);
+      if (!v) { el.textContent = '= IDF default'; return; }
+      el.textContent = '≈ ' + (v * 0.25).toFixed(2) + ' dBm';
+    }
+
+    /* Device-card dirty-track + save — covers Friendly name, Timezone
+     * and TX power since they share one Save button. */
+    ['sys-device-name', 'sys-tz', 'sys-tx-power'].forEach(function (id) {
       document.getElementById(id).addEventListener('input', function () {
         document.getElementById('sys-device-name-save').disabled = false;
+        if (id === 'sys-tx-power') updateTxPowerDbm(this.value);
       });
     });
     document.getElementById('sys-device-name-save').addEventListener('click', function () {
-      var name = document.getElementById('sys-device-name').value.trim();
-      var tz   = document.getElementById('sys-tz').value.trim();
-      var btn  = this;
+      var name     = document.getElementById('sys-device-name').value.trim();
+      var tz       = document.getElementById('sys-tz').value.trim();
+      var tx_power = parseInt(document.getElementById('sys-tx-power').value, 10) || 0;
+      var btn      = this;
       btn.disabled = true;
       apiFetch('/api/system', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ device_name: name, tz: tz })
+        body:    JSON.stringify({ device_name: name, tz: tz, tx_power: tx_power })
       })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function () {
