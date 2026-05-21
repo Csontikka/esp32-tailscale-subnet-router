@@ -261,6 +261,8 @@ static esp_err_t status_handler(httpd_req_t *req)
             if (diag.register_user_name[0]) {
                 cJSON_AddStringToObject(ts, "register_user_name", diag.register_user_name);
             }
+            cJSON_AddBoolToObject  (ts, "identity_persistent", diag.identity_persistent);
+            cJSON_AddStringToObject(ts, "identity_pubkey_prefix", diag.identity_pubkey_prefix);
         }
     }
     cJSON_AddItemToObject(root, "tailscale", ts);
@@ -1821,6 +1823,10 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
                     cJSON_AddStringToObject(runtime, "register_user_name",
                                             diag.register_user_name);
                 }
+                cJSON_AddBoolToObject  (runtime, "identity_persistent",
+                                        diag.identity_persistent);
+                cJSON_AddStringToObject(runtime, "identity_pubkey_prefix",
+                                        diag.identity_pubkey_prefix);
             }
         }
     }
@@ -1951,6 +1957,39 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true,\"restart_required\":true}");
 }
+
+/* Forward decl — the implementation is below the tailscale block but
+ * we need it for the reset-identity handler that lives up here. */
+static void delayed_restart_task(void *arg);
+
+/* POST /api/tailscale/reset_identity — clears the device's stored
+ * machine / wg / disco keypairs + cached peer table so the next boot
+ * generates fresh ones. Use this when the control plane no longer
+ * recognises the node-key (deleted on the server, or a fresh Headscale
+ * DB). microlink_factory_reset() touches its own NVS namespaces — no
+ * other config is affected. Restart is required because the keys are
+ * read once at microlink_init. */
+static esp_err_t tailscale_reset_identity_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    esp_err_t err = microlink_factory_reset();
+    httpd_resp_set_type(req, "application/json");
+    if (err != ESP_OK) {
+        char resp[64];
+        snprintf(resp, sizeof resp, "{\"ok\":false,\"reason\":\"%s\"}", esp_err_to_name(err));
+        return httpd_resp_sendstr(req, resp);
+    }
+    httpd_resp_sendstr(req, "{\"ok\":true}");
+    xTaskCreate(delayed_restart_task, "reboot", 2048, NULL, 5, NULL);
+    return ESP_OK;
+}
+
+static const httpd_uri_t uri_tailscale_reset_identity = {
+    .uri      = "/api/tailscale/reset_identity",
+    .method   = HTTP_POST,
+    .handler  = tailscale_reset_identity_handler,
+    .user_ctx = NULL,
+};
 
 static const httpd_uri_t uri_tailscale_save = {
     .uri      = "/api/tailscale",
@@ -2496,6 +2535,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_log_precrash_clear);
     httpd_register_uri_handler(server, &uri_tailscale);
     httpd_register_uri_handler(server, &uri_tailscale_save);
+    httpd_register_uri_handler(server, &uri_tailscale_reset_identity);
     httpd_register_uri_handler(server, &uri_system);
     httpd_register_uri_handler(server, &uri_system_save);
     httpd_register_uri_handler(server, &uri_system_restart);
