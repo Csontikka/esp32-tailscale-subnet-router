@@ -12,6 +12,8 @@
    CONDITIONS OF ANY KIND, either express or implied.
 */
 #include <string.h>
+#include <stdlib.h>
+#include <time.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -509,6 +511,19 @@ void app_main(void)
      * ready before the AP netif starts handing out leases. The
      * matching DHCP-server hook lives in components/dhcpserver/. */
     dhcp_reservations_init();
+
+    /* Apply POSIX timezone before SNTP runs — so the first time-of-day
+     * print after the first sync renders in local time. Empty NVS value
+     * falls through to UTC, which is what libc would have used anyway. */
+    {
+        char *tz = nvs_param_get_str("tz");
+        setenv("TZ", (tz && tz[0]) ? tz : "UTC0", 1);
+        tzset();
+        if (tz && tz[0]) {
+            ESP_LOGI("main", "timezone → %s", tz);
+        }
+        free(tz);
+    }
 
     /* Port-forwarding (NAPT portmap) table — load from NVS now; the
      * actual lwIP bindings are installed from the IP_GOT_IP handler

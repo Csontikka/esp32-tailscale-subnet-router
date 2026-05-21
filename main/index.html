@@ -2203,6 +2203,11 @@
               <input class="input" type="text" id="sys-device-name" placeholder="ESP32 Router" maxlength="32">
               <span class="form-hint">Shown in the nav and on the login screen. Helps tell multiple routers apart.</span>
             </div>
+            <div class="form-group">
+              <label class="form-label" for="sys-tz">Timezone (POSIX)</label>
+              <input class="input mono" type="text" id="sys-tz" placeholder="empty = UTC" maxlength="63">
+              <span class="form-hint">e.g. <code class="mono">CET-1CEST,M3.5.0,M10.5.0/3</code> for Hungary, or <code class="mono">UTC0</code>. Applied at next boot for log timestamps.</span>
+            </div>
           </div>
           <div class="stat-row"><span class="stat-label">Firmware version</span><span class="stat-value mono" id="sys-version">—</span></div>
           <div class="stat-row"><span class="stat-label">Built</span>            <span class="stat-value mono" id="sys-build">—</span></div>
@@ -2212,7 +2217,7 @@
         <div class="form-footer">
           <span class="form-footer-hint">Friendly-name change applies immediately.</span>
           <div class="form-footer-actions">
-            <button class="btn btn-primary btn-md" id="sys-device-name-save" disabled>Save name</button>
+            <button class="btn btn-primary btn-md" id="sys-device-name-save" disabled>Save</button>
           </div>
         </div>
       </div>
@@ -4286,6 +4291,7 @@
         .then(function (r) { return r.json(); })
         .then(function (d) {
           document.getElementById('sys-device-name').value   = d.device_name || '';
+          document.getElementById('sys-tz').value            = d.tz          || '';
           document.getElementById('sys-device-name-save').disabled = true;
           document.getElementById('sys-version').textContent = d.version || '—';
           document.getElementById('sys-build').textContent   = (d.build_date || '') + ' ' + (d.build_time || '');
@@ -4312,23 +4318,27 @@
         }).catch(function () {});
     }
 
-    /* Friendly-name dirty-track + save. */
-    document.getElementById('sys-device-name').addEventListener('input', function () {
-      document.getElementById('sys-device-name-save').disabled = false;
+    /* Device-card dirty-track + save — covers both Friendly name and
+     * Timezone since they share one Save button. */
+    ['sys-device-name', 'sys-tz'].forEach(function (id) {
+      document.getElementById(id).addEventListener('input', function () {
+        document.getElementById('sys-device-name-save').disabled = false;
+      });
     });
     document.getElementById('sys-device-name-save').addEventListener('click', function () {
       var name = document.getElementById('sys-device-name').value.trim();
+      var tz   = document.getElementById('sys-tz').value.trim();
       var btn  = this;
       btn.disabled = true;
       apiFetch('/api/system', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ device_name: name })
+        body:    JSON.stringify({ device_name: name, tz: tz })
       })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function () {
           updateBrandName(name);
-          showToast('success', 'Name saved', 'Now showing "' + (name || 'ESP32 Router') + '".', 3000);
+          showToast('success', 'Saved', 'Name "' + (name || 'ESP32 Router') + '"' + (tz ? ' · TZ ' + tz : '') + '.', 3500);
         })
         .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
     });
