@@ -5641,6 +5641,14 @@
       showConfirm('Reboot now?',
                   'The device will restart and become reachable again in ~10 s.',
                   function () {
+                    /* Operator confirmed — the banner has done its job.
+                     * Drop the latch right away so they don't have to
+                     * look at a stale "reboot required" warning while
+                     * the device is actually rebooting. The cross-page
+                     * uptime check still fires on the next /api/status,
+                     * but localStorage is cleared too so a hard refresh
+                     * during the reboot window doesn't bring it back. */
+                    setPendingReboot(false);
                     apiFetch('/api/system/restart', { method: 'POST' });
                     showToast('info', 'Rebooting…', '', 6000);
                     kickToLoginAfterReboot(8000);
