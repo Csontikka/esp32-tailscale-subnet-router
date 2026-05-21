@@ -1931,6 +1931,9 @@
               </button>
             </div>
             <span class="form-hint">tskey-auth-… (Tailscale SaaS) or hskey-auth-… (Headscale).</span>
+            <div id="ts-auth-status" style="margin-top:0.4rem;">
+              <span class="badge badge-neutral">—</span>
+            </div>
           </div>
 
           <div class="grid grid-cols-2">
@@ -3965,6 +3968,21 @@
           document.getElementById('ts_enabled_on').checked  = !!s.enabled;
           document.getElementById('ts_enabled_off').checked = !s.enabled;
           document.getElementById('ts-auth-key').value      = '';
+          /* Stored auth-key fingerprint — backend serves a masked
+           * preview (prefix + last 4 + length). Enough to tell two
+           * keys apart, no secret leaks. */
+          (function () {
+            var box = document.getElementById('ts-auth-status');
+            if (s.auth_key_set === true && s.auth_key_preview) {
+              box.innerHTML = '<span class="badge badge-success" style="vertical-align:middle;">Stored</span>'
+                            + '<span class="mono" style="margin-left:0.4rem;">' + escapeHtml(s.auth_key_preview) + '</span>'
+                            + (typeof s.auth_key_len === 'number'
+                                ? '<span class="form-hint" style="margin-left:0.4rem;">(' + s.auth_key_len + ' chars)</span>'
+                                : '');
+            } else {
+              box.innerHTML = '<span class="badge badge-warning">No auth key set</span>';
+            }
+          })();
           document.getElementById('ts-hostname').value      = s.hostname     || '';
           document.getElementById('ts-login').value         = s.login_server || '';
           document.getElementById('ts-routes').value        = s.advertise_routes || '';

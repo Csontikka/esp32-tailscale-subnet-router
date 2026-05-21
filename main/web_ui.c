@@ -1778,9 +1778,37 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    /* Settings — auth_key is intentionally never serialised. */
+    /* Settings — auth_key itself is never serialised, but we DO emit
+     * enough metadata (set flag + prefix/suffix fingerprint + length)
+     * for the operator to tell *which* key is currently stored without
+     * leaking the secret to anyone reading the response. */
     cJSON *settings = cJSON_CreateObject();
     cJSON_AddBoolToObject  (settings, "enabled",                 tailscale_enabled != 0);
+    {
+        const char *ak = tailscale_auth_key ? tailscale_auth_key : "";
+        size_t alen = strlen(ak);
+        cJSON_AddBoolToObject(settings, "auth_key_set", alen > 0);
+        if (alen > 0) {
+            cJSON_AddNumberToObject(settings, "auth_key_len", (int)alen);
+            char preview[40];
+            if (alen <= 8) {
+                /* tiny strings (operator typed e.g. "test") — show
+                 * verbatim, leaking such a value isn't meaningful. */
+                snprintf(preview, sizeof preview, "%s", ak);
+            } else if (alen <= 19) {
+                /* short — just prefix + …, no tail fingerprint room */
+                snprintf(preview, sizeof preview, "%.11s…", ak);
+            } else {
+                /* normal real key — 11-char protocol prefix +
+                 * 4 fingerprint chars + … + last 4 chars. 8 unique
+                 * chars is enough to tell two keys apart, far too few
+                 * to brute-force back into the original 70+ char key. */
+                snprintf(preview, sizeof preview, "%.15s…%s",
+                         ak, ak + alen - 4);
+            }
+            cJSON_AddStringToObject(settings, "auth_key_preview", preview);
+        }
+    }
     if (tailscale_hostname)         cJSON_AddStringToObject(settings, "hostname",       tailscale_hostname);
     if (tailscale_login_server)     cJSON_AddStringToObject(settings, "login_server",   tailscale_login_server);
     if (tailscale_advertise_routes) cJSON_AddStringToObject(settings, "advertise_routes", tailscale_advertise_routes);
