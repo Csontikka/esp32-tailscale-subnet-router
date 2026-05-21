@@ -460,23 +460,24 @@ static void compute_ap_cidr_from_nvs(char *out, size_t out_size)
     free(mask_str);
 }
 
-/* Maintain the AP-CIDR line inside ts_advertise_routes.
+/* Inspect ts_advertise_routes against the AP CIDR change and propose
+ * what the new value should be, WITHOUT touching NVS. The UI prompts
+ * the operator and POSTs the proposed string back via /api/tailscale.
  *
- *   * Routes empty → first-time setup: drop new_cidr in as a sensible
- *     default.
- *   * Old AP CIDR is currently in routes → silently swap it for the
- *     new one. Operator clearly wants the AP advertised; honour that
- *     intent across IP changes.
- *   * Routes non-empty and old AP CIDR absent → operator removed it
- *     on purpose. Don't re-add silently; set *out_offer_add so the
- *     UI can prompt instead.
- *   * new_cidr is already present → no-op.
+ * Cases:
+ *   * Routes empty → propose "new_cidr" (first-time fill).
+ *   * Old CIDR in routes → propose old replaced by new.
+ *   * Old CIDR absent → propose appending new_cidr.
+ *   * new_cidr already there + no old to drop → nothing to propose.
  *
- * Operator-added custom routes always survive. Returns true when NVS
- * was actually written. */
+ * Operator-added custom routes are preserved in the proposal.
+ * Returns true when a proposal exists; out_proposed_routes is filled
+ * only in that case. */
 static bool maintain_ap_cidr_in_routes(const char *old_cidr,
                                        const char *new_cidr,
-                                       bool *out_offer_add)
+                                       bool *out_offer_add,
+                                       char *out_proposed_routes,
+                                       size_t proposed_size)
 {
     if (out_offer_add) *out_offer_add = false;
     if (!new_cidr || !*new_cidr) return false;
@@ -510,22 +511,8 @@ static bool maintain_ap_cidr_in_routes(const char *old_cidr,
         }
     }
 
-    /* Offer-via-UI case: AP CIDR actually moved, routes are
-     * non-empty, but the operator-curated list contains neither the
-     * old nor the new CIDR — they removed it on purpose. Don't add
-     * silently; surface the offer instead. */
-    if (!unchanged && !routes_empty && !old_present && !new_present) {
-        if (out_offer_add) *out_offer_add = true;
-        free(routes);
-        ESP_LOGI(TAG, "ts_advertise_routes: AP CIDR %s absent, offering UI add", new_cidr);
-        return false;
-    }
-
-    /* Otherwise rebuild: drop any line equal to old_cidr (if old !=
-     * new — when unchanged, old_cidr matches the desired entry and
-     * we keep it), then ensure new_cidr is present exactly once. The
-     * "drop only when different" guard prevents wiping our own entry
-     * during a no-op save. */
+    /* Build the *proposed* updated routes: drop old_cidr lines when
+     * different from new, then ensure new_cidr is present once. */
     char out[512];
     out[0] = '\0';
     bool out_has_new = false;
@@ -543,7 +530,7 @@ static bool maintain_ap_cidr_in_routes(const char *old_cidr,
                 bool is_new = strlen(new_cidr) == llen
                               && strncmp(p, new_cidr, llen) == 0;
                 if (is_new && out_has_new) {
-                    /* Duplicate, drop. */
+                    /* Duplicate of new_cidr — drop. */
                 } else if (!is_old) {
                     if (out[0]) strlcat(out, "\n", sizeof out);
                     strncat(out, p, llen);
@@ -559,22 +546,25 @@ static bool maintain_ap_cidr_in_routes(const char *old_cidr,
         strlcat(out, new_cidr, sizeof out);
     }
 
-    /* Compare against the original so we don't churn NVS on no-op saves. */
-    bool changed = !routes || strcmp(routes, out) != 0;
+    /* If the proposed string matches what's already in NVS, there's
+     * nothing to ask — just bail. Otherwise hand the proposed string
+     * back to the caller; we never touch NVS ourselves now, the SPA
+     * confirms with the operator and POSTs the change via
+     * /api/tailscale. */
+    bool would_change = !routes || strcmp(routes, out) != 0;
     free(routes);
-    if (changed) {
-        nvs_param_set_str("ts_routes", out);
-        /* Refresh the cached global — tailscale_init only reads it at
-         * boot, and the live /api/tailscale GET serialises this
-         * pointer. Without the refresh, the operator would see the
-         * stale empty value until they reboot. free + strdup mirrors
-         * what nvs_str_or_empty does on first load. */
-        free(tailscale_advertise_routes);
-        tailscale_advertise_routes = strdup(out);
-        ESP_LOGI(TAG, "ts_advertise_routes auto-maintain: %s → %s",
-                 old_cidr ? old_cidr : "(none)", new_cidr);
+    if (!would_change) return false;
+
+    if (out_offer_add) *out_offer_add = true;
+    if (out_proposed_routes && proposed_size > 0) {
+        strlcpy(out_proposed_routes, out, proposed_size);
     }
-    return changed;
+    ESP_LOGI(TAG, "ts_routes: AP CIDR %s%s%s — offering UI update",
+             old_cidr ? old_cidr : "(none)",
+             (old_cidr && new_cidr) ? " → " : "",
+             new_cidr);
+    (void)old_present; (void)new_present; (void)unchanged;
+    return true;
 }
 
 static esp_err_t network_save_handler(httpd_req_t *req)
@@ -694,28 +684,40 @@ static esp_err_t network_save_handler(httpd_req_t *req)
         }
 
         char new_cidr[32];
+        char proposed[512];
+        proposed[0] = '\0';
         compute_ap_cidr_from_nvs(new_cidr, sizeof new_cidr);
         bool offer = false;
-        maintain_ap_cidr_in_routes(old_cidr, new_cidr, &offer);
+        maintain_ap_cidr_in_routes(old_cidr, new_cidr, &offer,
+                                   proposed, sizeof proposed);
         if (offer) {
-            /* Stash for the response below — heap-allocated so it
-             * outlives the local string buffers used to build it. */
+            /* Stash proposal for the response — the SPA confirms with
+             * the operator and POSTs proposed_routes back to
+             * /api/tailscale. */
             cJSON_AddStringToObject(root, "_ap_cidr_offer", new_cidr);
+            cJSON_AddStringToObject(root, "_proposed_routes", proposed);
         }
     }
 
-    httpd_resp_set_type(req, "application/json");
+    cJSON *resp_json = cJSON_CreateObject();
+    cJSON_AddBoolToObject(resp_json, "ok", true);
+    cJSON_AddBoolToObject(resp_json, "restart_required", true);
     cJSON *offer = cJSON_GetObjectItem(root, "_ap_cidr_offer");
-    char resp[160];
+    cJSON *proposed = cJSON_GetObjectItem(root, "_proposed_routes");
     if (offer && cJSON_IsString(offer)) {
-        snprintf(resp, sizeof resp,
-                 "{\"ok\":true,\"restart_required\":true,\"ap_cidr_offer\":\"%s\"}",
-                 offer->valuestring);
-    } else {
-        strlcpy(resp, "{\"ok\":true,\"restart_required\":true}", sizeof resp);
+        cJSON_AddStringToObject(resp_json, "ap_cidr_offer", offer->valuestring);
+        if (proposed && cJSON_IsString(proposed)) {
+            cJSON_AddStringToObject(resp_json, "proposed_routes", proposed->valuestring);
+        }
     }
+    char *resp_str = cJSON_PrintUnformatted(resp_json);
+    cJSON_Delete(resp_json);
     cJSON_Delete(root);
-    return httpd_resp_sendstr(req, resp);
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, resp_str ? resp_str : "{\"ok\":true}");
+    free(resp_str);
+    return err;
 }
 
 static const httpd_uri_t uri_network_save = {
