@@ -132,9 +132,18 @@ static int cmd_restart(int argc, char **argv)
     return 0; /* not reached */
 }
 
+/* factory_reset requires --confirm so a stray paste of an unrelated
+ * `factory_reset` line into a pio device monitor session can't brick
+ * the operator's configuration. Matches the SPA endpoint, which gates
+ * the same destructive action on an explicit JSON confirm field. */
+static struct { struct arg_lit *confirm; struct arg_end *end; } s_fr;
 static int cmd_factory_reset(int argc, char **argv)
 {
-    (void)argc; (void)argv;
+    if (arg_parse(argc, argv, (void **)&s_fr) != 0 || s_fr.confirm->count == 0) {
+        printf("Refusing to erase NVS without --confirm.\n");
+        printf("Type:  factory_reset --confirm\n");
+        return 1;
+    }
     printf("Erasing NVS and rebooting...\n");
     fflush(stdout);
     nvs_flash_erase();
@@ -313,7 +322,10 @@ void cli_init(void)
 
     register_one("status",        "Print device runtime status",          NULL, cmd_status, NULL);
     register_one("restart",       "Reboot the device",                    NULL, cmd_restart, NULL);
-    register_one("factory_reset", "Erase NVS and reboot",                 NULL, cmd_factory_reset, NULL);
+
+    s_fr.confirm = arg_lit0(NULL, "confirm", "REQUIRED — guards against accidental erase");
+    s_fr.end     = arg_end(2);
+    register_one("factory_reset", "Erase NVS and reboot (needs --confirm)", NULL, cmd_factory_reset, &s_fr);
 
     s_pw.pw  = arg_str0(NULL, NULL, "<password>", "new password (empty to disable)");
     s_pw.end = arg_end(2);

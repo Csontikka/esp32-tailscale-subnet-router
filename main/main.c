@@ -144,16 +144,31 @@ static void dns_relay_state_cb(bool healthy)
 static int s_net_current = 0;
 static int s_net_retries = 0;
 
+/* Tracks the last applied enterprise state so we only disable when
+ * actually switching away from an EAP slot. Calling enterprise_disable
+ * unconditionally on every wifi_apply_network — including PSK-only
+ * networks — has been seen to cause a brief WPA-state-machine reset
+ * that delays reassociation by hundreds of ms on plain PSK boards. */
+static bool s_eap_active = false;
+
 /* Apply WPA2-Enterprise (EAP) settings for the given network. Returns
  * true if enterprise auth was actually enabled — caller must skip the
  * PSK password copy in that case. */
 static bool wifi_apply_eap(const wifi_network_t *n)
 {
-    /* Clear any prior enterprise state so a rotation from EAP-slot to
-     * PSK-slot doesn't leak credentials between SSIDs. */
+    if (n->eap_method == WIFI_EAP_DISABLED) {
+        /* Switching away from an EAP slot (or already on PSK) — clear
+         * any prior enterprise state ONLY when there's something to
+         * clear, so PSK→PSK rotations stay fast. */
+        if (s_eap_active) {
+            esp_wifi_sta_enterprise_disable();
+            s_eap_active = false;
+        }
+        return false;
+    }
+    /* About to install EAP credentials; clear any leftover state from
+     * a previous EAP session for a different SSID first. */
     esp_wifi_sta_enterprise_disable();
-
-    if (n->eap_method == WIFI_EAP_DISABLED) return false;
     if (n->eap_username[0] == '\0') {
         ESP_LOGW("WiFi Sta", "EAP requested for '%s' but no username — falling back to PSK", n->ssid);
         return false;
@@ -192,6 +207,7 @@ static bool wifi_apply_eap(const wifi_network_t *n)
 #endif
 
     esp_wifi_sta_enterprise_enable();
+    s_eap_active = true;
     ESP_LOGI("WiFi Sta", "EAP enabled for '%s' (method=%u phase2=%u outer='%s')",
              n->ssid, (unsigned)n->eap_method, (unsigned)n->eap_phase2, outer);
     return true;
