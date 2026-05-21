@@ -1404,7 +1404,7 @@
               </span>
               <span class="card-title">Uplink WiFi</span>
             </div>
-            <span class="badge badge-success" id="uplink-status-badge">Connected</span>
+            <span class="badge badge-neutral" id="uplink-status-badge">—</span>
           </div>
           <div class="stat-list">
             <div class="stat-row">
@@ -1417,12 +1417,12 @@
                   <span class="bar on-good"></span>
                   <span class="bar"></span>
                 </span>
-                <span id="uplink-ssid">HomeNetwork_5G</span>
+                <span id="uplink-ssid">—</span>
               </span>
             </div>
             <div class="stat-row">
               <span class="stat-label">IP Address</span>
-              <span class="stat-value mono" id="uplink-ip">192.168.1.47</span>
+              <span class="stat-value mono" id="uplink-ip">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Gateway</span>
@@ -1434,11 +1434,11 @@
             </div>
             <div class="stat-row">
               <span class="stat-label">Signal</span>
-              <span class="stat-value" id="uplink-rssi">-62 dBm</span>
+              <span class="stat-value" id="uplink-rssi">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Channel</span>
-              <span class="stat-value" id="uplink-channel">6 (2.4 GHz)</span>
+              <span class="stat-value" id="uplink-channel">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Traffic</span>
@@ -1458,24 +1458,24 @@
               </span>
               <span class="card-title">Access Point</span>
             </div>
-            <span class="badge badge-accent" id="ap-clients-badge">3 clients</span>
+            <span class="badge badge-neutral" id="ap-clients-badge">—</span>
           </div>
           <div class="stat-list">
             <div class="stat-row">
               <span class="stat-label">SSID</span>
-              <span class="stat-value" id="ap-ssid">ESP32_IoT_AP</span>
+              <span class="stat-value" id="ap-ssid">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">AP IP</span>
-              <span class="stat-value mono" id="ap-ip">192.168.4.1</span>
+              <span class="stat-value mono" id="ap-ip">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">MAC</span>
-              <span class="stat-value mono" id="ap-mac">7C:DF:A1:5E:3B:02</span>
+              <span class="stat-value mono" id="ap-mac">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Channel</span>
-              <span class="stat-value" id="ap-channel">6</span>
+              <span class="stat-value" id="ap-channel">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">TX power</span>
@@ -1510,19 +1510,19 @@
           <div class="stat-list">
             <div class="stat-row">
               <span class="stat-label">Tailnet IP</span>
-              <span class="stat-value mono" id="ts-ip">100.64.0.12</span>
+              <span class="stat-value mono" id="ts-ip">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Hostname</span>
-              <span class="stat-value" id="ts-hostname">esp32-router</span>
+              <span class="stat-value" id="ts-hostname">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Peers online</span>
-              <span class="stat-value" id="ts-peers">4 / 6</span>
+              <span class="stat-value" id="ts-peers">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Advertised routes</span>
-              <span class="stat-value mono" id="ts-routes">192.168.4.0/24</span>
+              <span class="stat-value mono" id="ts-routes">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Exit node</span>
@@ -1532,42 +1532,7 @@
           <!-- Peer mini-list -->
           <div class="section-heading">Peers</div>
           <div id="ts-peer-list">
-            <div class="peer-row">
-              <span class="peer-online-dot on"></span>
-              <span class="peer-name">laptop-work</span>
-              <span class="peer-ip">100.64.0.1</span>
-              <span class="peer-path text-success">direct</span>
-            </div>
-            <div class="peer-row">
-              <span class="peer-online-dot on"></span>
-              <span class="peer-name">pi-homelab</span>
-              <span class="peer-ip">100.64.0.3</span>
-              <span class="peer-path text-warning">DERP</span>
-            </div>
-            <div class="peer-row">
-              <span class="peer-online-dot on"></span>
-              <span class="peer-name">phone-pixel</span>
-              <span class="peer-ip">100.64.0.7</span>
-              <span class="peer-path text-success">direct</span>
-            </div>
-            <div class="peer-row">
-              <span class="peer-online-dot on"></span>
-              <span class="peer-name">desktop-linux</span>
-              <span class="peer-ip">100.64.0.9</span>
-              <span class="peer-path text-success">direct</span>
-            </div>
-            <div class="peer-row">
-              <span class="peer-online-dot off"></span>
-              <span class="peer-name text-muted">tablet-old</span>
-              <span class="peer-ip">100.64.0.11</span>
-              <span class="peer-path text-muted">—</span>
-            </div>
-            <div class="peer-row">
-              <span class="peer-online-dot off"></span>
-              <span class="peer-name text-muted">vpn-exit-de</span>
-              <span class="peer-ip">100.64.0.14</span>
-              <span class="peer-path text-muted">—</span>
-            </div>
+            <div class="peer-row text-muted"><span class="peer-name">— no peers loaded yet —</span></div>
           </div>
         </div>
 
@@ -1589,11 +1554,11 @@
             </div>
             <div class="metric-card">
               <span class="metric-label">Free Heap</span>
-              <span class="metric-value text-success" id="heap-value">187 KB</span>
+              <span class="metric-value" id="heap-value">—</span>
               <div class="heap-bar-track">
-                <div class="heap-bar-fill" id="heap-bar" style="width: 74%; background: var(--success);"></div>
+                <div class="heap-bar-fill" id="heap-bar" style="width: 0%; background: var(--success);"></div>
               </div>
-              <span class="metric-sub" id="heap-total">of 253 KB total DRAM</span>
+              <span class="metric-sub" id="heap-total">—</span>
             </div>
           </div>
 
@@ -1613,16 +1578,16 @@
             <div class="stat-list">
               <div class="stat-row">
                 <span class="stat-label">Running</span>
-                <span class="stat-value" id="uptime-value">2d 4h 17m</span>
+                <span class="stat-value" id="uptime-value">—</span>
               </div>
               <div class="stat-row">
                 <span class="stat-label">Last reboot</span>
-                <span class="stat-value text-muted" id="last-reboot">2026-05-18 09:41</span>
+                <span class="stat-value text-muted" id="last-reboot">—</span>
               </div>
               <div class="stat-row">
                 <span class="stat-label">Reset reason</span>
                 <span class="stat-value">
-                  <span class="badge badge-neutral" id="reset-reason-badge">Power-on</span>
+                  <span class="badge badge-neutral" id="reset-reason-badge">—</span>
                 </span>
               </div>
             </div>
@@ -1639,16 +1604,16 @@
                 </span>
                 <span class="card-title">Telemetry</span>
               </div>
-              <span class="badge badge-success" id="telemetry-badge">OK</span>
+              <span class="badge badge-neutral" id="telemetry-badge">—</span>
             </div>
             <div class="stat-list">
               <div class="stat-row">
                 <span class="stat-label">Boot count</span>
-                <span class="stat-value" id="tlm-boots">47</span>
+                <span class="stat-value" id="tlm-boots">—</span>
               </div>
               <div class="stat-row">
                 <span class="stat-label">Flash count</span>
-                <span class="stat-value" id="tlm-flashes">12</span>
+                <span class="stat-value" id="tlm-flashes">—</span>
               </div>
             </div>
           </div>
