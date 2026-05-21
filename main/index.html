@@ -2818,7 +2818,14 @@
       // Tailscale
       var ts = data.tailscale || {};
       var tsBadge = document.getElementById('ts-badge');
-      if (ts.connected) {
+      /* register_user_id === 0 means Headscale accepted the connect but
+       * didn't bind the node to a user — auth_key invalid or stale
+       * node-key. Surface it red instead of leaving the badge stuck on
+       * "Registering" indefinitely. */
+      if (ts.register_user_id === 0) {
+        tsBadge.className = 'badge badge-danger';
+        tsBadge.innerHTML = '<span class="badge-dot"></span> Auth key invalid';
+      } else if (ts.connected) {
         tsBadge.className = 'badge badge-success';
         tsBadge.innerHTML = '<span class="badge-dot badge-dot-pulse"></span> Connected';
       } else if (ts.enabled) {
@@ -4998,23 +5005,49 @@
       if (!b) return;
       if (on) {
         b.classList.add('visible');
-        try { localStorage.setItem('pending_reboot', '1'); } catch (e) {}
+        try {
+          localStorage.setItem('pending_reboot', '1');
+          /* Snapshot the latch-time uptime — the first /api/status that
+           * comes back with a *smaller* uptime tells us the device has
+           * rebooted since the latch, even across page reloads. */
+          localStorage.setItem('pending_reboot_latched_uptime',
+            String(s_last_seen_uptime > 0 ? s_last_seen_uptime : 0));
+        } catch (e) {}
       } else {
         b.classList.remove('visible');
-        try { localStorage.removeItem('pending_reboot'); } catch (e) {}
+        try {
+          localStorage.removeItem('pending_reboot');
+          localStorage.removeItem('pending_reboot_latched_uptime');
+        } catch (e) {}
       }
     }
     function pendingRebootObserveUptime(uptime_s) {
       if (typeof uptime_s !== 'number') return;
+      /* In-session detection: uptime moved backwards between two
+       * polls → device rebooted. */
       if (s_last_seen_uptime > 0 && uptime_s + 5 < s_last_seen_uptime) {
-        /* Device rebooted between fetches → flag clears itself. */
         setPendingReboot(false);
       }
+      /* Cross-page-reload detection: compare current uptime with the
+       * snapshot we stored when the latch was set. Works after a hard
+       * refresh, because the s_last_seen_uptime in-memory cursor would
+       * be -1 in that path and the old logic never fired. */
+      try {
+        var latched = parseInt(localStorage.getItem('pending_reboot_latched_uptime') || '0', 10);
+        if (latched > 0 && uptime_s + 5 < latched) {
+          setPendingReboot(false);
+        }
+      } catch (e) {}
       s_last_seen_uptime = uptime_s;
     }
     /* Restore latched state on page load. */
     try {
-      if (localStorage.getItem('pending_reboot') === '1') setPendingReboot(true);
+      if (localStorage.getItem('pending_reboot') === '1') {
+        /* Don't call setPendingReboot here — it would overwrite the
+         * latched-uptime snapshot with 0. Just toggle the DOM directly. */
+        var b = document.getElementById('pendingRebootBanner');
+        if (b) b.classList.add('visible');
+      }
     } catch (e) {}
     document.getElementById('pendingReboot').addEventListener('click', function () {
       showConfirm('Reboot now?',
