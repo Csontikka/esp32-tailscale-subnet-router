@@ -2364,6 +2364,59 @@
         </div>
       </div>
 
+      <!-- ===== Firmware update (OTA) ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Firmware update</span>
+          </div>
+          <span class="badge badge-neutral" id="sys-ota-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">Upload a <code class="mono">firmware.bin</code> directly, or enable the periodic check against the project's GitHub Releases. The device reboots into the new partition after a successful flash.</p>
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="sys-ota-auto"> Periodically check GitHub for new releases
+            </label>
+          </div>
+          <div class="grid grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="sys-ota-poll">Check interval</label>
+              <select class="input" id="sys-ota-poll">
+                <option value="3600">Every hour</option>
+                <option value="21600" selected>Every 6 hours</option>
+                <option value="86400">Daily</option>
+                <option value="604800">Weekly</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Last check</label>
+              <div class="stat-value mono" id="sys-ota-last">—</div>
+              <span class="form-hint" id="sys-ota-status">—</span>
+            </div>
+          </div>
+          <div class="form-group" style="margin-top:0.5rem;">
+            <label class="form-label" for="sys-ota-file">Manual upload (firmware.bin)</label>
+            <input type="file" id="sys-ota-file" accept=".bin,application/octet-stream">
+            <span class="form-hint">Pick a built <code class="mono">firmware.bin</code> — the upload streams to flash, then the device reboots. Cancel takes effect only before the first byte goes out.</span>
+          </div>
+          <div class="form-group" id="sys-ota-progress-wrap" style="display:none;">
+            <div style="background:var(--bg-subtle); border-radius:var(--radius-sm); height:0.5rem; overflow:hidden;">
+              <div id="sys-ota-progress" style="background:var(--accent); height:100%; width:0%; transition:width 0.2s;"></div>
+            </div>
+            <span class="form-hint mono" id="sys-ota-progress-text">0%</span>
+          </div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint" id="sys-ota-last-ver">—</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-secondary btn-md" id="sys-ota-check">Check now</button>
+            <button class="btn btn-primary btn-md" id="sys-ota-upload" disabled>Upload &amp; reboot</button>
+            <button class="btn btn-primary btn-md" id="sys-ota-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ===== Reset history ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -5136,9 +5189,38 @@
            * timeout length may have been changed by another tab. */
           sessionCountdownConfig(d.session_timeout_s, d.session_remaining_s);
 
+          /* OTA card — render the poller state + last check. */
+          renderOtaState(d.ota || {});
+
           /* Reset history table — last 10 boots, hist[0] is current. */
           renderResetHistory(d.reset_history || []);
         }).catch(function () {});
+    }
+
+    function renderOtaState(o) {
+      var auto = document.getElementById('sys-ota-auto');
+      var poll = document.getElementById('sys-ota-poll');
+      var last = document.getElementById('sys-ota-last');
+      var stat = document.getElementById('sys-ota-status');
+      var lver = document.getElementById('sys-ota-last-ver');
+      var badge = document.getElementById('sys-ota-badge');
+      if (auto) auto.checked = !!o.auto_enabled;
+      if (poll) {
+        var ps = String(o.poll_s || 21600);
+        var found = false;
+        for (var i = 0; i < poll.options.length; i++) {
+          if (poll.options[i].value === ps) { found = true; break; }
+        }
+        poll.value = found ? ps : '21600';
+      }
+      if (last) last.textContent = _fmtWallclock(o.last_check);
+      if (stat) stat.textContent = o.last_status || '—';
+      if (lver) lver.textContent = o.last_version ? ('Last seen on GitHub: ' + o.last_version) : '—';
+      if (badge) {
+        badge.className = o.auto_enabled ? 'badge badge-success' : 'badge badge-neutral';
+        badge.textContent = o.auto_enabled ? 'Auto on' : 'Manual';
+      }
+      document.getElementById('sys-ota-save').disabled = true;
     }
 
     function _resetReasonClass(reason) {
@@ -5196,6 +5278,79 @@
       if (!v) { el.textContent = '= IDF default'; return; }
       el.textContent = '≈ ' + (v * 0.25).toFixed(2) + ' dBm';
     }
+
+    /* OTA card wiring — auto-poll save, "Check now" trigger, manual
+     * upload via XHR with progress callback. */
+    ['sys-ota-auto', 'sys-ota-poll'].forEach(function (id) {
+      document.getElementById(id).addEventListener('change', function () {
+        document.getElementById('sys-ota-save').disabled = false;
+      });
+    });
+    document.getElementById('sys-ota-file').addEventListener('change', function () {
+      document.getElementById('sys-ota-upload').disabled = !(this.files && this.files[0]);
+    });
+    document.getElementById('sys-ota-save').addEventListener('click', function () {
+      var btn = this; btn.disabled = true; btn.textContent = 'Saving…';
+      apiFetch('/api/system', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({
+          ota: {
+            auto_enabled: document.getElementById('sys-ota-auto').checked,
+            poll_s:       parseInt(document.getElementById('sys-ota-poll').value, 10) || 21600
+          }
+        })
+      }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); })
+        .then(function () { btn.textContent = 'Save'; showToast('success', 'Saved', 'OTA settings written.', 4000); loadSystem(); })
+        .catch(function (e) { btn.disabled = false; btn.textContent = 'Save'; showToast('error', 'Save failed', e.message || '', 5000); });
+    });
+    document.getElementById('sys-ota-check').addEventListener('click', function () {
+      var btn = this; btn.disabled = true; btn.textContent = 'Checking…';
+      apiFetch('/api/system/ota/poll', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          btn.disabled = false; btn.textContent = 'Check now';
+          showToast('info', 'Result', d.status || 'done', 6000);
+          loadSystem();
+        })
+        .catch(function () {
+          btn.disabled = false; btn.textContent = 'Check now';
+          showToast('error', 'Check failed', '', 5000);
+        });
+    });
+    document.getElementById('sys-ota-upload').addEventListener('click', function () {
+      var f = document.getElementById('sys-ota-file').files[0];
+      if (!f) return;
+      if (!confirm('Flash ' + f.name + ' (' + f.size + ' B) and reboot?')) return;
+      var btn = this; btn.disabled = true; btn.textContent = 'Uploading…';
+      var wrap = document.getElementById('sys-ota-progress-wrap');
+      var bar  = document.getElementById('sys-ota-progress');
+      var txt  = document.getElementById('sys-ota-progress-text');
+      wrap.style.display = '';
+      var xhr = new XMLHttpRequest();
+      xhr.open('POST', '/api/system/ota');
+      xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+      xhr.upload.addEventListener('progress', function (e) {
+        if (!e.lengthComputable) return;
+        var pct = Math.floor(e.loaded * 100 / e.total);
+        bar.style.width = pct + '%'; txt.textContent = pct + '%  (' + e.loaded + ' / ' + e.total + ')';
+      });
+      xhr.onload  = function () {
+        if (xhr.status === 200) {
+          txt.textContent = 'Uploaded — device rebooting…';
+          showToast('success', 'Flashed', 'Device is rebooting into the new partition.', 8000);
+          kickToLoginAfterReboot(12000);
+        } else {
+          btn.disabled = false; btn.textContent = 'Upload & reboot';
+          showToast('error', 'Flash failed', 'HTTP ' + xhr.status + ' — ' + (xhr.responseText || ''), 8000);
+        }
+      };
+      xhr.onerror = function () {
+        btn.disabled = false; btn.textContent = 'Upload & reboot';
+        showToast('error', 'Flash failed', 'connection error', 6000);
+      };
+      xhr.send(f);
+    });
 
     /* Device-card dirty-track + save — covers Friendly name, Timezone
      * and TX power since they share one Save button. */

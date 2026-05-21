@@ -55,6 +55,7 @@
 #include "portmap.h"
 #include "mac_deny.h"
 #include "reset_history.h"
+#include "ota.h"
 #include "cli.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
@@ -753,6 +754,12 @@ void app_main(void)
     /* PCAP-over-TCP capture (listens on port 19000 for Wireshark).
      * Mode is OFF on boot; operator enables it from /api/tools/pcap. */
     pcap_init();
+
+    /* OTA — manual web upload handler + (optionally) the GitHub poller.
+     * Init must precede web_ui so the handler is ready when the server
+     * starts; the poller task self-paces with a 20 s settle delay so
+     * it doesn't fight the boot-time WiFi bring-up. */
+    ota_init();
 
     /* HTTP server with the embedded SPA at / + the JSON API endpoints. */
     web_ui_init();
