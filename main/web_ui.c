@@ -460,57 +460,98 @@ static void compute_ap_cidr_from_nvs(char *out, size_t out_size)
     free(mask_str);
 }
 
-/* Maintain a single auto-AP line inside ts_advertise_routes when the
- * AP CIDR changes:
- *   1. If routes is empty → set to new_cidr.
- *   2. Else: walk lines; drop any line == old_cidr; if new_cidr isn't
- *      already in the result, append it.
- * Operator-added custom routes stay put — only the AP entry is moved. */
-static void maintain_ap_cidr_in_routes(const char *old_cidr,
-                                       const char *new_cidr)
+/* Maintain the AP-CIDR line inside ts_advertise_routes.
+ *
+ *   * Routes empty → first-time setup: drop new_cidr in as a sensible
+ *     default.
+ *   * Old AP CIDR is currently in routes → silently swap it for the
+ *     new one. Operator clearly wants the AP advertised; honour that
+ *     intent across IP changes.
+ *   * Routes non-empty and old AP CIDR absent → operator removed it
+ *     on purpose. Don't re-add silently; set *out_offer_add so the
+ *     UI can prompt instead.
+ *   * new_cidr is already present → no-op.
+ *
+ * Operator-added custom routes always survive. Returns true when NVS
+ * was actually written. */
+static bool maintain_ap_cidr_in_routes(const char *old_cidr,
+                                       const char *new_cidr,
+                                       bool *out_offer_add)
 {
-    if (!new_cidr || !*new_cidr) return;
-    if (old_cidr && strcmp(old_cidr, new_cidr) == 0) return;
+    if (out_offer_add) *out_offer_add = false;
+    if (!new_cidr || !*new_cidr) return false;
+    if (old_cidr && strcmp(old_cidr, new_cidr) == 0) return false;
 
     char *routes = nvs_param_get_str("ts_advertise_routes");
-    char  out[512];
-    out[0] = '\0';
-    bool has_new = false;
+    bool routes_empty = !routes || !routes[0];
 
-    if (routes && routes[0]) {
+    /* First pass: scan for presence of old_cidr / new_cidr. */
+    bool old_present = false, new_present = false;
+    if (!routes_empty) {
         const char *p = routes;
         while (*p) {
             const char *eol = p;
             while (*eol && *eol != '\n' && *eol != '\r') eol++;
             size_t llen = (size_t)(eol - p);
-            /* trim trailing whitespace */
+            while (llen > 0 && (p[llen - 1] == ' ' || p[llen - 1] == '\t')) llen--;
+            if (llen > 0) {
+                if (old_cidr && strlen(old_cidr) == llen
+                    && strncmp(p, old_cidr, llen) == 0) old_present = true;
+                if (strlen(new_cidr) == llen
+                    && strncmp(p, new_cidr, llen) == 0) new_present = true;
+            }
+            p = eol;
+            while (*p == '\n' || *p == '\r') p++;
+        }
+    }
+
+    /* Skip the silent auto-add: operator-curated routes without the
+     * old AP CIDR mean they don't want us touching their list. Tell
+     * the caller to ask. */
+    if (!routes_empty && !old_present && !new_present) {
+        if (out_offer_add) *out_offer_add = true;
+        free(routes);
+        ESP_LOGI(TAG, "ts_advertise_routes: AP CIDR %s not present, "
+                      "offering add via UI", new_cidr);
+        return false;
+    }
+    if (new_present && !old_present) {
+        free(routes);
+        return false;  /* Already where we want it. */
+    }
+
+    /* Build updated routes: drop old_cidr line(s), append new_cidr. */
+    char out[512];
+    out[0] = '\0';
+    if (!routes_empty) {
+        const char *p = routes;
+        while (*p) {
+            const char *eol = p;
+            while (*eol && *eol != '\n' && *eol != '\r') eol++;
+            size_t llen = (size_t)(eol - p);
             while (llen > 0 && (p[llen - 1] == ' ' || p[llen - 1] == '\t')) llen--;
             if (llen > 0) {
                 bool is_old = old_cidr && strlen(old_cidr) == llen
                               && strncmp(p, old_cidr, llen) == 0;
-                bool is_new = strlen(new_cidr) == llen
-                              && strncmp(p, new_cidr, llen) == 0;
                 if (!is_old) {
                     if (out[0]) strlcat(out, "\n", sizeof out);
                     strncat(out, p, llen);
-                    if (is_new) has_new = true;
                 }
             }
             p = eol;
             while (*p == '\n' || *p == '\r') p++;
         }
     }
-    if (!has_new) {
+    if (!new_present) {
         if (out[0]) strlcat(out, "\n", sizeof out);
         strlcat(out, new_cidr, sizeof out);
     }
     free(routes);
 
     nvs_param_set_str("ts_advertise_routes", out);
-    ESP_LOGI(TAG, "ts_advertise_routes auto-maintain: %s%s → %s%s",
-             old_cidr ? old_cidr : "(none)",
-             (old_cidr && strcmp(old_cidr, new_cidr) == 0) ? " (unchanged)" : "",
-             new_cidr, has_new ? " (kept)" : " (added)");
+    ESP_LOGI(TAG, "ts_advertise_routes auto-maintain: %s → %s",
+             old_cidr ? old_cidr : "(none)", new_cidr);
+    return true;
 }
 
 static esp_err_t network_save_handler(httpd_req_t *req)
@@ -631,13 +672,27 @@ static esp_err_t network_save_handler(httpd_req_t *req)
 
         char new_cidr[32];
         compute_ap_cidr_from_nvs(new_cidr, sizeof new_cidr);
-        maintain_ap_cidr_in_routes(old_cidr, new_cidr);
+        bool offer = false;
+        maintain_ap_cidr_in_routes(old_cidr, new_cidr, &offer);
+        if (offer) {
+            /* Stash for the response below — heap-allocated so it
+             * outlives the local string buffers used to build it. */
+            cJSON_AddStringToObject(root, "_ap_cidr_offer", new_cidr);
+        }
     }
 
-    cJSON_Delete(root);
-
     httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":true,\"restart_required\":true}");
+    cJSON *offer = cJSON_GetObjectItem(root, "_ap_cidr_offer");
+    char resp[160];
+    if (offer && cJSON_IsString(offer)) {
+        snprintf(resp, sizeof resp,
+                 "{\"ok\":true,\"restart_required\":true,\"ap_cidr_offer\":\"%s\"}",
+                 offer->valuestring);
+    } else {
+        strlcpy(resp, "{\"ok\":true,\"restart_required\":true}", sizeof resp);
+    }
+    cJSON_Delete(root);
+    return httpd_resp_sendstr(req, resp);
 }
 
 static const httpd_uri_t uri_network_save = {
