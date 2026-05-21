@@ -324,6 +324,7 @@ static esp_err_t network_handler(httpd_req_t *req)
     /* AP-side IP override — empty / unset means the default 192.168.4.1/24. */
     add_nvs_string(ap, "ip",   "ap_ip");
     add_nvs_string(ap, "mask", "ap_mask");
+    add_nvs_string(ap, "dns",  "ap_dns");
     uint8_t ap_hidden = 0;
     nvs_param_get_u8("ap_hidden", &ap_hidden);
     cJSON_AddBoolToObject(ap, "hidden", ap_hidden != 0);
@@ -501,6 +502,7 @@ static esp_err_t network_save_handler(httpd_req_t *req)
         save_int_if_present(ap, "channel",  "ap_channel");
         save_str_if_present(ap, "ip",       "ap_ip");
         save_str_if_present(ap, "mask",     "ap_mask");
+        save_str_if_present(ap, "dns",      "ap_dns");
         const cJSON *hidden_j = cJSON_GetObjectItem(ap, "hidden");
         if (cJSON_IsBool(hidden_j)) {
             nvs_param_set_u8("ap_hidden", cJSON_IsTrue(hidden_j) ? 1 : 0);

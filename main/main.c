@@ -383,13 +383,40 @@ esp_netif_t *wifi_init_sta(void)
 
 void softap_set_dns_addr(esp_netif_t *esp_netif_ap,esp_netif_t *esp_netif_sta)
 {
-    esp_netif_dns_info_t dns;
-    esp_netif_get_dns_info(esp_netif_sta,ESP_NETIF_DNS_MAIN,&dns);
+    /* Choose the DNS we hand out to AP clients via DHCP Option 6:
+     *   1. NVS "ap_dns" if the operator set a custom one (e.g. 1.1.1.1
+     *      to bypass the upstream router's resolver).
+     *   2. Otherwise mirror whatever the STA learned upstream, which is
+     *      what the AP DHCP server traditionally did. */
+    esp_netif_dns_info_t dns = {0};
+    char *ap_dns_str = nvs_param_get_str("ap_dns");
+    bool used_override = false;
+    if (ap_dns_str && ap_dns_str[0]) {
+        ip4_addr_t a;
+        if (ip4addr_aton(ap_dns_str, &a) && a.addr) {
+            dns.ip.type = ESP_IPADDR_TYPE_V4;
+            dns.ip.u_addr.ip4.addr = a.addr;
+            used_override = true;
+        }
+    }
+    free(ap_dns_str);
+    if (!used_override) {
+        esp_netif_get_dns_info(esp_netif_sta, ESP_NETIF_DNS_MAIN, &dns);
+    }
+
     uint8_t dhcps_offer_option = DHCPS_OFFER_DNS;
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_stop(esp_netif_ap));
     ESP_ERROR_CHECK(esp_netif_dhcps_option(esp_netif_ap, ESP_NETIF_OP_SET, ESP_NETIF_DOMAIN_NAME_SERVER, &dhcps_offer_option, sizeof(dhcps_offer_option)));
     ESP_ERROR_CHECK(esp_netif_set_dns_info(esp_netif_ap, ESP_NETIF_DNS_MAIN, &dns));
     ESP_ERROR_CHECK_WITHOUT_ABORT(esp_netif_dhcps_start(esp_netif_ap));
+
+    if (used_override) {
+        ESP_LOGI(TAG_AP, "AP DHCP-offered DNS = %u.%u.%u.%u (operator override)",
+                 (unsigned)(dns.ip.u_addr.ip4.addr        & 0xff),
+                 (unsigned)((dns.ip.u_addr.ip4.addr >> 8) & 0xff),
+                 (unsigned)((dns.ip.u_addr.ip4.addr >> 16)& 0xff),
+                 (unsigned)((dns.ip.u_addr.ip4.addr >> 24)& 0xff));
+    }
 }
 
 void app_main(void)
