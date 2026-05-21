@@ -2057,12 +2057,17 @@
           </div>
         </div>
         <div class="card-body">
-          <p class="form-hint" style="margin:0 0 0.75rem 0;">Ask the router which interface (and rule) a packet for a given destination would take. Same code path real packets exercise.</p>
-          <div style="display:flex; gap:0.5rem;">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">Ask the router which interface (and rule) a packet for a given destination would take. Same code path real packets exercise. <strong>Source</strong> picks between the ESP's own outbound socket (self-origin: chicken-and-egg STA bypass applies) and an AP client (forwarded path: exit-node WG steering applies).</p>
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            <select class="input" id="tool-route-src-mode" style="width:11rem;">
+              <option value="self" selected>From: Self (ESP)</option>
+              <option value="ap">From: AP client</option>
+            </select>
             <input class="input mono" type="text" id="tool-route-dst" placeholder="8.8.8.8 or 100.64.0.1" style="flex:1; min-width:0;">
             <button class="btn btn-primary btn-md" id="tool-route-run">Trace</button>
           </div>
           <div id="tool-route-result" style="margin-top:0.75rem; display:none;">
+            <div class="stat-row"><span class="stat-label">Source</span><span class="stat-value mono" id="tool-route-out-src">—</span></div>
             <div class="stat-row"><span class="stat-label">Destination</span><span class="stat-value mono" id="tool-route-out-dst">—</span></div>
             <div class="stat-row"><span class="stat-label">Egress netif</span><span class="stat-value mono" id="tool-route-out-netif">—</span></div>
             <div class="stat-row"><span class="stat-label">Reason</span><span class="stat-value" id="tool-route-out-reason">—</span></div>
@@ -4671,25 +4676,52 @@
     // =====================================================================
     // TOOLS PAGE — route explain / scan / log
     // =====================================================================
+    /* Compute a plausible AP-client source IP from the current AP CIDR.
+     * Picks <network>.5 — far enough from .1 (the AP itself) and from
+     * the DHCP pool ends to be a believable lease, but the kernel never
+     * sees the packet; this is purely the hook decision input. */
+    function _routeApSrc(apIp) {
+      if (!apIp) return null;
+      var parts = apIp.split('.');
+      if (parts.length !== 4) return null;
+      return parts[0] + '.' + parts[1] + '.' + parts[2] + '.5';
+    }
+
     document.getElementById('tool-route-run').addEventListener('click', function () {
       var dst = document.getElementById('tool-route-dst').value.trim();
       if (!dst) { showToast('error', 'Destination required', 'Enter an IPv4 to trace.', 4000); return; }
+      var mode = document.getElementById('tool-route-src-mode').value;
       var btn = this;
       btn.disabled = true;
       btn.textContent = 'Tracing…';
-      apiFetch('/api/tools/route?dst=' + encodeURIComponent(dst))
-        .then(function (r) {
+
+      /* Resolve "ap" mode to a concrete src IP from the running config —
+       * skip the extra round-trip when the user picked "self". */
+      var srcPromise;
+      if (mode === 'ap') {
+        srcPromise = apiFetch('/api/status').then(function (r) { return r.json(); })
+          .then(function (s) { return _routeApSrc((s && s.ap && s.ap.ip) || ''); });
+      } else {
+        srcPromise = Promise.resolve(null);
+      }
+
+      srcPromise.then(function (src) {
+        var url = '/api/tools/route?dst=' + encodeURIComponent(dst);
+        if (src) url += '&src=' + encodeURIComponent(src);
+        return apiFetch(url).then(function (r) {
           if (!r.ok) return r.json().then(function (b) { throw new Error(b.message || ('HTTP ' + r.status)); });
           return r.json();
-        })
-        .then(function (d) {
-          document.getElementById('tool-route-result').style.display = '';
-          document.getElementById('tool-route-out-dst').textContent    = d.dst   || dst;
-          document.getElementById('tool-route-out-netif').textContent  = d.netif || '—';
-          document.getElementById('tool-route-out-reason').textContent = d.reason || '—';
-        })
-        .catch(function (e) { showToast('error', 'Trace failed', e.message || '', 5000); })
-        .finally(function () { btn.disabled = false; btn.textContent = 'Trace'; });
+        });
+      })
+      .then(function (d) {
+        document.getElementById('tool-route-result').style.display = '';
+        document.getElementById('tool-route-out-src').textContent    = d.src || 'self (ESP)';
+        document.getElementById('tool-route-out-dst').textContent    = d.dst   || dst;
+        document.getElementById('tool-route-out-netif').textContent  = d.netif || '—';
+        document.getElementById('tool-route-out-reason').textContent = d.reason || '—';
+      })
+      .catch(function (e) { showToast('error', 'Trace failed', e.message || '', 5000); })
+      .finally(function () { btn.disabled = false; btn.textContent = 'Trace'; });
     });
     document.getElementById('tool-route-dst').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') document.getElementById('tool-route-run').click();
