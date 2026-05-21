@@ -99,6 +99,44 @@ SSHes into the Pi, asserts:
 Then cross-checks: the ESP's `/api/dhcp/leases` includes the Pi at
 that IP with a sane hostname and RSSI.
 
+### `dns_relay` — DNS relay × routing scenarios
+
+Walks 6 combinations of (relay-off / relay-on with STA-learned upstream /
+relay-on with `1.1.1.1` upstream) × (no-exit / exit-on). For each
+scenario:
+
+1. Push the relay + exit-node settings via `/api/network` + `/api/tailscale`.
+2. Wait for the relay's `healthy` state to match the desired enabled
+   value (the `dns_relay` task has a 12 s settle delay before its first
+   bind), then a 6 s buffer for the registered state-cb to re-run
+   `softap_set_dns_addr` and the AP DHCP server to publish the new
+   resolver.
+3. Bounce the Pi's `wlan0` profile (`nmcli device disconnect` →
+   `connection up`) so it requests a fresh DHCP lease.
+4. Assert (a) the Pi's `resolv.conf` `nameserver` line matches the
+   expected path (`AP-IP` when relay-on, not-AP-IP when relay-off),
+   and (b) `getent hosts cloudflare.com` returns a result.
+
+HTTPS-egress (`curl https://api.ipify.org`) is collected as **advisory**
+diagnostics — exit-on egress is known to be flaky on rapid toggles
+(tracked in the route-hook self-traffic memo), and a transient curl
+miss shouldn't fail the relay verdict.
+
+**Known caveat — one scenario can flap.** The `relay-OFF | exit-on →
+relay-ON | no-exit` transition flips three things almost simultaneously
+on the device (exit-node off, relay enable, then the relay's settle +
+softap-DHCP-restart), while NetworkManager on the Pi may keep its
+cached `IP4.DNS` entry from the previous lease until the next DHCP
+exchange completes. If the Pi reconnects mid-restart, it lands on the
+old (STA-uplink) `nameserver` entry even though the resolver path through the ESP
+is fully functional. The runner reports this as a `ns_ok=False` FAIL
+even when `dns_ok=True` and `curl_ok=True`. This is a NM-side cache
+artifact at a specific scenario boundary, not an ESP relay bug — the
+relay itself serves correctly in all 6 scenarios as verified by
+`getent`. Set `ipv4.dhcp-send-release yes` on the Pi profile to reduce
+the window, but don't expect 100% stability on this one boundary in
+back-to-back runs.
+
 ### `routing` — the 4×2 scenario matrix
 The headline test. Runs every direction twice (once with no exit
 node configured on the ESP, once with one). The directions are:

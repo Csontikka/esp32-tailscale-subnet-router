@@ -38,6 +38,13 @@ bool dns_relay_is_enabled(void);
  * transitioning to/from enabled). */
 bool dns_relay_is_healthy(void);
 
+/* Register a callback invoked on every health-state transition. Used by
+ * main.c to re-run softap_set_dns_addr the moment the relay flips
+ * healthy ↔ not-healthy so the DHCP-offered DNS follows the actual
+ * relay availability. Pass NULL to clear. */
+typedef void (*dns_relay_state_cb_t)(bool healthy);
+void dns_relay_set_state_cb(dns_relay_state_cb_t cb);
+
 /* Override the upstream resolver (network byte order).
  * Pass 0 to fall back to the STA-learned DNS at forward time. */
 void dns_relay_set_upstream(uint32_t ip_nbo);

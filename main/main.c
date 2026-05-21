@@ -123,10 +123,13 @@ void softap_set_dns_addr(esp_netif_t *esp_netif_ap, esp_netif_t *esp_netif_sta);
  * task finishes its boot-delay + bind cycle, the DHCP-offered DNS
  * flips from STA-learned to AP IP without waiting for an extra Save
  * click or STA reconnect. */
-void dns_relay_on_healthy(void)
+static void dns_relay_state_cb(bool healthy)
 {
+    (void)healthy;
     esp_netif_t *ap  = esp_netif_get_handle_from_ifkey("WIFI_AP_DEF");
     esp_netif_t *sta = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    ESP_LOGI(TAG_AP, "DNS relay state changed → healthy=%d — reapplying softap DNS",
+             (int)healthy);
     if (ap && sta) softap_set_dns_addr(ap, sta);
 }
 
@@ -493,6 +496,7 @@ void app_main(void)
      * wifi_init_softap publishes the AP IP — set_bind_addr triggers the
      * (re-)bind. Loads enable + upstream-override from NVS itself. */
     dns_relay_init();
+    dns_relay_set_state_cb(dns_relay_state_cb);
 
     /* If a core dump was saved on the previous boot, extract a one-line
      * summary (task name + PC + first backtrace frames) and persist it
