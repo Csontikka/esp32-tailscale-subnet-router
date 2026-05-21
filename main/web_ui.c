@@ -2135,6 +2135,25 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
         save_str_if_present(s, "hostname",         "ts_hostname");
         save_str_if_present(s, "login_server",     "ts_login");
         save_str_if_present(s, "advertise_routes", "ts_routes");
+
+        /* tailscale_init only reads these globals at boot, so the
+         * /api/tailscale GET that immediately follows this POST would
+         * still serialise the stale value. Mirror the just-saved
+         * strings back into the heap-allocated globals so the next
+         * read-back sees the new state without waiting for a reboot. */
+        #define _TS_REFRESH(json_key, global_var)                           \
+            do {                                                            \
+                const cJSON *_v = cJSON_GetObjectItem(s, json_key);         \
+                if (cJSON_IsString(_v)) {                                   \
+                    free(global_var);                                       \
+                    global_var = strdup(_v->valuestring);                   \
+                }                                                           \
+            } while (0)
+        _TS_REFRESH("auth_key",         tailscale_auth_key);
+        _TS_REFRESH("hostname",         tailscale_hostname);
+        _TS_REFRESH("login_server",     tailscale_login_server);
+        _TS_REFRESH("advertise_routes", tailscale_advertise_routes);
+        #undef _TS_REFRESH
         save_int_if_present(s, "max_peers",        "ts_maxpeers");
         save_int_if_present(s, "default_derp_region",   "ts_def_derp");
         save_int_if_present(s, "netcheck_threshold_ms", "ts_nc_thr");
