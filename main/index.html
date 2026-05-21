@@ -2232,8 +2232,9 @@
           <div class="stat-row"><span class="stat-label">Device hash</span>      <span class="stat-value mono" id="sys-dh">—</span></div>
         </div>
         <div class="form-footer">
-          <span class="form-footer-hint">Friendly-name change applies immediately.</span>
+          <span class="form-footer-hint">Friendly-name change applies immediately. Backup excludes secrets (WiFi/AP passwords, auth keys).</span>
           <div class="form-footer-actions">
+            <button class="btn btn-secondary btn-md" id="sys-config-backup">Download config</button>
             <button class="btn btn-primary btn-md" id="sys-device-name-save" disabled>Save</button>
           </div>
         </div>
@@ -4366,6 +4367,63 @@
         if (id === 'sys-tx-power') updateTxPowerDbm(this.value);
       });
     });
+    /* Pull every config-bearing GET endpoint and merge into one JSON
+     * file the operator can download. Secrets (WiFi passwords, AP
+     * password, auth keys, web password hash) are NOT in the source
+     * responses, so the file lands secret-free by construction. */
+    document.getElementById('sys-config-backup').addEventListener('click', function () {
+      var btn = this;
+      btn.disabled = true; btn.textContent = 'Gathering…';
+      Promise.all([
+        apiFetch('/api/network')           .then(function (r) { return r.json(); }),
+        apiFetch('/api/system')            .then(function (r) { return r.json(); }),
+        apiFetch('/api/dhcp/reservations') .then(function (r) { return r.json(); }),
+        apiFetch('/api/portmap')           .then(function (r) { return r.json(); }),
+        apiFetch('/api/tailscale')         .then(function (r) { return r.json(); }),
+        apiFetch('/api/firewall')          .then(function (r) { return r.json(); })
+      ]).then(function (parts) {
+        var sys = parts[1] || {};
+        /* Drop runtime + bulky fields from the system block so the backup
+         * captures config, not state. */
+        delete sys.log_tail;
+        if (sys.telemetry) {
+          delete sys.telemetry.last_send_ms;
+          delete sys.telemetry.last_status;
+          delete sys.telemetry.device_hash;
+          delete sys.telemetry.boot_count;
+          delete sys.telemetry.flash_count;
+        }
+        /* Drop tailscale runtime peers + tunnel_ip — settings only. */
+        var ts = parts[4] || {};
+        delete ts.peers;
+        delete ts.runtime;
+        var backup = {
+          format:        'tsr-backup-v1',
+          exported_at:   new Date().toISOString(),
+          device_name:   sys.device_name || '',
+          network:       parts[0] || {},
+          system:        sys,
+          dhcp_reservations: (parts[2] && parts[2].reservations) || [],
+          portmap:       (parts[3] && parts[3].mappings) || [],
+          tailscale:     ts,
+          firewall:      parts[5] || {}
+        };
+        var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        var stamp = new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+$/, '');
+        a.href     = url;
+        a.download = 'tsr-config-' + stamp + '.json';
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        showToast('success', 'Downloaded', 'Config snapshot saved. Secrets are not included.', 4000);
+      }).catch(function () {
+        showToast('error', 'Backup failed', 'Could not gather all endpoints.', 5000);
+      }).finally(function () {
+        btn.disabled = false; btn.textContent = 'Download config';
+      });
+    });
+
     document.getElementById('sys-device-name-save').addEventListener('click', function () {
       var name     = document.getElementById('sys-device-name').value.trim();
       var tz       = document.getElementById('sys-tz').value.trim();
