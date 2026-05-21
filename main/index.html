@@ -966,6 +966,23 @@
     .text-accent  { color: var(--accent); }
     .text-muted   { color: var(--fg-muted); }
 
+    /* Inline input validation — bound via attachValidator() in JS.
+     * .input-invalid swaps the input border to the danger colour and
+     * tints the background; .input-error is the message span we drop
+     * in next to the input when the validator returns a non-null
+     * message. */
+    .input-invalid {
+      border-color: var(--danger) !important;
+      background: rgba(239, 68, 68, 0.06);
+    }
+    .input-error {
+      display: none;
+      color: var(--danger);
+      font-size: 0.75rem;
+      margin-top: 0.25rem;
+    }
+    .input-error.visible { display: block; }
+
     /* ESP_LOG severity colors — applied to <span class="lvl-X"> wrappers
      * around each log line in the live log viewer. */
     .lvl-E { color: #ff6b6b; }
@@ -2963,6 +2980,181 @@
     }
 
     // Wrapper around fetch that redirects to login on 401
+    // =====================================================================
+    // INPUT VALIDATION FRAMEWORK
+    //
+    // attachValidator(inputEl, validateFn, opts) — runs validateFn(value)
+    // on every input/change/blur; on a non-null return the input gets a
+    // red border + the message rendered next to it, AND every save
+    // button registered under opts.saveBtn (or saveBtns array) gets
+    // force-disabled. validateFn returns null when the value is OK.
+    //
+    // The framework lives alongside the existing dirty-track save
+    // logic: it only force-disables when invalid, so the "clean state
+    // → disabled" path the rest of the SPA relies on is preserved.
+    // =====================================================================
+    var s_validators = [];
+
+    function _vRefreshSaveBtns(btns) {
+      /* Re-rendered lists (net-list / dhcp-res / portmap / etc.) keep
+       * leaving orphan validator entries behind whose .input was
+       * detached from the DOM. Filter them out lazily here so the
+       * array doesn't grow without bound across renders. */
+      s_validators = s_validators.filter(function (e) { return e.input.isConnected; });
+      btns.forEach(function (btn) {
+        var anyBad = s_validators.some(function (e) {
+          if (e.btns.indexOf(btn) < 0) return false;
+          return !!e.fn(e.input.value);
+        });
+        if (anyBad) btn.disabled = true;
+      });
+    }
+
+    function attachValidator(input, fn, opts) {
+      if (!input) return;
+      opts = opts || {};
+      var btns = [];
+      if (opts.saveBtn)  btns.push(opts.saveBtn);
+      if (opts.saveBtns) btns = btns.concat(opts.saveBtns);
+
+      /* Drop an .input-error span right after the input so the message
+       * shows up directly below it without disturbing the surrounding
+       * .form-group .form-hint that already lives there. */
+      var err = document.createElement('span');
+      err.className = 'input-error';
+      input.parentNode.insertBefore(err, input.nextSibling);
+
+      var entry = { input: input, fn: fn, err: err, btns: btns };
+      s_validators.push(entry);
+
+      function check() {
+        var msg = fn(input.value);
+        if (msg) {
+          input.classList.add('input-invalid');
+          err.textContent = msg;
+          err.classList.add('visible');
+        } else {
+          input.classList.remove('input-invalid');
+          err.textContent = '';
+          err.classList.remove('visible');
+        }
+        _vRefreshSaveBtns(btns);
+      }
+      input.addEventListener('input',  check);
+      input.addEventListener('change', check);
+      input.addEventListener('blur',   check);
+      /* First-pass evaluation — defer until the rest of init has run
+       * so the save button has its dirty/clean state set up already. */
+      setTimeout(check, 0);
+      entry.recheck = check;
+      return entry;
+    }
+
+    /* ───────────────────── Reusable validator factories ─────────────────── */
+    function vIPv4(allowEmpty) {
+      return function (v) {
+        v = (v || '').trim();
+        if (!v) return allowEmpty ? null : 'IP address required.';
+        if (!/^\d+\.\d+\.\d+\.\d+$/.test(v)) return 'Use dotted-quad IPv4 (e.g. 192.168.4.1).';
+        var p = v.split('.');
+        for (var i = 0; i < 4; i++) {
+          var n = +p[i];
+          if (!/^\d+$/.test(p[i]) || n < 0 || n > 255) return 'Each octet must be 0–255.';
+        }
+        return null;
+      };
+    }
+    function vMask(allowEmpty) {
+      var ip = vIPv4(allowEmpty);
+      return function (v) {
+        var e = ip(v); if (e) return e;
+        if (!v) return null;
+        var p = v.split('.').map(Number);
+        var u = ((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0;
+        while (u & 0x80000000) { u = (u << 1) >>> 0; }
+        return u === 0 ? null : 'Not a contiguous subnet mask.';
+      };
+    }
+    function vPort(allowEmpty) {
+      return function (v) {
+        v = (v || '').trim();
+        if (!v) return allowEmpty ? null : 'Port required.';
+        if (!/^\d+$/.test(v)) return 'Numeric port required.';
+        var n = +v;
+        return (n >= 1 && n <= 65535) ? null : 'Port must be 1–65535.';
+      };
+    }
+    function vMAC(allowEmpty) {
+      return function (v) {
+        v = (v || '').trim();
+        if (!v) return allowEmpty ? null : 'MAC address required.';
+        return /^([0-9a-fA-F]{2}[:\-]){5}[0-9a-fA-F]{2}$/.test(v)
+          ? null : 'Use aa:bb:cc:dd:ee:ff format.';
+      };
+    }
+    function vRange(min, max, allowEmpty) {
+      return function (v) {
+        v = (v || '').trim();
+        if (!v) return allowEmpty ? null : 'Value required.';
+        if (!/^-?\d+$/.test(v)) return 'Integer required.';
+        var n = +v;
+        return (n >= min && n <= max) ? null : ('Must be ' + min + '–' + max + '.');
+      };
+    }
+    function vHostname(allowEmpty) {
+      return function (v) {
+        v = (v || '').trim();
+        if (!v) return allowEmpty ? null : 'Hostname required.';
+        if (v.length > 63) return 'Max 63 characters.';
+        return /^[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?$/.test(v)
+          ? null : 'Letters/digits/hyphens only; must start + end alphanum.';
+      };
+    }
+    function vURL(allowEmpty) {
+      return function (v) {
+        v = (v || '').trim();
+        if (!v) return allowEmpty ? null : 'URL required.';
+        return /^https?:\/\/.+/i.test(v) ? null : 'Must start with http:// or https://.';
+      };
+    }
+    function vAuthKey(allowEmpty) {
+      return function (v) {
+        v = (v || '').trim();
+        if (!v) return allowEmpty ? null : 'Auth key required.';
+        return /^(tskey|hskey)-auth-/.test(v)
+          ? null : 'Use the tskey-auth-… (Tailscale) or hskey-auth-… (Headscale) format.';
+      };
+    }
+    function vTxPower() {
+      return function (v) {
+        v = (v || '').trim();
+        if (!/^\d+$/.test(v)) return 'Integer required.';
+        var n = +v;
+        if (n === 0) return null;
+        return (n >= 8 && n <= 84) ? null : '0 (default) or 8–84 (in 0.25 dBm steps).';
+      };
+    }
+    function vCIDRList(allowEmpty) {
+      var ip = vIPv4(false);
+      return function (v) {
+        v = v || '';
+        if (!v.trim()) return allowEmpty ? null : 'Required.';
+        var lines = v.split(/\r?\n/);
+        for (var i = 0; i < lines.length; i++) {
+          var L = lines[i].trim();
+          if (!L) continue;
+          var parts = L.split('/');
+          if (parts.length !== 2 || !/^\d+$/.test(parts[1]))
+            return 'Line ' + (i + 1) + ': expected IP/prefix (e.g. 192.168.4.0/24).';
+          var ipErr = ip(parts[0]);
+          if (ipErr) return 'Line ' + (i + 1) + ': ' + ipErr;
+          var pfx = +parts[1];
+          if (pfx < 0 || pfx > 32) return 'Line ' + (i + 1) + ': prefix must be 0–32.';
+        }
+        return null;
+      };
+    }
+
     function apiFetch(url, opts) {
       /* cache: 'no-store' on every request — the backend never sets
        * Cache-Control headers and Chrome/Firefox happily serve stale
@@ -3233,6 +3425,27 @@
           document.getElementById('scanModal').classList.add('open');
           refreshScan();
         });
+        /* Per-row input validators. The save button comes from the
+         * shared Uplink-networks card. */
+        var btn = document.getElementById('net-sta-save');
+        attachValidator(row.querySelector('.net-ssid'),
+          function (v) {
+            v = (v || '').trim();
+            if (!v) return 'SSID required.';
+            if (v.length > 32) return 'Max 32 characters.';
+            return null;
+          }, { saveBtn: btn });
+        attachValidator(row.querySelector('.net-pw'),
+          function (v) {
+            if (!v) return null;
+            if (v.length < 8)  return 'Min 8 characters.';
+            if (v.length > 63) return 'Max 63 characters.';
+            return null;
+          }, { saveBtn: btn });
+        attachValidator(row.querySelector('.net-ip'),   vIPv4(true), { saveBtn: btn });
+        attachValidator(row.querySelector('.net-mask'), vMask(true), { saveBtn: btn });
+        attachValidator(row.querySelector('.net-gw'),   vIPv4(true), { saveBtn: btn });
+        attachValidator(row.querySelector('.net-dns'),  vIPv4(true), { saveBtn: btn });
       });
     }
 
@@ -3559,6 +3772,13 @@
           renderDhcpResList();
           markDhcpDirty();
         });
+        var btn = document.getElementById('dhcp-res-save');
+        attachValidator(row.querySelector('.dhcp-res-mac'),  vMAC(false),  { saveBtn: btn });
+        attachValidator(row.querySelector('.dhcp-res-ip'),   vIPv4(false), { saveBtn: btn });
+        attachValidator(row.querySelector('.dhcp-res-name'), function (v) {
+          if (v && v.length > 31) return 'Max 31 characters.';
+          return null;
+        }, { saveBtn: btn });
       });
     }
 
@@ -3936,6 +4156,14 @@
           renderPortmapList();
           markPortmapDirty();
         });
+        var btn = document.getElementById('portmap-save');
+        attachValidator(row.querySelector('.pm-ext'),   vPort(false),  { saveBtn: btn });
+        attachValidator(row.querySelector('.pm-iip'),   vIPv4(false),  { saveBtn: btn });
+        attachValidator(row.querySelector('.pm-iport'), vPort(false),  { saveBtn: btn });
+        attachValidator(row.querySelector('.pm-name'),  function (v) {
+          if (v && v.length > 31) return 'Max 31 characters.';
+          return null;
+        }, { saveBtn: btn });
       });
     }
 
@@ -5212,6 +5440,90 @@
         showAuthOverlay(null);
         loadDashboard();
       });
+
+    // =====================================================================
+    // VALIDATOR WIRING — runs once after all elements + save handlers
+    // exist. Dynamic rows (network list, DHCP reservations, port-map,
+    // MAC denylist) attach their validators inside the render
+    // functions because the elements are re-created on every render.
+    // =====================================================================
+    (function () {
+      // ── Network tab → AP card ─────────────────────────────────────────
+      var btnAp = document.getElementById('net-ap-save');
+      attachValidator(document.getElementById('net-ap-ssid'),
+        function (v) {
+          v = (v || '').trim();
+          if (!v) return 'AP SSID required.';
+          if (v.length > 32) return 'Max 32 characters.';
+          return null;
+        }, { saveBtn: btnAp });
+      attachValidator(document.getElementById('net-ap-pw'),
+        function (v) {
+          /* Empty = keep current. Non-empty = WPA2-PSK 8..63 chars. */
+          if (!v) return null;
+          if (v.length < 8)  return 'WPA2 password is at least 8 characters.';
+          if (v.length > 63) return 'WPA2 password is at most 63 characters.';
+          return null;
+        }, { saveBtn: btnAp });
+      attachValidator(document.getElementById('net-ap-ip'),
+        vIPv4(true),  { saveBtn: btnAp });
+      attachValidator(document.getElementById('net-ap-mask'),
+        vMask(true),  { saveBtn: btnAp });
+      attachValidator(document.getElementById('net-ap-dns'),
+        vIPv4(true),  { saveBtn: btnAp });
+
+      // ── Network tab → Hostname card ───────────────────────────────────
+      attachValidator(document.getElementById('net-hostname'),
+        vHostname(true), { saveBtn: document.getElementById('net-hostname-save') });
+
+      // ── Tailscale tab → Configuration card ────────────────────────────
+      var btnTs = document.getElementById('ts-save');
+      attachValidator(document.getElementById('ts-auth-key'),
+        vAuthKey(true),                  { saveBtn: btnTs });
+      attachValidator(document.getElementById('ts-hostname'),
+        vHostname(true),                 { saveBtn: btnTs });
+      attachValidator(document.getElementById('ts-login'),
+        vURL(true),                      { saveBtn: btnTs });
+      attachValidator(document.getElementById('ts-routes'),
+        vCIDRList(true),                 { saveBtn: btnTs });
+      attachValidator(document.getElementById('ts-max-peers'),
+        vRange(1, 64, false),            { saveBtn: btnTs });
+
+      // ── System tab → Device card ──────────────────────────────────────
+      var btnSys = document.getElementById('sys-device-name-save');
+      attachValidator(document.getElementById('sys-device-name'),
+        function (v) {
+          v = (v || '').trim();
+          if (v.length > 32) return 'Max 32 characters.';
+          return null;
+        }, { saveBtn: btnSys });
+      attachValidator(document.getElementById('sys-tx-power'),
+        vTxPower(),                      { saveBtn: btnSys });
+
+      // ── Tools tab → diagnostic targets ────────────────────────────────
+      function vTargetOrHostname(v) {
+        v = (v || '').trim();
+        if (!v) return 'Target required.';
+        if (/^\d+\.\d+\.\d+\.\d+$/.test(v)) return vIPv4(false)(v);
+        if (v.length > 253) return 'Too long.';
+        if (!/^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,251}[a-zA-Z0-9])?$/.test(v))
+          return 'Use an IP or a valid hostname.';
+        return null;
+      }
+      attachValidator(document.getElementById('tool-route-dst'), vTargetOrHostname);
+      attachValidator(document.getElementById('tool-ping-target'), vTargetOrHostname);
+      attachValidator(document.getElementById('tool-trace-target'), vTargetOrHostname);
+    })();
+
+    /* Re-attach validators on the dynamically-rendered rows whenever
+     * renderX rebuilds the DOM. Called from the end of renderNetList /
+     * renderDhcpResList / renderPortmapList / renderDenylist. */
+    function wireDynamicValidatorsInRow(row, ruleMap, saveBtn) {
+      Object.keys(ruleMap).forEach(function (sel) {
+        var el = row.querySelector(sel);
+        if (el) attachValidator(el, ruleMap[sel], { saveBtn: saveBtn });
+      });
+    }
 
     // Auto-refresh every 30 seconds when on Status page
     setInterval(function () {
