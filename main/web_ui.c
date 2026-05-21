@@ -2323,6 +2323,18 @@ static const httpd_uri_t uri_tailscale_save = {
     .user_ctx = NULL,
 };
 
+/* Session-management forward declarations — the full implementation lives
+ * further down the file, but system_handler / system_save_handler /
+ * auth_setup_handler need to refer to s_session_timeout_s and a handful of
+ * session_*() helpers before they're defined. C's tentative-definition rule
+ * lets us put the storage class + type here; the initialiser below
+ * resolves into the same object. */
+static uint32_t s_session_timeout_s;
+static uint32_t session_timeout_clamp(uint32_t v);
+static uint32_t session_remaining_s(void);
+static bool     session_alive(void);
+static void     session_extend(void);
+
 static esp_err_t system_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
