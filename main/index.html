@@ -2487,6 +2487,10 @@
 
           /* Lazy-load page contents the first time the operator switches
            * to a tab that has its own data fetcher. */
+          /* Every tab refetches its own state on switch so the operator
+           * never lands on stale cached DOM after coming back from an
+           * earlier session or after another tab modified shared state. */
+          if (page === 'status'    && typeof fetchStatus   === 'function') fetchStatus();
           if (page === 'network'   && typeof loadNetwork   === 'function') loadNetwork();
           if (page === 'tailscale' && typeof loadTailscale === 'function') loadTailscale();
           if (page === 'firewall'  && typeof loadFirewall  === 'function') loadFirewall();
