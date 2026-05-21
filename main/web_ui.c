@@ -2339,7 +2339,7 @@ void web_ui_init(void)
 
     httpd_config_t config   = HTTPD_DEFAULT_CONFIG();
     config.uri_match_fn     = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 32;   /* we have 21 today + room to grow */
+    config.max_uri_handlers = 48;   /* we have 36 today + room to grow */
     config.stack_size       = 12288; /* +50 % over default — multi-net POST
                                       * pushes cJSON parse + handler locals
                                       * past the previous 8 KB ceiling. */
