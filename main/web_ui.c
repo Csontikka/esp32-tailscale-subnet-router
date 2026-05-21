@@ -28,6 +28,8 @@
 #include "dhcp_reservations.h"
 #include "dhcps_ext.h"
 #include "portmap.h"
+#include <stdlib.h>
+#include <time.h>
 
 /* Cap on log payloads we surface over /api endpoints — both the live
  * log tail and the pre-crash snapshot share this ceiling so the JSON
@@ -1723,6 +1725,14 @@ static esp_err_t system_handler(httpd_req_t *req)
         if (name) { cJSON_AddStringToObject(root, "device_name", name); free(name); }
     }
 
+    /* POSIX timezone string (e.g. "CET-1CEST,M3.5.0,M10.5.0/3"). Empty
+     * means UTC. Surfaced to the UI so it can render local clock times. */
+    {
+        char *tz = nvs_param_get_str("tz");
+        if (tz) { cJSON_AddStringToObject(root, "tz", tz); free(tz); }
+        else    { cJSON_AddStringToObject(root, "tz", ""); }
+    }
+
     /* Telemetry status — the API key is intentionally not exposed. */
     telemetry_state_t tm = telemetry_get_state();
     cJSON *t = cJSON_CreateObject();
@@ -1802,6 +1812,15 @@ static esp_err_t system_save_handler(httpd_req_t *req)
     const cJSON *dn = cJSON_GetObjectItem(root, "device_name");
     if (cJSON_IsString(dn)) {
         nvs_param_set_str("dev_name", dn->valuestring);
+    }
+
+    /* Timezone — POSIX string. Applied at next boot (tzset is global,
+     * easiest to take effect after restart). Empty value clears it. */
+    const cJSON *tz_j = cJSON_GetObjectItem(root, "tz");
+    if (cJSON_IsString(tz_j)) {
+        nvs_param_set_str("tz", tz_j->valuestring);
+        setenv("TZ", tz_j->valuestring[0] ? tz_j->valuestring : "UTC0", 1);
+        tzset();
     }
 
     /* Telemetry block — only the enabled toggle is editable from the UI.
