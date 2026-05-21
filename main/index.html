@@ -4857,6 +4857,7 @@
                   function () {
                     apiFetch('/api/system/restart', { method: 'POST' });
                     showToast('info', 'Rebooting…', 'Reconnect in a few seconds.', 7000);
+                    kickToLoginAfterReboot(8000);
                   });
     });
     document.getElementById('sys-clear-pw-btn').addEventListener('click', function () {
@@ -5144,12 +5145,35 @@
         if (b) b.classList.add('visible');
       }
     } catch (e) {}
+    /* Server-side session state lives in process memory and dies with
+     * the reboot. The browser still holds the now-orphan cookie, so
+     * the next /api hit returns 401 — and apiFetch's 401 handler
+     * pops the login overlay. Force the round-trip ourselves a few
+     * seconds after the reboot so the operator sees the login screen
+     * without having to click anything first. */
+    function kickToLoginAfterReboot(delayMs) {
+      setTimeout(function () {
+        fetch('/api/auth/status', { credentials: 'same-origin', cache: 'no-store' })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            if (d && d.auth_required && !d.authenticated) {
+              showAuthOverlay('login');
+            }
+          })
+          .catch(function () {
+            /* Device not back yet — retry once a bit later. */
+            setTimeout(function () { kickToLoginAfterReboot(0); }, 3000);
+          });
+      }, delayMs);
+    }
+
     document.getElementById('pendingReboot').addEventListener('click', function () {
       showConfirm('Reboot now?',
                   'The device will restart and become reachable again in ~10 s.',
                   function () {
                     apiFetch('/api/system/restart', { method: 'POST' });
                     showToast('info', 'Rebooting…', '', 6000);
+                    kickToLoginAfterReboot(8000);
                   });
     });
 
