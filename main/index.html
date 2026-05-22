@@ -2364,8 +2364,7 @@
             <span class="form-hint">Lower values cut interference at the cost of AP range. <strong>80 ≈ 20 dBm</strong> is the IDF default. Applied live + at next boot.</span>
           </div>
           <div class="stat-row"><span class="stat-label">Firmware version</span><span class="stat-value mono" id="sys-version">—</span></div>
-          <div class="stat-row"><span class="stat-label">Build tag</span>        <span class="stat-value mono" id="sys-build-tag">—</span></div>
-          <div class="stat-row"><span class="stat-label">Built</span>            <span class="stat-value mono" id="sys-build">—</span></div>
+          <div class="stat-row"><span class="stat-label">Build tag</span>        <span class="stat-value mono" id="sys-build-tag" title="—">—</span></div>
           <div class="stat-row"><span class="stat-label">ESP-IDF</span>          <span class="stat-value mono" id="sys-idf">—</span></div>
           <div class="stat-row"><span class="stat-label">Device hash</span>      <span class="stat-value mono" id="sys-dh">—</span></div>
         </div>
@@ -2572,8 +2571,7 @@
         <div class="card-body">
           <p style="margin:0 0 0.5rem 0;"><strong>esp32-tailscale-subnet-router</strong> — a single-board ESP32-S3 router that joins your IoT subnet directly to a Tailscale (or Headscale) tailnet, so remote peers can reach LAN devices behind a CGNAT or a phone hotspot without port forwarding.</p>
           <div class="stat-row"><span class="stat-label">Firmware version</span><span class="stat-value mono" id="about-version">—</span></div>
-          <div class="stat-row"><span class="stat-label">Build tag</span>       <span class="stat-value mono" id="about-build-tag">—</span></div>
-          <div class="stat-row"><span class="stat-label">Built</span>           <span class="stat-value mono" id="about-built">—</span></div>
+          <div class="stat-row"><span class="stat-label">Build tag</span>       <span class="stat-value mono" id="about-build-tag" title="—">—</span></div>
           <div class="stat-row"><span class="stat-label">Source</span><span class="stat-value mono"><a href="https://github.com/Csontikka/esp32-tailscale-subnet-router" target="_blank" rel="noopener" style="color:var(--accent);">github.com/Csontikka/esp32-tailscale-subnet-router</a></span></div>
           <div class="stat-row"><span class="stat-label">Issues</span><span class="stat-value mono"><a href="https://github.com/Csontikka/esp32-tailscale-subnet-router/issues" target="_blank" rel="noopener" style="color:var(--accent);">github.com/&hellip;/issues</a></span></div>
           <div class="stat-row"><span class="stat-label">Tailscale stack</span><span class="stat-value mono"><a href="https://github.com/Csontikka/microlink" target="_blank" rel="noopener" style="color:var(--accent);">Csontikka/microlink</a> (userspace WireGuard + DERP + DISCO)</span></div>
@@ -5306,20 +5304,23 @@
           updateTxPowerDbm(txShown);
           document.getElementById('sys-device-name-save').disabled = true;
           document.getElementById('sys-version').textContent = d.version || '—';
-          var builtStr = (d.build_date || '') + ' ' + (d.build_time || '');
+          var builtStr = ((d.build_date || '') + ' ' + (d.build_time || '')).trim() || '—';
           var buildTag = formatBuildTag(d.build_date, d.build_time);
-          document.getElementById('sys-build-tag').textContent = buildTag;
-          document.getElementById('sys-build').textContent   = builtStr.trim() || '—';
+          var sysTag = document.getElementById('sys-build-tag');
+          sysTag.textContent = buildTag;
+          /* Hover-tooltip shows the raw "May 22 2026 13:48:37" form
+           * the compact tag was derived from, so the operator can
+           * confirm the parse without a separate row taking up space. */
+          sysTag.title = builtStr;
           document.getElementById('sys-idf').textContent     = d.idf_ver || '—';
-          /* Mirror the same triplet on the About card so an operator
-           * who only browses /system can answer "what's running?" without
-           * scrolling back to the Device card. */
+          /* Mirror version + tag on the About card so an operator who
+           * only browses /system can answer "what's running?" without
+           * scrolling back to the Device card. The raw date/time goes
+           * into the tag's title attribute, same trick as above. */
           var ab1 = document.getElementById('about-version');
           var ab2 = document.getElementById('about-build-tag');
-          var ab3 = document.getElementById('about-built');
           if (ab1) ab1.textContent = d.version || '—';
-          if (ab2) ab2.textContent = buildTag;
-          if (ab3) ab3.textContent = builtStr.trim() || '—';
+          if (ab2) { ab2.textContent = buildTag; ab2.title = builtStr; }
 
           var tlm = d.telemetry || {};
           document.getElementById('sys-dh').textContent       = tlm.device_hash || '—';
