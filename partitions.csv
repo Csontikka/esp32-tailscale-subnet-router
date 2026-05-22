@@ -1,8 +1,14 @@
 # Name,    Type, SubType, Offset,  Size,  Flags
 # Note: keep offsets in sync with CONFIG_PARTITION_TABLE_OFFSET (default 0x8000).
-nvs,       data, nvs,     0x9000,  24K,
-otadata,   data, ota,     0xf000,  8K,
-phy_init,  data, phy,     0x11000, 4K,
+# nvs bumped 24K → 64K (2026-05-22): one day after a factory_reset wipe,
+# the partition was already returning ESP_ERR_NVS_NOT_ENOUGH_SPACE on
+# every ts_hostname / ts_routes write. 64K is well above what the live
+# key inventory needs (~3.5K of actual data; the rest of the 24K was
+# fragmented across superseded versions). Subsequent partitions keep
+# their 64K-aligned offsets — ota_0 stays at 0x20000.
+nvs,       data, nvs,     0x9000,  64K,
+otadata,   data, ota,     0x19000, 8K,
+phy_init,  data, phy,     0x1b000, 4K,
 ota_0,     app,  ota_0,   0x20000, 1664K,
 ota_1,     app,  ota_1,   ,        1664K,
 storage,   data, fat,     ,        320K,
