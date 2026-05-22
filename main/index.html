@@ -4773,7 +4773,7 @@
            * derived effective values. Hide the fixed-MTU input when mode
            * is AUTO so the operator can't waste time editing a value
            * that won't be used. */
-          var mtu = j.mtu || {};
+          var mtu = (d && d.mtu) || {};
           var mtuMode = parseInt(mtu.mode || 0, 10);
           document.getElementById('ts-mtu-mode').value  = String(mtuMode);
           document.getElementById('ts-mtu-fixed').value = mtu.fixed_mtu || 1420;
