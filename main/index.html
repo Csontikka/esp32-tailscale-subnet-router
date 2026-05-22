@@ -4752,27 +4752,36 @@
           if (!peers.length) {
             body.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">No peers — enable Tailscale and complete auth to see your tailnet.</div>';
           } else {
-            var html = '<div class="table-wrap"><table class="table"><thead><tr>'
-                     + '<th>Status</th><th>Hostname</th><th>Tailnet IP</th><th>Path</th><th>Subnet routes</th>'
-                     + '</tr></thead><tbody>';
+            /* Layout per row, left → right:
+             *   dot  short-hostname  [exit badge]  ...  IP   path-tag
+             *
+             * The dot + tag use fixed widths so the IP column right-edge
+             * is stable across every row (the variable-width IP text
+             * used to push the path tag left/right). Suffix
+             * ".tail13ca7.ts.net" is stripped from the visible hostname
+             * — every peer in the tailnet shares that tail. Full FQDN
+             * lands in a `title` attribute for hover-confirmation. */
+            var html = '<div class="table-wrap"><table class="table"><tbody>';
             peers.forEach(function (p) {
-              var statusHtml = p.online
-                ? '<span class="peer-online-dot on"></span> online'
-                : '<span class="peer-online-dot off"></span> <span class="text-muted">offline</span>';
-              var pathHtml = !p.online
-                ? '<span class="text-muted">—</span>'
-                : (p.direct_path ? '<span class="text-success">direct</span>'
-                                 : '<span class="text-warning">DERP</span>');
+              var dotCls = p.online ? 'on' : 'off';
+              var pathTag = !p.online ? ''
+                  : (p.direct_path ? '<span class="text-success mono">direct</span>'
+                                   : '<span class="text-warning mono">DERP</span>');
               var routes = (p.subnet_routes || []).map(function (r) {
                 return escapeHtml(r.network) + '/' + r.prefix_len;
-              }).join(', ') || '—';
+              }).join(', ');
+              var fqdn  = p.hostname || '?';
+              var sname = fqdn.split('.')[0];
               var exitBadge = p.is_exit_node ? ' <span class="badge badge-info">exit</span>' : '';
+              var routesCell = routes
+                  ? '<td class="mono" style="color:var(--text-muted);">' + routes + '</td>'
+                  : '';
               html += '<tr>'
-                + '<td>' + statusHtml + '</td>'
-                + '<td>' + escapeHtml(p.hostname || '?') + exitBadge + '</td>'
-                + '<td class="mono">' + escapeHtml(p.vpn_ip || '') + '</td>'
-                + '<td>' + pathHtml + '</td>'
-                + '<td class="mono">' + routes + '</td>'
+                + '<td style="width:1.4rem;"><span class="peer-online-dot ' + dotCls + '"></span></td>'
+                + '<td title="' + escapeHtml(fqdn) + '">' + escapeHtml(sname) + exitBadge + '</td>'
+                + routesCell
+                + '<td class="mono" style="text-align:right; white-space:nowrap;">' + escapeHtml(p.vpn_ip || '') + '</td>'
+                + '<td style="text-align:right; white-space:nowrap; width:4.5rem;">' + pathTag + '</td>'
                 + '</tr>';
             });
             html += '</tbody></table></div>';
