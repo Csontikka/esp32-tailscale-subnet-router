@@ -4674,12 +4674,20 @@
           document.getElementById('ts-lan-bypass').checked    = !!s.lan_bypass;
 
           /* Exit-node picker — populated from peers that advertise 0/0. */
+          /* Strip the common tailnet suffix (everything after the first
+           * dot) so the dropdown shows the short label the operator
+           * actually types — every peer in the list has the same
+           * "*.tailnet.ts.net" tail. Path-type hint goes next to it so
+           * the operator can pick a fast exit-node at a glance. */
           var sel = document.getElementById('ts-exit-node');
           sel.innerHTML = '<option value="">None</option>';
           peers.filter(function (p) { return p.is_exit_node; }).forEach(function (p) {
             var o = document.createElement('option');
             o.value = p.vpn_ip || '';
-            o.textContent = (p.hostname || '?') + ' (' + (p.vpn_ip || '') + ')';
+            var shortName = (p.hostname || '?').split('.')[0];
+            var pathTag = !p.online ? 'offline'
+                                    : (p.direct_path ? 'direct' : 'DERP');
+            o.textContent = shortName + ' (' + pathTag + ')';
             sel.appendChild(o);
           });
           if (s.exit_node_ip) {
