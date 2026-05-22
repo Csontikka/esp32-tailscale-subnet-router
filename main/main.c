@@ -733,6 +733,16 @@ void app_main(void)
      * exist and have their default input/linkoutput function pointers. */
     netif_hooks_init();
 
+    /* STA TTL hop-limit override — 0 = passthrough, else every outgoing
+     * IPv4 frame's TTL is rewritten to this value. Operator config from
+     * the Network tab, persisted under NVS "sta_ttl" (u8). */
+    {
+        uint8_t ttl = 0;
+        nvs_param_get_u8("sta_ttl", &ttl);
+        netif_hooks_set_sta_ttl(ttl);
+        if (ttl) ESP_LOGI("main", "STA TTL override → %u", (unsigned)ttl);
+    }
+
     /* Load the multi-network table BEFORE wifi_init_sta runs — that
      * function reads it to set up the initial association. The init
      * also migrates the legacy single-network NVS keys into slot 0

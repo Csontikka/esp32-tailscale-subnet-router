@@ -28,6 +28,17 @@ uint64_t netif_hooks_get_sta_bytes_out(void);
 uint64_t netif_hooks_get_ap_bytes_in  (void);
 uint64_t netif_hooks_get_ap_bytes_out (void);
 
+/* TTL hop-limit override on the STA upstream. When non-zero, every
+ * outgoing IPv4 frame on the STA interface gets its TTL field rewritten
+ * to this value (with an RFC 1624 incremental checksum update) before
+ * leaving the radio. 0 disables the override — the IP stack's natural
+ * 64-default TTL passes through unchanged. Typical use: cloak a tethered
+ * device behind the phone's own TTL (~64) so the upstream carrier
+ * can't distinguish "phone" packets (TTL=64) from "tethered laptop"
+ * packets (TTL=63 after one hop) and apply hotspot-throttle rules. */
+void    netif_hooks_set_sta_ttl(uint8_t ttl);
+uint8_t netif_hooks_get_sta_ttl(void);
+
 #ifdef __cplusplus
 }
 #endif
