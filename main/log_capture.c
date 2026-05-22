@@ -95,6 +95,92 @@ static void buffer_append(const char *src, size_t len)
     }
 }
 
+/* Lock-free direct write into the RTC ring. Called from
+ * __wrap_panic_print_char while the IDF panic handler is dumping the
+ * crash banner — every other task is frozen at that point so the lack
+ * of locking is fine. Kept short and free of any other code path so
+ * the call is safe even before the cache is fully online. */
+void log_capture_append_panic(const char *s, size_t len)
+{
+    if (!s || len == 0) return;
+    if (len > PRECRASH_RING_BYTES) {
+        s   += (len - PRECRASH_RING_BYTES);
+        len  = PRECRASH_RING_BYTES;
+    }
+    for (size_t i = 0; i < len; i++) {
+        s_precrash.data[s_precrash.head] = s[i];
+        s_precrash.head = (s_precrash.head + 1) % PRECRASH_RING_BYTES;
+        if (s_precrash.count < PRECRASH_RING_BYTES) s_precrash.count++;
+    }
+    /* Keep magic + size invariants consistent — the snapshot reader at
+     * the start of the next boot checks both. */
+    s_precrash.magic = PRECRASH_MAGIC;
+}
+
+/* Wrap IDF's panic-print routines so every character/string the crash
+ * handler emits (header, register dump, "Backtrace: 0x… …", DWARF
+ * unwind output, abort reason) lands in the RTC RAM ring before going
+ * out the UART.
+ *
+ * We need to wrap BOTH:
+ *   - panic_print_str — catches calls from panic_handler.c /
+ *     panic_arch.c / eh_frame_parser.c (different objects, so the
+ *     linker's --wrap actually intercepts them).
+ *   - panic_print_char — catches the rare direct callers and the
+ *     panic_print_hex/dec output that bypasses panic_print_str.
+ *
+ * The two would double-count the chars panic_print_str loops through
+ * to panic_print_char inside panic.c — but those calls are INTRA-
+ * OBJECT (same .o), which linker --wrap does NOT intercept. So in
+ * practice each character lands in the ring exactly once. */
+extern void __real_panic_print_char(char c);
+void __wrap_panic_print_char(char c)
+{
+    log_capture_append_panic(&c, 1);
+    __real_panic_print_char(c);
+}
+
+extern void __real_panic_print_str(const char *str);
+void __wrap_panic_print_str(const char *str)
+{
+    if (str) {
+        size_t n = 0;
+        while (str[n]) n++;
+        log_capture_append_panic(str, n);
+    }
+    __real_panic_print_str(str);
+}
+
+/* panic_print_hex / panic_print_dec call panic_print_char intra-object
+ * inside panic.c, so a wrap on panic_print_char doesn't see those
+ * digits — the Backtrace's "0x........" hex addresses came out as
+ * empty "0x:0x". Re-format the same digits here into the ring before
+ * delegating to the real one. */
+extern void __real_panic_print_hex(int h);
+void __wrap_panic_print_hex(int h)
+{
+    char buf[8];
+    for (int x = 0; x < 8; x++) {
+        int c = (h >> 28) & 0xf;
+        buf[x] = (c < 10) ? ('0' + c) : ('a' + c - 10);
+        h <<= 4;
+    }
+    log_capture_append_panic(buf, 8);
+    __real_panic_print_hex(h);
+}
+
+extern void __real_panic_print_dec(int d);
+void __wrap_panic_print_dec(int d)
+{
+    char buf[2];
+    int n1 = d % 10;
+    int n2 = d / 10;
+    buf[0] = (n2 == 0) ? ' ' : (n2 + '0');
+    buf[1] = n1 + '0';
+    log_capture_append_panic(buf, 2);
+    __real_panic_print_dec(d);
+}
+
 /* Snapshot of the RTC ring captured at boot, before live logging starts
  * overwriting it. Read by /log as "pre-crash log" when the previous
  * boot crashed. */

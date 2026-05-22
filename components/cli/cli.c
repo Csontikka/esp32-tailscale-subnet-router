@@ -132,6 +132,23 @@ static int cmd_restart(int argc, char **argv)
     return 0; /* not reached */
 }
 
+/* Deliberately trigger a panic — only useful for testing the
+ * coredump + pre-crash-log capture chain. Guarded by --confirm so a
+ * stray paste can't crash the operator's device. */
+static struct { struct arg_lit *confirm; struct arg_end *end; } s_cr;
+static int cmd_crash(int argc, char **argv)
+{
+    if (arg_parse(argc, argv, (void **)&s_cr) != 0 || s_cr.confirm->count == 0) {
+        printf("Refusing — type:  crash --confirm  to abort() the device.\n");
+        return 1;
+    }
+    printf("Aborting in 100 ms — pre-crash log + coredump should land.\n");
+    fflush(stdout);
+    vTaskDelay(pdMS_TO_TICKS(100));
+    abort();
+    return 0;
+}
+
 /* factory_reset requires --confirm so a stray paste of an unrelated
  * `factory_reset` line into a pio device monitor session can't brick
  * the operator's configuration. Matches the SPA endpoint, which gates
@@ -326,6 +343,10 @@ void cli_init(void)
     s_fr.confirm = arg_lit0(NULL, "confirm", "REQUIRED — guards against accidental erase");
     s_fr.end     = arg_end(2);
     register_one("factory_reset", "Erase NVS and reboot (needs --confirm)", NULL, cmd_factory_reset, &s_fr);
+
+    s_cr.confirm = arg_lit0(NULL, "confirm", "REQUIRED — abort() the device on purpose");
+    s_cr.end     = arg_end(2);
+    register_one("crash",         "Deliberately panic for testing (needs --confirm)", NULL, cmd_crash, &s_cr);
 
     s_pw.pw  = arg_str0(NULL, NULL, "<password>", "new password (empty to disable)");
     s_pw.end = arg_end(2);

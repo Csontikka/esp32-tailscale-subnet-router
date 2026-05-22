@@ -2657,6 +2657,30 @@ static esp_err_t system_factory_reset_handler(httpd_req_t *req)
     return err;
 }
 
+/* Deliberately abort() the device for testing the panic-capture chain.
+ * Auth-gated; not exposed in the SPA UI — only useful via curl from a
+ * developer's workstation. After a 200 ms delay (let the JSON flush),
+ * calls abort() so the IDF panic handler fires for real — coredump
+ * lands in the partition, panic_print_* output funnels into the RTC
+ * pre-crash ring via __wrap_panic_print_char. */
+static void delayed_abort_task(void *arg)
+{
+    (void)arg;
+    vTaskDelay(pdMS_TO_TICKS(200));
+    abort();
+}
+static esp_err_t system_debug_crash_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, "{\"ok\":true,\"aborting\":true}");
+    xTaskCreate(delayed_abort_task, "crash", 2048, NULL, 5, NULL);
+    return err;
+}
+static const httpd_uri_t uri_system_debug_crash = {
+    .uri = "/api/debug/crash", .method = HTTP_POST, .handler = system_debug_crash_handler,
+};
+
 static const httpd_uri_t uri_system_save = {
     .uri = "/api/system", .method = HTTP_POST, .handler = system_save_handler,
 };
@@ -3093,6 +3117,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_system_factory_reset);
     httpd_register_uri_handler(server, &uri_system_ota);
     httpd_register_uri_handler(server, &uri_system_ota_poll);
+    httpd_register_uri_handler(server, &uri_system_debug_crash);
     httpd_register_uri_handler(server, &uri_auth_status);
     httpd_register_uri_handler(server, &uri_auth_login);
     httpd_register_uri_handler(server, &uri_auth_logout);

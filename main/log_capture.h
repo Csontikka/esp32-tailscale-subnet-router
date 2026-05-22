@@ -63,6 +63,15 @@ size_t log_capture_precrash_size(void);
 size_t log_capture_read_precrash(char *out, size_t out_size);
 void   log_capture_clear_precrash(void);
 
+/* Lock-free append straight into the RTC pre-crash ring. Safe to call
+ * from inside the panic handler / interrupt context — no critical-
+ * section, no logging, no flash-resident calls. Wrapped panic_print_char
+ * uses this to mirror the IDF crash dump (Guru Meditation header,
+ * register snapshot, backtrace) into the same RAM buffer the regular
+ * ESP_LOG capture uses, so the next boot's /api/log/precrash returns
+ * both the heartbeat tail AND the actual panic output. */
+void log_capture_append_panic(const char *s, size_t len);
+
 #ifdef __cplusplus
 }
 #endif
