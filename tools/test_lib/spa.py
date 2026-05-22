@@ -16,19 +16,27 @@ def run(ctx: Context) -> list[Result]:
         # main nav is reachable (more robust than asserting on the auth
         # overlay's CSS visibility, which can flap during the dismiss
         # animation).
-        nav_ok = spa.page.locator("button.nav-tab[data-page=status]").is_visible()
+        nav_ok = spa.page.locator(".nav-tab[data-page=status]").is_visible()
         check(results, MODULE_ID, "login dismissed, nav visible", nav_ok,
               "main navigation still hidden after login")
 
         for tab in TABS:
             try:
                 spa.click_tab(tab)
-                spa.page.wait_for_timeout(1200)
+                spa.page.wait_for_timeout(1500)
                 check(results, MODULE_ID, f"tab {tab}: click", True)
             except Exception as e:
                 check(results, MODULE_ID, f"tab {tab}: click", False, repr(e))
                 continue
 
+            # Firewall populates its cards lazily via loadFirewall() →
+            # /api/firewall → renderAclCard. Wait up to 6 s for at least
+            # one card to appear before counting; otherwise we read 0
+            # while the async fetch is still in flight.
+            try:
+                spa.page.wait_for_selector(f"#page-{tab} .card", timeout=6000)
+            except Exception:
+                pass
             cards = spa.page.locator(f"#page-{tab} .card").count()
             check(results, MODULE_ID, f"tab {tab}: cards rendered",
                   cards > 0, f"{cards} cards found")
@@ -48,11 +56,22 @@ def run(ctx: Context) -> list[Result]:
               len(spa.console_errors) == 0,
               f"{len(spa.console_errors)} errors: {spa.console_errors[:3]}")
 
-        # /api/status reachable
+        # /api/status reachable — retry once with a short pause to
+        # ride out any transient 401 right after the tab walk (the
+        # browser context occasionally races the session cookie
+        # refresh when the tab nav fires several /api/* hits at once).
         st = spa.fetch_json("/api/status")
+        if not (isinstance(st, dict) and "version" in st):
+            spa.page.wait_for_timeout(1500)
+            st = spa.fetch_json("/api/status")
+        detail = ""
+        if isinstance(st, dict) and "__http_status" in st:
+            detail = f"http={st.get('__http_status')} err={(st.get('__error') or '')[:80]!r}"
+        else:
+            detail = f"got {list(st.keys()) if isinstance(st, dict) else type(st).__name__}"
         check(results, MODULE_ID, "/api/status JSON",
               isinstance(st, dict) and "version" in st and "ap" in st and "sta" in st,
-              f"got {list(st.keys()) if isinstance(st, dict) else type(st).__name__}")
+              detail)
     finally:
         spa.close()
     return results

@@ -133,7 +133,10 @@ class SpaClient:
         )
 
     def click_tab(self, tab: str) -> None:
-        self.page.click(f"button.nav-tab[data-page={tab}]", timeout=4000)
+        # nav-tabs are <a class="nav-tab"> in the current SPA — older
+        # versions used <button>. Drop the element-type prefix so the
+        # selector works against both shapes.
+        self.page.click(f".nav-tab[data-page={tab}]", timeout=4000)
         self.page.wait_for_timeout(800)
 
 
