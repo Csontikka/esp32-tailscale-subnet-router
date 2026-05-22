@@ -2032,6 +2032,46 @@
         </div>
       </div>
 
+      <!-- ===== MTU / MSS / PMTU manager ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Tunnel MTU</span>
+          </div>
+          <span class="badge badge-neutral mono" id="ts-mtu-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">
+            <strong>AUTO</strong> picks <code class="mono">1420</code> when at least one peer is on a direct UDP path and <code class="mono">1280</code> when traffic is DERP-relayed (DERP adds ~60 B of HTTP framing on top of WireGuard).
+            <strong>FIXED</strong> pins a user-supplied value in <code class="mono">576..1500</code>.
+            The effective MTU drives the WireGuard netif MTU, the AP-side TCP MSS clamp on every SYN, and the next-hop MTU reported in ICMP frag-needed replies.
+          </p>
+          <div class="grid grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="ts-mtu-mode">Mode</label>
+              <select class="select input" id="ts-mtu-mode">
+                <option value="0">Auto (peer-aware)</option>
+                <option value="1">Fixed</option>
+              </select>
+            </div>
+            <div class="form-group" id="ts-mtu-fixed-wrap">
+              <label class="form-label" for="ts-mtu-fixed">Fixed MTU (576..1500)</label>
+              <input class="input mono" type="number" id="ts-mtu-fixed" min="576" max="1500" step="1" placeholder="1420">
+            </div>
+          </div>
+          <div class="stat-row"><span class="stat-label">Effective MTU</span> <span class="stat-value mono" id="ts-mtu-eff">—</span></div>
+          <div class="stat-row"><span class="stat-label">AP-side TCP MSS clamp</span> <span class="stat-value mono" id="ts-mtu-eff-mss">—</span></div>
+          <div class="stat-row"><span class="stat-label">AP-side PMTU (ICMP frag-needed)</span> <span class="stat-value mono" id="ts-mtu-eff-pmtu">—</span></div>
+          <div class="stat-row"><span class="stat-label">Source</span> <span class="stat-value mono" id="ts-mtu-source">—</span></div>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Applied live on save — no reboot needed.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-primary btn-md" id="ts-mtu-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ===== Peers ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -4730,6 +4770,24 @@
             body.innerHTML = html;
           }
 
+          /* MTU manager state — render mode + fixed_mtu input + live
+           * derived effective values. Hide the fixed-MTU input when mode
+           * is AUTO so the operator can't waste time editing a value
+           * that won't be used. */
+          var mtu = j.mtu || {};
+          var mtuMode = parseInt(mtu.mode || 0, 10);
+          document.getElementById('ts-mtu-mode').value  = String(mtuMode);
+          document.getElementById('ts-mtu-fixed').value = mtu.fixed_mtu || 1420;
+          document.getElementById('ts-mtu-fixed-wrap').style.display = (mtuMode === 1) ? '' : 'none';
+          document.getElementById('ts-mtu-eff').textContent      = (mtu.eff_mtu  || '—') + ' B';
+          document.getElementById('ts-mtu-eff-mss').textContent  = (mtu.eff_mss  || '—') + ' B';
+          document.getElementById('ts-mtu-eff-pmtu').textContent = (mtu.eff_pmtu || '—') + ' B';
+          document.getElementById('ts-mtu-source').textContent   = mtu.source || '—';
+          var mtuBadge = document.getElementById('ts-mtu-badge');
+          mtuBadge.textContent = (mtu.eff_mtu ? mtu.eff_mtu + ' B' : '—') + ' · ' + (mtu.source || '');
+          mtuBadge.className   = 'badge mono ' + (mtu.eff_mtu ? 'badge-success' : 'badge-neutral');
+          document.getElementById('ts-mtu-save').disabled = true;
+
           document.getElementById('ts-save').disabled = true;
         }).catch(function () {});
     }
@@ -4746,6 +4804,44 @@
       });
     });
     document.getElementById('ts-reload').addEventListener('click', loadTailscale);
+
+    /* MTU card — separate Save button + dirty-track, applies live. */
+    ['ts-mtu-mode', 'ts-mtu-fixed'].forEach(function (id) {
+      document.getElementById(id).addEventListener('change', function () {
+        document.getElementById('ts-mtu-save').disabled = false;
+        if (id === 'ts-mtu-mode') {
+          var m = parseInt(this.value, 10);
+          document.getElementById('ts-mtu-fixed-wrap').style.display = (m === 1) ? '' : 'none';
+        }
+      });
+      document.getElementById(id).addEventListener('input', function () {
+        document.getElementById('ts-mtu-save').disabled = false;
+      });
+    });
+    document.getElementById('ts-mtu-save').addEventListener('click', function () {
+      var btn = this; btn.disabled = true; btn.textContent = 'Saving…';
+      var body = {
+        mtu: {
+          mode:      parseInt(document.getElementById('ts-mtu-mode').value, 10) || 0,
+          fixed_mtu: parseInt(document.getElementById('ts-mtu-fixed').value, 10) || 1420
+        }
+      };
+      apiFetch('/api/tailscale', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body)
+      })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function () {
+          btn.textContent = 'Save';
+          showToast('success', 'MTU saved', 'Applied live.', 4000);
+          loadTailscale();
+        })
+        .catch(function (e) {
+          btn.disabled = false; btn.textContent = 'Save';
+          showToast('error', 'Save failed', e && e.message ? e.message : '', 5000);
+        });
+    });
 
     /* Regenerate identity — destructive: wipes the device's stored
      * machine/wg/disco keys + cached peers, then reboots. The next
