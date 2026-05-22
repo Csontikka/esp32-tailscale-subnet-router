@@ -73,6 +73,17 @@ CONFIG_MBEDTLS_CHACHAPOLY_C=y
 # task headroom.
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=6144
 
+# --- LwIP TCPIP task stack --------------------------------------------------
+# Default 3072 B overflows when an AP client's first DHCP exchange runs
+# through our two --wrap'd lwIP hooks (ip_napt_forward + ip4_route_src_hook)
+# on top of the microlink WG ingress path that's already on the tiT task.
+# Repro after factory_reset → boot → Pi joins AP → DHCP DISCOVER → PANIC
+# in the tiT task with vApplicationStackOverflowHook in the backtrace
+# (decoded via xtensa-esp32s3-elf-addr2line on the captured crash one-liner).
+# 6 KB matches the sys_evt bump above and gives the wrap callbacks
+# enough headroom for nested netif input/output paths.
+CONFIG_LWIP_TCPIP_TASK_STACK_SIZE=6144
+
 # --- Coredump to flash ------------------------------------------------------
 # After a PANIC/WDT the kernel writes a full backtrace + task state to
 # the dedicated "coredump" partition so the next boot can surface it
