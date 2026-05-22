@@ -1084,16 +1084,26 @@
       color: var(--fg-primary);
     }
 
+    .peer-ip-block {
+      /* IP on top, path tag below, both right-aligned. Stable width
+       * (set by the IP's longest possible mono form) keeps every
+       * row's right edge identical, so the path tag column doesn't
+       * drift as the IP text length varies between rows. */
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      flex-shrink: 0;
+      min-width: 7.5rem;
+      line-height: 1.2;
+    }
     .peer-ip {
       font-family: var(--font-mono);
       font-size: var(--text-xs);
       color: var(--fg-muted);
       white-space: nowrap;
     }
-
     .peer-path {
       font-size: var(--text-xs);
-      color: var(--fg-muted);
       white-space: nowrap;
     }
 
@@ -3125,14 +3135,29 @@
             peerList.innerHTML = '<div class="peer-row text-muted" style="padding:0.4rem 0;">No peers</div>';
             return;
           }
+          /* Strip the tailnet's shared FQDN tail from the visible
+           * hostname (every peer shares e.g. ".tailnet.ts.net" — pure
+           * noise). Full FQDN goes in a title attribute so a hover
+           * still confirms which peer is which when two short names
+           * collide. IP + path tag now share one right-aligned cell so
+           * the right edge stays stable across rows; the path label
+           * for an offline peer is hidden, the IP alone tells the
+           * story when the dot is grey. */
           peerList.innerHTML = peers.map(function (p) {
-            var pathLabel = !p.online ? '—' : (p.direct_path ? 'direct' : 'DERP');
-            var pathCls   = !p.online ? 'text-muted' : (p.direct_path ? 'text-success' : 'text-warning');
+            var fqdn  = p.hostname || '?';
+            var sname = fqdn.split('.')[0];
+            var pathHtml = '';
+            if (p.online) {
+              var pathCls = p.direct_path ? 'text-success' : 'text-warning';
+              pathHtml = '<span class="' + pathCls + '">' + (p.direct_path ? 'direct' : 'DERP') + '</span>';
+            }
             return '<div class="peer-row">'
               + '<span class="peer-online-dot ' + (p.online ? 'on' : 'off') + '"></span>'
-              + '<span class="peer-name' + (p.online ? '' : ' text-muted') + '">' + (p.hostname || '?') + '</span>'
-              + '<span class="peer-ip">' + (p.vpn_ip || '') + '</span>'
-              + '<span class="peer-path ' + pathCls + '">' + pathLabel + '</span>'
+              + '<span class="peer-name' + (p.online ? '' : ' text-muted') + '" title="' + escapeHtml(fqdn) + '">' + escapeHtml(sname) + '</span>'
+              + '<span class="peer-ip-block">'
+              +   '<span class="peer-ip">' + escapeHtml(p.vpn_ip || '') + '</span>'
+              +   (pathHtml ? '<span class="peer-path">' + pathHtml + '</span>' : '')
+              + '</span>'
               + '</div>';
           }).join('');
         })
@@ -4752,36 +4777,27 @@
           if (!peers.length) {
             body.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">No peers — enable Tailscale and complete auth to see your tailnet.</div>';
           } else {
-            /* Layout per row, left → right:
-             *   dot  short-hostname  [exit badge]  ...  IP   path-tag
-             *
-             * The dot + tag use fixed widths so the IP column right-edge
-             * is stable across every row (the variable-width IP text
-             * used to push the path tag left/right). Suffix
-             * ".tailnet.ts.net" is stripped from the visible hostname
-             * — every peer in the tailnet shares that tail. Full FQDN
-             * lands in a `title` attribute for hover-confirmation. */
-            var html = '<div class="table-wrap"><table class="table"><tbody>';
+            var html = '<div class="table-wrap"><table class="table"><thead><tr>'
+                     + '<th>Status</th><th>Hostname</th><th>Tailnet IP</th><th>Path</th><th>Subnet routes</th>'
+                     + '</tr></thead><tbody>';
             peers.forEach(function (p) {
-              var dotCls = p.online ? 'on' : 'off';
-              var pathTag = !p.online ? ''
-                  : (p.direct_path ? '<span class="text-success mono">direct</span>'
-                                   : '<span class="text-warning mono">DERP</span>');
+              var statusHtml = p.online
+                ? '<span class="peer-online-dot on"></span> online'
+                : '<span class="peer-online-dot off"></span> <span class="text-muted">offline</span>';
+              var pathHtml = !p.online
+                ? '<span class="text-muted">—</span>'
+                : (p.direct_path ? '<span class="text-success">direct</span>'
+                                 : '<span class="text-warning">DERP</span>');
               var routes = (p.subnet_routes || []).map(function (r) {
                 return escapeHtml(r.network) + '/' + r.prefix_len;
-              }).join(', ');
-              var fqdn  = p.hostname || '?';
-              var sname = fqdn.split('.')[0];
+              }).join(', ') || '—';
               var exitBadge = p.is_exit_node ? ' <span class="badge badge-info">exit</span>' : '';
-              var routesCell = routes
-                  ? '<td class="mono" style="color:var(--text-muted);">' + routes + '</td>'
-                  : '';
               html += '<tr>'
-                + '<td style="width:1.4rem;"><span class="peer-online-dot ' + dotCls + '"></span></td>'
-                + '<td title="' + escapeHtml(fqdn) + '">' + escapeHtml(sname) + exitBadge + '</td>'
-                + routesCell
-                + '<td class="mono" style="text-align:right; white-space:nowrap;">' + escapeHtml(p.vpn_ip || '') + '</td>'
-                + '<td style="text-align:right; white-space:nowrap; width:4.5rem;">' + pathTag + '</td>'
+                + '<td>' + statusHtml + '</td>'
+                + '<td>' + escapeHtml(p.hostname || '?') + exitBadge + '</td>'
+                + '<td class="mono">' + escapeHtml(p.vpn_ip || '') + '</td>'
+                + '<td>' + pathHtml + '</td>'
+                + '<td class="mono">' + routes + '</td>'
                 + '</tr>';
             });
             html += '</tbody></table></div>';
