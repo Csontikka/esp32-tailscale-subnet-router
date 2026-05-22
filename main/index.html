@@ -1678,7 +1678,7 @@
       <div class="card">
         <div class="card-header">
           <div class="card-header-left">
-            <span class="card-title">Device hostname</span>
+            <span class="card-title">Device-wide network</span>
           </div>
         </div>
         <div class="card-body">
@@ -1688,10 +1688,15 @@
               <input class="input" type="text" id="net-hostname" placeholder="esp32-tailscale" maxlength="63">
               <span class="form-hint">Used as DHCP Option 12 on every uplink and as the default Tailscale machine name.</span>
             </div>
+            <div class="form-group">
+              <label class="form-label" for="net-sta-ttl">STA outgoing TTL override (0 = off)</label>
+              <input class="input mono" type="number" id="net-sta-ttl" min="0" max="255" step="1" placeholder="0">
+              <span class="form-hint">Rewrites the TTL hop-limit on every outgoing IPv4 frame on the STA side. Typical use: set to <strong>64</strong> to cloak a tethered downstream as the phone's own traffic when the upstream carrier throttles hotspot-detected packets. Applied live on save.</span>
+            </div>
           </div>
         </div>
         <div class="form-footer">
-          <span class="form-footer-hint">Saved to NVS immediately; applied at next reboot.</span>
+          <span class="form-footer-hint">Hostname applies at next reboot; TTL override is live immediately.</span>
           <div class="form-footer-actions">
             <button class="btn btn-primary btn-md" id="net-hostname-save" disabled>Save</button>
           </div>
@@ -3780,6 +3785,7 @@
           s_net_list.forEach(function (n) { if (!n.static_ip) n.static_ip = {}; });
           renderNetList();
           document.getElementById('net-hostname').value     = d.hostname || '';
+          document.getElementById('net-sta-ttl').value      = (typeof d.sta_ttl_override === 'number') ? d.sta_ttl_override : 0;
           document.getElementById('net-hostname-save').disabled = true;
           document.getElementById('net-sta-save').disabled  = true;
 
@@ -3934,11 +3940,21 @@
 
     /* Hostname is a device-wide setting — its own little save handler so
      * the operator can update it without touching the WiFi list. */
-    document.getElementById('net-hostname').addEventListener('input', function () {
-      document.getElementById('net-hostname-save').disabled = false;
+    /* The hostname card now also holds the STA TTL override — wire both
+     * inputs to mark the shared Save button dirty, and submit both on
+     * click so a single save handles either change. */
+    ['net-hostname', 'net-sta-ttl'].forEach(function (id) {
+      document.getElementById(id).addEventListener('input', function () {
+        document.getElementById('net-hostname-save').disabled = false;
+      });
     });
     document.getElementById('net-hostname-save').addEventListener('click', function () {
-      saveNetwork(this, { hostname: document.getElementById('net-hostname').value.trim() });
+      var ttl = parseInt(document.getElementById('net-sta-ttl').value, 10);
+      if (!(ttl >= 0 && ttl <= 255)) ttl = 0;
+      saveNetwork(this, {
+        hostname:        document.getElementById('net-hostname').value.trim(),
+        sta_ttl_override: ttl
+      });
     });
 
     /* SSID scan picker — opens the scan modal, fetches /api/network/scan,

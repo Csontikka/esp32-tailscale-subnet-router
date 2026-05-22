@@ -357,6 +357,14 @@ static esp_err_t network_handler(httpd_req_t *req)
     /* Hostname is a device-wide setting (not per-network). */
     add_nvs_string(root, "hostname", "hostname");
 
+    /* STA TTL hop-limit override — 0 means passthrough (no rewrite),
+     * non-zero is the value the netif hook stamps on every outgoing
+     * IPv4 frame. Device-wide; lives next to hostname in the JSON. */
+    {
+        uint8_t ttl = netif_hooks_get_sta_ttl();
+        cJSON_AddNumberToObject(root, "sta_ttl_override", ttl);
+    }
+
     /* AP — same omit-rule on the password. */
     cJSON *ap = cJSON_CreateObject();
     add_nvs_string(ap, "ssid", "ap_ssid");
@@ -743,6 +751,18 @@ static esp_err_t network_save_handler(httpd_req_t *req)
     /* Hostname (device-wide) and AP block are still saved via the same
      * legacy NVS keys regardless of which write shape the client used. */
     save_str_if_present(root, "hostname", "hostname");
+
+    /* STA TTL override — clamp to 0..255 (u8) and apply LIVE so the
+     * change takes effect on the next outgoing IPv4 frame without
+     * waiting for a reboot. */
+    const cJSON *ttl_j = cJSON_GetObjectItem(root, "sta_ttl_override");
+    if (cJSON_IsNumber(ttl_j)) {
+        int v = (int)ttl_j->valuedouble;
+        if (v < 0)   v = 0;
+        if (v > 255) v = 255;
+        nvs_param_set_u8("sta_ttl", (uint8_t)v);
+        netif_hooks_set_sta_ttl((uint8_t)v);
+    }
 
     cJSON *ap = cJSON_GetObjectItem(root, "ap");
     if (cJSON_IsObject(ap)) {
