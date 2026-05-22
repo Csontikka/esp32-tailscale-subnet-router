@@ -2209,6 +2209,7 @@
             <div style="display:flex; gap:0.4rem;">
               <button class="btn btn-secondary btn-sm" id="log-pause">Pause</button>
               <button class="btn btn-secondary btn-sm" id="log-copy">Copy</button>
+              <button class="btn btn-secondary btn-sm" id="log-download">Download</button>
               <button class="btn btn-ghost btn-sm text-danger" id="log-clear">Clear</button>
             </div>
           </div>
@@ -2238,6 +2239,8 @@
           <span class="form-footer-hint">Cleared on demand; the next crash will repopulate it.</span>
           <div class="form-footer-actions">
             <button class="btn btn-secondary btn-md" id="precrash-refresh">Refresh</button>
+            <button class="btn btn-secondary btn-md" id="precrash-copy">Copy</button>
+            <button class="btn btn-secondary btn-md" id="precrash-download">Download</button>
             <button class="btn btn-ghost btn-md text-danger" id="precrash-clear">Clear</button>
           </div>
         </div>
@@ -5794,24 +5797,10 @@
       });
 
       document.getElementById('log-copy').addEventListener('click', function () {
-        var txt = pre.textContent;
-        if (navigator.clipboard && window.isSecureContext) {
-          navigator.clipboard.writeText(txt).then(
-            function () { showToast('success', 'Copied', txt.length + ' chars on the clipboard.', 3000); },
-            function () { fallback(); }
-          );
-        } else { fallback(); }
-        function fallback() {
-          /* http://192.168.4.1 isn't a secure context — fall back to a
-           * hidden textarea + execCommand. */
-          var ta = document.createElement('textarea');
-          ta.value = txt;
-          ta.style.position = 'fixed'; ta.style.left = '-9999px';
-          document.body.appendChild(ta); ta.select();
-          try { document.execCommand('copy'); showToast('success', 'Copied', txt.length + ' chars on the clipboard.', 3000); }
-          catch (e) { showToast('error', 'Copy failed', '', 4000); }
-          document.body.removeChild(ta);
-        }
+        copyToClipboard(pre.textContent);
+      });
+      document.getElementById('log-download').addEventListener('click', function () {
+        downloadText(buildLogFilename('live'), pre.textContent);
       });
 
       document.getElementById('log-clear').addEventListener('click', function () {
@@ -5909,7 +5898,52 @@
         .catch(function () { pre.textContent = '— fetch failed —'; })
         .finally(function () { btn.disabled = false; btn.textContent = 'Refresh'; });
     }
+    /* Shared clipboard + file-download helpers used by every log card.
+     * The clipboard API requires a secure context (https://) — falls back
+     * to a hidden-textarea + execCommand trick on plain http://. */
+    function copyToClipboard(txt) {
+      if (!txt) { showToast('info', 'Empty', 'Nothing to copy.', 3000); return; }
+      if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(txt).then(
+          function () { showToast('success', 'Copied', txt.length + ' chars on the clipboard.', 3000); },
+          function () { _copyFallback(txt); }
+        );
+      } else { _copyFallback(txt); }
+    }
+    function _copyFallback(txt) {
+      var ta = document.createElement('textarea');
+      ta.value = txt;
+      ta.style.position = 'fixed'; ta.style.left = '-9999px';
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand('copy'); showToast('success', 'Copied', txt.length + ' chars on the clipboard.', 3000); }
+      catch (e) { showToast('error', 'Copy failed', '', 4000); }
+      document.body.removeChild(ta);
+    }
+    function downloadText(filename, txt) {
+      if (!txt) { showToast('info', 'Empty', 'Nothing to download.', 3000); return; }
+      var blob = new Blob([txt], { type: 'text/plain;charset=utf-8' });
+      var url  = URL.createObjectURL(blob);
+      var a    = document.createElement('a');
+      a.href = url; a.download = filename;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 1000);
+      showToast('success', 'Saved', filename + ' (' + txt.length + ' B)', 3000);
+    }
+    /* Filename helper — host + role + ISO timestamp so multiple captures
+     * don't overwrite each other in the operator's Downloads folder. */
+    function buildLogFilename(role) {
+      var host = (location.hostname || 'esp32').replace(/[^\w.-]/g, '_');
+      var iso  = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').replace('Z', '');
+      return host + '_' + role + '_' + iso + '.log';
+    }
+
     document.getElementById('precrash-refresh').addEventListener('click', loadPrecrashLog);
+    document.getElementById('precrash-copy').addEventListener('click', function () {
+      copyToClipboard(document.getElementById('precrash-body').textContent);
+    });
+    document.getElementById('precrash-download').addEventListener('click', function () {
+      downloadText(buildLogFilename('precrash'), document.getElementById('precrash-body').textContent);
+    });
     document.getElementById('precrash-clear').addEventListener('click', function () {
       if (!confirm('Clear the pre-crash log buffer?')) return;
       var btn = this;
