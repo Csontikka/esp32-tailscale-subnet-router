@@ -2234,6 +2234,10 @@
             Snapshot of the log lines just before the previous boot died — survives PANIC, WDT and soft reset. Lost on cold power-on.
           </p>
           <pre id="precrash-body" style="background:var(--bg-page); border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; max-height:24rem; overflow:auto; font-family:var(--font-mono); font-size:0.8rem; line-height:1.4; margin:0; white-space:pre-wrap; word-break:break-all;">— nothing yet —</pre>
+          <span class="form-hint" style="margin-top:0.4rem; display:block;">
+            4 KB RTC slow-RAM ring. Backend captures the IDF panic dump (Backtrace + frames) on top of the regular ESP_LOG tail.
+            Level legend: <span class="lvl-E">E</span> errors, <span class="lvl-W">W</span> warnings, <span class="lvl-I">I</span> info, <span class="lvl-D">D</span>/<span class="lvl-V">V</span> debug.
+          </span>
         </div>
         <div class="form-footer">
           <span class="form-footer-hint">Cleared on demand; the next crash will repopulate it.</span>
@@ -5761,8 +5765,16 @@
               firstTick = false;
             }
             if (j.lost) {
-              pre.textContent = ''; carry = '';
-              emitLine('⚠ ring buffer wrapped past our cursor — view re-synced', '\n');
+              /* The device ring wrapped past our cursor — some lines
+               * happened on the device that we missed. The OLD viewer
+               * wiped the in-browser scrollback on every wrap, which
+               * destroyed minutes of accumulated history. Keep the
+               * already-rendered content intact, drop a one-line gap
+               * marker, then append the catch-up window (which may
+               * contain a duplicate of the most recent line — fine,
+               * cheaper than losing context). */
+              carry = '';
+              emitLine('⚠ ' + (j.lost_bytes || '?') + ' B lost on device — view continues from new tail', '\n');
               if (j.data) appendColored(j.data);
             } else if (j.data) {
               var stick = nearBottom();
@@ -5819,34 +5831,24 @@
 
     /* Colorise IDF-style log output for in-browser rendering. Backend
      * strips the ANSI escape sequences before storing (to save RTC
-     * RAM), so we re-add semantic colours client-side. Each line is
-     * either:
-     *   - A standard ESP_LOG line: starts with a level char + space +
-     *     "(uptime_ms) tag: body". We tint the whole line by level.
-     *   - A panic-handler line: "Guru Meditation", "Backtrace:",
-     *     "abort()…", register-dump, etc. Whole line in bold red so
-     *     the operator's eye snaps to the crash boundary inside a
-     *     pile of microlink heartbeats above it. */
+     * RAM), so we re-add semantic colours client-side. Uses the same
+     * .lvl-X CSS palette the live-log span renderer uses, so the two
+     * views look consistent. Panic-marker lines (Guru / Backtrace /
+     * abort / StackOverflow / CORRUPT HEAP / Rebooting) get an extra
+     * red+bold style so the eye snaps to the crash boundary inside a
+     * pile of microlink heartbeats. */
     function colorizeLog(text) {
       if (!text) return '';
       var PANIC_RE = /(Guru Meditation|Backtrace:|abort\(\)|panic\b|assert failed|StackOverflow|Rebooting\.\.\.|CORRUPT HEAP)/;
-      var LINE_RE  = /^([EWIDV]) \((\d+)\) ([^:]+):(.*)$/;
-      var COLORS = {
-        E: '#ef4444',  W: '#f59e0b',  I: '#10b981',
-        D: '#9ca3af',  V: '#6b7280'
-      };
+      var LEVEL_RE = /^([EWIDV]) \(/;
       return text.split('\n').map(function (line) {
         var safe = escapeHtml(line);
         if (PANIC_RE.test(line)) {
           return '<span style="color:#f87171;font-weight:600;">' + safe + '</span>';
         }
-        var m = line.match(LINE_RE);
+        var m = line.match(LEVEL_RE);
         if (m) {
-          var c = COLORS[m[1]] || '#d1d5db';
-          return '<span style="color:' + c + ';">' + escapeHtml(m[1]) + '</span>'
-               + ' <span style="color:#6b7280;">(' + escapeHtml(m[2]) + ')</span>'
-               + ' <span style="color:#a5b4fc;">' + escapeHtml(m[3]) + '</span>:'
-               + escapeHtml(m[4]);
+          return '<span class="lvl-' + m[1] + '">' + safe + '</span>';
         }
         return safe;
       }).join('\n');
