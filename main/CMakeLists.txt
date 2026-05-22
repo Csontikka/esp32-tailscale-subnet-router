@@ -59,3 +59,18 @@ target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=ip_napt_forward")
 # ESP-IDF default. The default symbol lives in
 # components/lwip/port/hooks/lwip_default_hooks.c.
 target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=ip4_route_src_hook")
+
+# Capture the IDF panic-handler output into the RTC pre-crash ring.
+# Wrap BOTH panic_print_str AND panic_print_char so we catch the calls
+# from external objects (panic_handler.c / panic_arch.c / eh_frame_parser.c
+# use panic_print_str; panic_print_hex/dec use panic_print_char). The
+# linker's --wrap only intercepts undefined references between objects,
+# so the intra-object panic_print_str → panic_print_char calls inside
+# panic.c stay unwrapped and don't double-count.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=panic_print_char")
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=panic_print_str")
+# panic_print_hex/dec call panic_print_char intra-object inside panic.c,
+# which --wrap cannot intercept. Wrap them too so the Backtrace's hex
+# addresses and the register-dump decimals actually appear in the ring.
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=panic_print_hex")
+target_link_libraries(${COMPONENT_LIB} INTERFACE "-Wl,--wrap=panic_print_dec")

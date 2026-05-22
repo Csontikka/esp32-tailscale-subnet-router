@@ -5828,22 +5828,78 @@
       });
     })();
 
-    /* Pre-crash buffer — fetched lazily by the Refresh button. The
-     * Clear button wipes the RTC ring so a fresh panic gets a clean
-     * window to fill. */
+    /* Colorise IDF-style log output for in-browser rendering. Backend
+     * strips the ANSI escape sequences before storing (to save RTC
+     * RAM), so we re-add semantic colours client-side. Each line is
+     * either:
+     *   - A standard ESP_LOG line: starts with a level char + space +
+     *     "(uptime_ms) tag: body". We tint the whole line by level.
+     *   - A panic-handler line: "Guru Meditation", "Backtrace:",
+     *     "abort()…", register-dump, etc. Whole line in bold red so
+     *     the operator's eye snaps to the crash boundary inside a
+     *     pile of microlink heartbeats above it. */
+    function colorizeLog(text) {
+      if (!text) return '';
+      var PANIC_RE = /(Guru Meditation|Backtrace:|abort\(\)|panic\b|assert failed|StackOverflow|Rebooting\.\.\.|CORRUPT HEAP)/;
+      var LINE_RE  = /^([EWIDV]) \((\d+)\) ([^:]+):(.*)$/;
+      var COLORS = {
+        E: '#ef4444',  W: '#f59e0b',  I: '#10b981',
+        D: '#9ca3af',  V: '#6b7280'
+      };
+      return text.split('\n').map(function (line) {
+        var safe = escapeHtml(line);
+        if (PANIC_RE.test(line)) {
+          return '<span style="color:#f87171;font-weight:600;">' + safe + '</span>';
+        }
+        var m = line.match(LINE_RE);
+        if (m) {
+          var c = COLORS[m[1]] || '#d1d5db';
+          return '<span style="color:' + c + ';">' + escapeHtml(m[1]) + '</span>'
+               + ' <span style="color:#6b7280;">(' + escapeHtml(m[2]) + ')</span>'
+               + ' <span style="color:#a5b4fc;">' + escapeHtml(m[3]) + '</span>:'
+               + escapeHtml(m[4]);
+        }
+        return safe;
+      }).join('\n');
+    }
+
+    /* Pre-crash buffer — fetched lazily by the Refresh button. We also
+     * peek at /api/system's reset_history[0] so we can render the
+     * coredump-derived crash one-liner (task + PC + first 3 backtrace
+     * frames) as a red header above the buffer. The IDF panic handler
+     * prints the "abort() was called at PC … on core …" line through
+     * an intra-object panic_print_str call that the linker --wrap
+     * doesn't reach, so this synthetic header makes up for it; the
+     * actual Backtrace text IS in the buffer because it comes from a
+     * different object (debug_helpers.c). */
     function loadPrecrashLog() {
       var btn = document.getElementById('precrash-refresh');
       var pre = document.getElementById('precrash-body');
       var b   = document.getElementById('precrash-badge');
       btn.disabled = true; btn.textContent = 'Loading…';
-      apiFetch('/api/log/precrash')
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
+      Promise.all([
+        apiFetch('/api/log/precrash').then(function (r) { return r.json(); }),
+        apiFetch('/api/system').then(function (r) { return r.json(); }).catch(function () { return {}; })
+      ]).then(function (parts) {
+          var d   = parts[0] || {};
+          var sys = parts[1] || {};
+          var last = (sys.reset_history || [])[0] || {};
+          var hdr  = '';
+          if (last.reason && (last.reason.indexOf('PANIC') >= 0 || last.reason.indexOf('WDT') >= 0)) {
+            var when = _fmtWallclock(last.wallclock);
+            var who  = last.who ? (' from ' + escapeHtml(last.who)) : '';
+            hdr = '<span style="color:#f87171;font-weight:600;">*** Last crash (' + escapeHtml(last.reason) + when + (when === '—' ? '' : ', ' + when) + who + ') ***</span>\n'
+                + (last.crash ? '<span style="color:#fca5a5;">' + escapeHtml(last.crash) + '</span>\n\n' : '\n');
+          }
           if (d.have && d.size > 0) {
-            pre.textContent = d.text || '— empty —';
+            pre.innerHTML = hdr + colorizeLog(d.text || '— empty —');
             b.className = 'badge badge-warning';
             b.textContent = d.size + ' B';
             pre.scrollTop = pre.scrollHeight;
+          } else if (hdr) {
+            pre.innerHTML = hdr + '<span style="color:#9ca3af;">— RTC buffer is empty (cleared or device cold-booted) —</span>';
+            b.className = 'badge badge-danger';
+            b.textContent = 'crash header only';
           } else {
             pre.textContent = '— no pre-crash data (device booted cleanly) —';
             b.className = 'badge badge-success';
