@@ -1556,10 +1556,11 @@
           <div class="stat-list">
             <div class="stat-row">
               <span class="stat-label">Tailnet IP</span>
-              <span class="stat-value mono" style="display:flex; flex-direction:column; align-items:flex-end; line-height:1.25;">
-                <span id="ts-ip">—</span>
-                <span id="ts-tailnet-name" style="font-size:0.78em; color:var(--text-muted); display:none;"></span>
-              </span>
+              <span class="stat-value mono" id="ts-ip">—</span>
+            </div>
+            <div class="stat-row" id="ts-tailnet-name-row" style="display:none;">
+              <span class="stat-label">Tailnet name</span>
+              <span class="stat-value mono" id="ts-tailnet-name">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Hostname</span>
@@ -1949,6 +1950,10 @@
           <div class="stat-row">
             <span class="stat-label">Tailnet IP</span>
             <span class="stat-value mono" id="ts-tunnel-ip">—</span>
+          </div>
+          <div class="stat-row" id="ts-tunnel-tailnet-name-row" style="display:none;">
+            <span class="stat-label">Tailnet name</span>
+            <span class="stat-value mono" id="ts-tunnel-tailnet-name">—</span>
           </div>
           <div class="stat-row">
             <span class="stat-label">Node identity</span>
@@ -3152,17 +3157,18 @@
            * tailnet shares the same suffix, so the first one is enough.
            * Hidden when no peer exposes a dotted hostname. */
           (function () {
-            var tn = document.getElementById('ts-tailnet-name');
-            if (!tn) return;
+            var tn  = document.getElementById('ts-tailnet-name');
+            var row = document.getElementById('ts-tailnet-name-row');
+            if (!tn || !row) return;
             var withSuffix = peers.find(function (p) {
               return (p.hostname || '').indexOf('.') > 0;
             });
             if (withSuffix) {
               var dot = withSuffix.hostname.indexOf('.');
               tn.textContent = withSuffix.hostname.substring(dot + 1);
-              tn.style.display = '';
+              row.style.display = '';
             } else {
-              tn.style.display = 'none';
+              row.style.display = 'none';
             }
           })();
           peerList.innerHTML = peers.map(function (p) {
@@ -4753,6 +4759,25 @@
 
           /* Tailnet IP + header badge. */
           document.getElementById('ts-tunnel-ip').textContent = r.tunnel_ip || '—';
+          /* Tailnet name (MagicDNS suffix) underneath the tunnel IP —
+           * same derivation as the Status-page card: take the first
+           * peer that exposes a dotted hostname and strip everything
+           * up to and including the first dot. */
+          (function () {
+            var tn  = document.getElementById('ts-tunnel-tailnet-name');
+            var row = document.getElementById('ts-tunnel-tailnet-name-row');
+            if (!tn || !row) return;
+            var withSuffix = peers.find(function (p) {
+              return (p.hostname || '').indexOf('.') > 0;
+            });
+            if (withSuffix) {
+              var dot = withSuffix.hostname.indexOf('.');
+              tn.textContent = withSuffix.hostname.substring(dot + 1);
+              row.style.display = '';
+            } else {
+              row.style.display = 'none';
+            }
+          })();
           /* Detailed identity row in the Tailscale config card — pubkey
            * prefix in mono so it's eyeball-comparable against
            * "headscale nodes list" output. */
@@ -4799,13 +4824,17 @@
           if (!peers.length) {
             body.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">No peers — enable Tailscale and complete auth to see your tailnet.</div>';
           } else {
+            /* Operator wants the same compact look the Status-page
+             * peer mini-list has: status as a coloured dot (no text),
+             * hostname stripped of the tailnet's shared FQDN tail,
+             * and Exit promoted to its own column AFTER Subnet routes
+             * so the column header tells the operator what the badge
+             * means without hovering. */
             var html = '<div class="table-wrap"><table class="table"><thead><tr>'
-                     + '<th>Status</th><th>Hostname</th><th>Tailnet IP</th><th>Path</th><th>Subnet routes</th>'
+                     + '<th></th><th>Hostname</th><th>Tailnet IP</th><th>Path</th><th>Subnet routes</th><th>Exit</th>'
                      + '</tr></thead><tbody>';
             peers.forEach(function (p) {
-              var statusHtml = p.online
-                ? '<span class="peer-online-dot on"></span> online'
-                : '<span class="peer-online-dot off"></span> <span class="text-muted">offline</span>';
+              var dotCls = p.online ? 'on' : 'off';
               var pathHtml = !p.online
                 ? '<span class="text-muted">—</span>'
                 : (p.direct_path ? '<span class="text-success">direct</span>'
@@ -4813,13 +4842,16 @@
               var routes = (p.subnet_routes || []).map(function (r) {
                 return escapeHtml(r.network) + '/' + r.prefix_len;
               }).join(', ') || '—';
-              var exitBadge = p.is_exit_node ? ' <span class="badge badge-info">exit</span>' : '';
+              var fqdn  = p.hostname || '?';
+              var sname = fqdn.split('.')[0];
+              var exitCell = p.is_exit_node ? '<span class="badge badge-info">exit</span>' : '';
               html += '<tr>'
-                + '<td>' + statusHtml + '</td>'
-                + '<td>' + escapeHtml(p.hostname || '?') + exitBadge + '</td>'
+                + '<td style="width:1.4rem;"><span class="peer-online-dot ' + dotCls + '"></span></td>'
+                + '<td title="' + escapeHtml(fqdn) + '">' + escapeHtml(sname) + '</td>'
                 + '<td class="mono">' + escapeHtml(p.vpn_ip || '') + '</td>'
                 + '<td>' + pathHtml + '</td>'
                 + '<td class="mono">' + routes + '</td>'
+                + '<td>' + exitCell + '</td>'
                 + '</tr>';
             });
             html += '</tbody></table></div>';
