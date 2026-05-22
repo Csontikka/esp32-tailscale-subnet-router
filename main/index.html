@@ -952,10 +952,12 @@
     .section-heading {
       font-size: var(--text-xs);
       font-weight: var(--weight-semibold);
-      color: var(--fg-muted);
+      color: var(--fg-secondary);
       text-transform: uppercase;
-      letter-spacing: 0.07em;
-      padding: var(--sp-3) var(--sp-4) var(--sp-2);
+      letter-spacing: 0.08em;
+      padding: var(--sp-3) var(--sp-3) var(--sp-2);
+      margin-left: calc(-1 * var(--sp-1));
+      border-left: 2px solid var(--accent-border);
     }
 
     /* =====================================================================
@@ -1553,22 +1555,28 @@
             </div>
             <span class="badge badge-neutral" id="ts-badge">—</span>
           </div>
+          <!-- Global (tailnet-wide) -->
+          <div class="section-heading">Global</div>
           <div class="stat-list">
-            <div class="stat-row">
-              <span class="stat-label">Tailscale node IP</span>
-              <span class="stat-value mono" id="ts-ip">—</span>
-            </div>
             <div class="stat-row" id="ts-tailnet-name-row" style="display:none;">
               <span class="stat-label">Tailnet name</span>
               <span class="stat-value mono" id="ts-tailnet-name">—</span>
             </div>
             <div class="stat-row">
-              <span class="stat-label">Hostname</span>
-              <span class="stat-value mono" id="ts-hostname-summary">—</span>
-            </div>
-            <div class="stat-row">
               <span class="stat-label">Peers online</span>
               <span class="stat-value mono" id="ts-peers">—</span>
+            </div>
+          </div>
+          <!-- Node (this device) -->
+          <div class="section-heading">Node</div>
+          <div class="stat-list">
+            <div class="stat-row">
+              <span class="stat-label">Tailscale node IP</span>
+              <span class="stat-value mono" id="ts-ip">—</span>
+            </div>
+            <div class="stat-row">
+              <span class="stat-label">Hostname</span>
+              <span class="stat-value mono" id="ts-hostname-summary">—</span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Advertised routes</span>
@@ -3150,6 +3158,14 @@
         .then(function (d) {
           var peerList = document.getElementById('ts-peer-list');
           var peers = (d && d.peers) || [];
+          /* Alphabetic order by short hostname — what the operator
+           * scans first. Numeric-aware (`tailscale-2` before
+           * `tailscale-10`), case-insensitive. */
+          peers = peers.slice().sort(function (a, b) {
+            var an = (a.hostname || '').split('.')[0];
+            var bn = (b.hostname || '').split('.')[0];
+            return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+          });
           if (!peers.length) {
             peerList.innerHTML = '<div class="peer-row text-muted" style="padding:0.4rem 0;">No peers</div>';
             return;
@@ -3180,6 +3196,25 @@
               row.style.display = '';
             } else {
               row.style.display = 'none';
+            }
+          })();
+          /* Replace the Exit-node IP in the Status card with the short
+           * hostname of the matching peer — operators read names, not
+           * tail-net addresses. Falls back to the IP if the peer isn't
+           * in the list (e.g. offline exit-node that the control plane
+           * hasn't echoed back). */
+          (function () {
+            var ex = document.getElementById('ts-exit');
+            if (!ex) return;
+            var exitIp = (d && d.settings && d.settings.exit_node_ip) || '';
+            if (!exitIp) { ex.textContent = '—'; ex.title = ''; return; }
+            var match = peers.find(function (p) { return p.vpn_ip === exitIp; });
+            if (match && match.hostname) {
+              ex.textContent = match.hostname.split('.')[0];
+              ex.title       = match.hostname + ' (' + exitIp + ')';
+            } else {
+              ex.textContent = exitIp;
+              ex.title       = '';
             }
           })();
           peerList.innerHTML = peers.map(function (p) {
@@ -4732,6 +4767,14 @@
           var s = (d && d.settings) || {};
           var r = (d && d.runtime)  || {};
           var peers = (d && d.peers) || [];
+          /* Alphabetic order by short hostname — what the operator
+           * scans first. Numeric-aware (`tailscale-2` before
+           * `tailscale-10`), case-insensitive. */
+          peers = peers.slice().sort(function (a, b) {
+            var an = (a.hostname || '').split('.')[0];
+            var bn = (b.hostname || '').split('.')[0];
+            return an.localeCompare(bn, undefined, { numeric: true, sensitivity: 'base' });
+          });
 
           /* Settings form. */
           document.getElementById('ts_enabled_on').checked  = !!s.enabled;
