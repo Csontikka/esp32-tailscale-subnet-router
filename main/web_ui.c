@@ -1992,8 +1992,13 @@ static esp_err_t log_raw_handler(httpd_req_t *req)
         free(q);
     }
 
+    /* Scratch matches the full ring so a single poll can return
+     * everything written since the client's cursor — otherwise
+     * log_capture_read_since truncates to the newest scratch_sz
+     * bytes, and the handler's "lost" check (caller fell behind)
+     * fires spuriously on every burst that exceeds the scratch. */
     size_t cap = log_capture_capacity();
-    size_t scratch_sz = cap < 4096 ? cap : 4096;
+    size_t scratch_sz = cap;
     char *scratch = malloc(scratch_sz + 1);
     if (!scratch) {
         httpd_resp_set_status(req, "500 Internal Server Error");
@@ -2003,7 +2008,16 @@ static esp_err_t log_raw_handler(httpd_req_t *req)
 
     uint64_t new_seq = 0;
     size_t n_raw = log_capture_read_since(since, scratch, scratch_sz + 1, &new_seq);
-    bool lost = (since != 0) && ((new_seq - n_raw) > since);
+    /* "lost" means the ring's oldest preserved byte is newer than
+     * what the caller already saw, i.e. they fell behind the ring
+     * wrap. The previous formulation (new_seq - n_raw > since)
+     * fired any time the scratch buffer was smaller than the gap,
+     * which the bigger scratch above now prevents — but the more
+     * accurate definition is "is the caller's cursor BEFORE the
+     * oldest byte we kept?" which is what we test here. */
+    uint64_t oldest = (new_seq > (uint64_t)log_capture_size())
+                    ? new_seq - (uint64_t)log_capture_size() : 0;
+    bool lost = (since != 0) && (since < oldest);
 
     httpd_resp_set_type(req, "application/json; charset=utf-8");
     char hdr[160];
