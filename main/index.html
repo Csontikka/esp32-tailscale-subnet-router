@@ -1298,7 +1298,7 @@
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M14.7 6.3a1 1 0 000 1.4l1.6 1.6a1 1 0 001.4 0l3.77-3.77a6 6 0 01-7.94 7.94l-6.91 6.91a2.12 2.12 0 01-3-3l6.91-6.91a6 6 0 017.94-7.94l-3.76 3.76z"/>
         </svg>
-        Tools
+        Diagnostics
       </a>
       <a class="nav-tab" role="tab" data-page="system" aria-selected="false" href="#system">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2068,8 +2068,8 @@
     <div class="page-section" id="page-tools">
       <div class="page-header">
         <div class="page-header-left">
-          <h1 class="page-title">Tools</h1>
-          <p class="page-subtitle">Diagnostics — route explain, scan, log viewer</p>
+          <h1 class="page-title">Diagnostics</h1>
+          <p class="page-subtitle">Route explain, scan, ping / traceroute, PCAP, live log, pre-crash log, reset history</p>
         </div>
       </div>
 
@@ -2259,6 +2259,27 @@
           </div>
         </div>
       </div>
+
+      <!-- ===== Reset history (moved here from System — it's a diagnostic) ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Reset history</span>
+          </div>
+          <span class="badge badge-neutral" id="sys-hist-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">Last 10 boots — most recent first. <strong>FLASH</strong>/<strong>SW</strong>/<strong>POWERON</strong> are clean; <strong>PANIC</strong>/<strong>*_WDT</strong> rows include a one-line crash summary recovered from the core dump.</p>
+          <div style="overflow-x:auto;">
+            <table class="table mono" id="sys-hist-table" style="width:100%;">
+              <thead>
+                <tr><th style="white-space:nowrap;">When</th><th>Reason</th><th>Who</th><th>Crash</th></tr>
+              </thead>
+              <tbody id="sys-hist-tbody"><tr><td colspan="4" class="form-hint">—</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- =================================================================
@@ -2268,7 +2289,7 @@
       <div class="page-header">
         <div class="page-header-left">
           <h1 class="page-title">System</h1>
-          <p class="page-subtitle">Firmware info, telemetry, syslog, password, danger zone</p>
+          <p class="page-subtitle">Firmware info, telemetry, syslog, password, OTA, about, danger zone</p>
         </div>
         <div class="page-header-actions">
           <button class="btn btn-secondary btn-md" id="sys-reload">Refresh</button>
@@ -2434,27 +2455,6 @@
         </div>
       </div>
 
-      <!-- ===== Reset history ===== -->
-      <div class="card mt-4">
-        <div class="card-header">
-          <div class="card-header-left">
-            <span class="card-title">Reset history</span>
-          </div>
-          <span class="badge badge-neutral" id="sys-hist-badge">—</span>
-        </div>
-        <div class="card-body">
-          <p class="form-hint" style="margin:0 0 0.75rem 0;">Last 10 boots — most recent first. <strong>FLASH</strong>/<strong>SW</strong>/<strong>POWERON</strong> are clean; <strong>PANIC</strong>/<strong>*_WDT</strong> rows include a one-line crash summary recovered from the core dump.</p>
-          <div style="overflow-x:auto;">
-            <table class="table mono" id="sys-hist-table" style="width:100%;">
-              <thead>
-                <tr><th style="white-space:nowrap;">When</th><th>Reason</th><th>Who</th><th>Crash</th></tr>
-              </thead>
-              <tbody id="sys-hist-tbody"><tr><td colspan="4" class="form-hint">—</td></tr></tbody>
-            </table>
-          </div>
-        </div>
-      </div>
-
       <!-- ===== Web session ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -2521,16 +2521,34 @@
         </div>
       </div>
 
-      <!-- ===== Support ===== -->
+      <!-- ===== About + License ===== -->
       <div class="card mt-4">
         <div class="card-header">
           <div class="card-header-left">
-            <span class="card-title">Support the project</span>
+            <span class="card-title">About</span>
+          </div>
+          <span class="badge badge-neutral mono">MIT</span>
+        </div>
+        <div class="card-body">
+          <p style="margin:0 0 0.5rem 0;"><strong>esp32-tailscale-subnet-router</strong> — a single-board ESP32-S3 router that joins your IoT subnet directly to a Tailscale (or Headscale) tailnet, so remote peers can reach LAN devices behind a CGNAT or a phone hotspot without port forwarding.</p>
+          <div class="stat-row"><span class="stat-label">Source</span><span class="stat-value mono"><a href="https://github.com/Csontikka/esp32-tailscale-subnet-router" target="_blank" rel="noopener" style="color:var(--accent);">github.com/Csontikka/esp32-tailscale-subnet-router</a></span></div>
+          <div class="stat-row"><span class="stat-label">Issues</span><span class="stat-value mono"><a href="https://github.com/Csontikka/esp32-tailscale-subnet-router/issues" target="_blank" rel="noopener" style="color:var(--accent);">github.com/&hellip;/issues</a></span></div>
+          <div class="stat-row"><span class="stat-label">Tailscale stack</span><span class="stat-value mono"><a href="https://github.com/Csontikka/microlink" target="_blank" rel="noopener" style="color:var(--accent);">Csontikka/microlink</a> (userspace WireGuard + DERP + DISCO)</span></div>
+          <div class="stat-row"><span class="stat-label">License</span><span class="stat-value mono">MIT — see LICENSE in the repo</span></div>
+          <p class="form-hint" style="margin-top:0.5rem;">No personal data leaves the device unless telemetry is enabled (see the card below — and even then only an anonymous SHA-256 hash + boot/flash counters + firmware version are sent).</p>
+        </div>
+      </div>
+
+      <!-- ===== Support ===== -->
+      <div class="card card-stripe-accent mt-4" style="border-color:var(--accent); box-shadow:inset 4px 0 0 var(--accent);">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title" style="color:var(--accent);">☕ Support the project</span>
           </div>
         </div>
         <div class="card-body" style="text-align:center;">
           <p style="margin:0 0 0.75rem 0; color:var(--text-secondary);">If this firmware saved you a router purchase or an afternoon of debugging, you can chip in:</p>
-          <a href="https://www.buymeacoffee.com/csontikka" target="_blank" rel="noopener" class="btn btn-secondary btn-md" style="text-decoration:none;">
+          <a href="https://www.buymeacoffee.com/csontikka" target="_blank" rel="noopener" class="btn btn-primary btn-md" style="text-decoration:none;">
             ☕ Buy me a coffee
           </a>
         </div>
