@@ -17,6 +17,7 @@
 #include "lwip/ip4_addr.h"
 #include "web_ui.h"
 #include "tailscale_config.h"
+#include "tailscale_mtu.h"
 #include "nvs_params.h"
 #include "microlink.h"
 #include "dns_relay.h"
@@ -2198,6 +2199,23 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
     }
     cJSON_AddItemToObject(root, "runtime", runtime);
 
+    /* MTU / MSS / PMTU manager — persisted fields (mode, fixed_mtu)
+     * plus the live-derived effective values the AP-side netif hooks
+     * actually enforce on every TCP SYN + DF=1 packet. source tells
+     * the operator why the eff_mtu is what it is ("auto-direct" /
+     * "auto-DERP" / "user" / "off"). */
+    {
+        ts_mtu_state_t mst = tailscale_mtu_get();
+        cJSON *mtu = cJSON_CreateObject();
+        cJSON_AddNumberToObject(mtu, "mode",      (int)mst.mode);
+        cJSON_AddNumberToObject(mtu, "fixed_mtu", mst.fixed_mtu);
+        cJSON_AddNumberToObject(mtu, "eff_mtu",   mst.eff_mtu);
+        cJSON_AddNumberToObject(mtu, "eff_mss",   mst.eff_mss);
+        cJSON_AddNumberToObject(mtu, "eff_pmtu",  mst.eff_pmtu);
+        cJSON_AddStringToObject(mtu, "source",    mst.source ? mst.source : "");
+        cJSON_AddItemToObject(root, "mtu", mtu);
+    }
+
     /* Peers — empty array when microlink isn't running. */
     cJSON *peers = cJSON_CreateArray();
     struct microlink_s *ml = tailscale_get_microlink();
@@ -2364,6 +2382,29 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
                 tailscale_exit_node_ip = hbo;
             }
         }
+    }
+
+    /* MTU/MSS/PMTU manager — operator can pick AUTO (peer-aware,
+     * 1420 when at least one peer is direct, 1280 when only DERP) or
+     * FIXED with a hand-picked MTU in [576..1500]. tailscale_mtu_set
+     * persists to NVS and immediately recomputes eff_mtu / eff_mss /
+     * eff_pmtu — change is live without reboot. */
+    const cJSON *mtu_j = cJSON_GetObjectItem(root, "mtu");
+    if (cJSON_IsObject(mtu_j)) {
+        ts_mtu_state_t cur = tailscale_mtu_get();
+        ts_mtu_mode_t  mode      = cur.mode;
+        uint16_t       fixed_mtu = cur.fixed_mtu;
+        const cJSON *m  = cJSON_GetObjectItem(mtu_j, "mode");
+        const cJSON *fm = cJSON_GetObjectItem(mtu_j, "fixed_mtu");
+        if (cJSON_IsNumber(m)) {
+            int v = (int)m->valuedouble;
+            if (v == TS_MTU_AUTO || v == TS_MTU_FIXED) mode = (ts_mtu_mode_t)v;
+        }
+        if (cJSON_IsNumber(fm)) {
+            int v = (int)fm->valuedouble;
+            if (v >= TS_MTU_MIN && v <= TS_MTU_MAX) fixed_mtu = (uint16_t)v;
+        }
+        tailscale_mtu_set(mode, fixed_mtu);
     }
 
     cJSON_Delete(root);
