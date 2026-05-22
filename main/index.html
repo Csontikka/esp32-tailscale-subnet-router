@@ -1555,7 +1555,7 @@
           </div>
           <div class="stat-list">
             <div class="stat-row">
-              <span class="stat-label">Tailnet IP</span>
+              <span class="stat-label">Tailscale node IP</span>
               <span class="stat-value mono" id="ts-ip">—</span>
             </div>
             <div class="stat-row" id="ts-tailnet-name-row" style="display:none;">
@@ -1948,7 +1948,7 @@
         </div>
         <div class="card-body">
           <div class="stat-row">
-            <span class="stat-label">Tailnet IP</span>
+            <span class="stat-label">Tailscale node IP</span>
             <span class="stat-value mono" id="ts-tunnel-ip">—</span>
           </div>
           <div class="stat-row" id="ts-tunnel-tailnet-name-row" style="display:none;">
@@ -3084,7 +3084,18 @@
         tsBadge.textContent = 'Off';
       }
       document.getElementById('ts-ip').textContent       = ts.tunnel_ip || '—';
-      document.getElementById('ts-hostname-summary').textContent = ts.hostname || '—';
+      /* Empty hostname means the operator hasn't set ts_hostname in NVS
+       * — the control plane assigns a default in that case. Make the
+       * UX explicit instead of rendering a bare em-dash that's
+       * indistinguishable from "loading". */
+      var hsEl = document.getElementById('ts-hostname-summary');
+      if (ts.hostname) {
+        hsEl.textContent = ts.hostname;
+        hsEl.title       = '';
+      } else {
+        hsEl.textContent = '(not set — Tailscale tab → Hostname)';
+        hsEl.title       = 'Empty — the control plane will assign one. Override in the Tailscale tab.';
+      }
       document.getElementById('ts-peers').textContent    = (ts.peers_total != null ? ts.peers_online + ' / ' + ts.peers_total : '—');
       document.getElementById('ts-routes-summary').textContent = ts.advertise_routes || '—';
       document.getElementById('ts-exit').textContent     = ts.exit_node_ip || '—';
