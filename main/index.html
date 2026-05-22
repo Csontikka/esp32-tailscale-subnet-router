@@ -2247,8 +2247,7 @@
             <span class="card-title">Live log</span>
           </div>
           <div style="display:flex; gap:0.5rem; align-items:center;">
-            <button class="btn btn-secondary btn-sm" id="log-pause">Pause</button>
-            <span class="badge badge-success" id="log-state">● live</span>
+            <span class="badge badge-success" id="log-state" title="Click to pause" style="cursor:pointer; user-select:none;">● live</span>
           </div>
         </div>
         <div class="card-body" style="padding-top:0.5rem;">
@@ -5936,11 +5935,19 @@
        * the device while parked elsewhere. */
       setTimeout(poll, 500);
 
-      document.getElementById('log-pause').addEventListener('click', function () {
+      /* The live/paused badge IS the pause toggle now — clicking it
+       * flips the polling state and updates the badge text/colour +
+       * tooltip in one place. The dedicated Pause button is gone:
+       * with the badge already showing the state, a second control
+       * was a redundant noun for the same verb. */
+      state.addEventListener('click', function () {
         paused = !paused;
-        this.textContent = paused ? 'Resume' : 'Pause';
         state.textContent = paused ? '● paused' : '● live';
         state.className   = paused ? 'badge badge-warning' : 'badge badge-success';
+        state.title       = paused ? 'Click to resume' : 'Click to pause';
+        /* re-apply cursor pointer in case className wiped inline styles */
+        state.style.cursor      = 'pointer';
+        state.style.userSelect  = 'none';
       });
 
       document.getElementById('log-copy').addEventListener('click', function () {
