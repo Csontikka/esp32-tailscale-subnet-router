@@ -2201,23 +2201,28 @@
           <div class="card-header-left">
             <span class="card-title">Live log</span>
           </div>
-          <span class="badge badge-success" id="log-state">● live</span>
+          <div style="display:flex; gap:0.5rem; align-items:center;">
+            <button class="btn btn-secondary btn-sm" id="log-pause">Pause</button>
+            <span class="badge badge-success" id="log-state">● live</span>
+          </div>
         </div>
         <div class="card-body" style="padding-top:0.5rem;">
           <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:0.5rem; flex-wrap:wrap; gap:0.5rem;">
             <span class="form-hint mono"><span id="log-size">—</span> / <span id="log-cap">—</span> bytes</span>
-            <div style="display:flex; gap:0.4rem;">
-              <button class="btn btn-secondary btn-sm" id="log-pause">Pause</button>
-              <button class="btn btn-secondary btn-sm" id="log-copy">Copy</button>
-              <button class="btn btn-secondary btn-sm" id="log-download">Download</button>
-              <button class="btn btn-ghost btn-sm text-danger" id="log-clear">Clear</button>
-            </div>
+            <button class="btn btn-ghost btn-sm text-danger" id="log-clear">Clear</button>
           </div>
           <pre id="tool-log-body" data-seq="0" style="background:var(--bg-page); border:1px solid var(--border); border-radius:var(--radius-md); padding:0.75rem; max-height:32rem; overflow:auto; font-family:var(--font-mono); font-size:0.8rem; line-height:1.4; margin:0; white-space:pre-wrap; word-break:break-all;">— waiting for first tail —</pre>
           <span class="form-hint" style="margin-top:0.4rem; display:block;">
             16 KB ring buffer of every ESP_LOG line (serial keeps the same stream). Polls every 500 ms; older lines roll off when the ring wraps.
             Level legend: <span class="lvl-E">E</span> errors, <span class="lvl-W">W</span> warnings, <span class="lvl-I">I</span> info, <span class="lvl-D">D</span>/<span class="lvl-V">V</span> debug.
           </span>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Buffer keeps growing in the browser even when the device ring wraps; only loss markers indicate dropped lines on the wire.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-secondary btn-md" id="log-copy">Copy</button>
+            <button class="btn btn-secondary btn-md" id="log-download">Download</button>
+          </div>
         </div>
       </div>
 
