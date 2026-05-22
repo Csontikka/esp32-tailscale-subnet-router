@@ -138,6 +138,40 @@ functionally fine, just not the one the Pi is talking to. To fully
 flush the NM cache on the Pi side, manually
 `sudo rm /var/lib/NetworkManager/internal-*.lease` and reconnect.
 
+### `system_extras` — features added after the original test_lib
+
+Coverage for everything that landed on the System / Network / Tailscale
+tabs after the initial test_lib was written. Each check is a JSON
+round-trip via `/api/*` — no Pi, no DK side-channel required.
+
+* **/api/system shape** — top-level `version` is non-empty.
+* **reset_history[]** — present + `reason / wallclock / who / crash`
+  keys on `[0]`.
+* **ota{}** — block present with `auto_enabled / poll_s / last_check /
+  last_version / last_status`; toggle `auto_enabled`, read it back,
+  restore.
+* **/api/system/ota/poll** — endpoint returns a `status` field
+  (typically `"github http 404"` until a release is published).
+* **/api/log/precrash shape** — `have` + `size` keys present
+  (content depends on whether the previous boot crashed).
+* **STA TTL override** — POST `sta_ttl_override=64` via /api/network,
+  read it back, restore.
+* **WPA2-Enterprise eap{}** — POST a fake EAP config for slot 0
+  (method=PEAP / phase2=MSCHAPv2 / identity + username + password) and
+  verify `method=1` + `has_password=true` + `identity` survive the
+  round-trip. Password is never echoed (security); only `has_password`
+  is observable.
+* **MTU manager** — POST mode=FIXED + fixed_mtu=1280 via /api/tailscale,
+  verify `eff_mtu=1280`, `source="user"`, and `eff_mss < eff_mtu`.
+* **Reset history persistence across SW reboot** — capture the current
+  `hist[0]`, POST /api/system/restart, wait ~18 s, re-login, verify
+  the prior `hist[0]` now sits at `hist[1]` (the recorder shifted it
+  down + wrote a new SW row on top). Gated on `TEST_QUICK=0`; skip with
+  `TEST_QUICK=1` if you don't want the device to bounce.
+
+The reboot test is the only invasive one. Everything else is a same-
+session API round-trip with automatic restore.
+
 ### `routing` — the 4×2 scenario matrix
 The headline test. Runs every direction twice (once with no exit
 node configured on the ESP, once with one). The directions are:

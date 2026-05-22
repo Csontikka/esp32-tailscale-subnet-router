@@ -23,13 +23,14 @@ from test_lib.common import Context, Result, render_summary
 
 # (module_id, dotted-import) — order = run order
 MODULES = [
-    ("spa",       "test_lib.spa"),
-    ("network",   "test_lib.network"),
-    ("firewall",  "test_lib.firewall"),
-    ("tailscale", "test_lib.tailscale"),
-    ("pi",        "test_lib.pi"),
-    ("routing",   "test_lib.routing"),
-    ("dns_relay", "test_lib.dns_relay"),
+    ("spa",            "test_lib.spa"),
+    ("network",        "test_lib.network"),
+    ("firewall",       "test_lib.firewall"),
+    ("tailscale",      "test_lib.tailscale"),
+    ("pi",             "test_lib.pi"),
+    ("routing",        "test_lib.routing"),
+    ("dns_relay",      "test_lib.dns_relay"),
+    ("system_extras",  "test_lib.system_extras"),
 ]
 
 
