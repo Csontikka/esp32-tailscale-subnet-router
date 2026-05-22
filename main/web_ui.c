@@ -249,14 +249,20 @@ static esp_err_t status_handler(httpd_req_t *req)
         ip4_hbo_to_str(tailscale_exit_node_ip, buf, sizeof buf);
         cJSON_AddStringToObject(ts, "exit_node_ip", buf);
     }
-    /* Peer count summary — full peer table lives at /api/tailscale. */
+    /* Peer count summary — full peer table lives at /api/tailscale.
+     * While we are still in Registering state, microlink_peer_info_t.online
+     * reflects "control-plane echoed this peer" rather than "we have a
+     * verified session" — so it briefly reports everyone online + DERP
+     * before DISCO settles. Suppress that to avoid lying to the SPA. */
     int online = 0, total = 0;
     struct microlink_s *ml = tailscale_get_microlink();
     if (ml) {
         total = microlink_get_peer_count(ml);
-        for (int i = 0; i < total; i++) {
-            microlink_peer_info_t pi;
-            if (microlink_get_peer_info(ml, i, &pi) == ESP_OK && pi.online) online++;
+        if (ts_connected) {
+            for (int i = 0; i < total; i++) {
+                microlink_peer_info_t pi;
+                if (microlink_get_peer_info(ml, i, &pi) == ESP_OK && pi.online) online++;
+            }
         }
     }
     cJSON_AddNumberToObject(ts, "peers_online", online);
@@ -2298,7 +2304,12 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
         cJSON_AddItemToObject(root, "mtu", mtu);
     }
 
-    /* Peers — empty array when microlink isn't running. */
+    /* Peers — empty array when microlink isn't running. While the tunnel
+     * is still Registering, microlink_peer_info_t.online + .direct_path
+     * are unreliable: the control plane has handed us the peer list but
+     * DISCO hasn't run, so everyone briefly looks online + DERP. Mask
+     * both fields to false until we're verifiably Connected — better a
+     * grey dot for a few seconds than a misleading green one. */
     cJSON *peers = cJSON_CreateArray();
     struct microlink_s *ml = tailscale_get_microlink();
     if (ml) {
@@ -2308,8 +2319,8 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
             if (microlink_get_peer_info(ml, i, &pi) != ESP_OK) continue;
             cJSON *p = cJSON_CreateObject();
             cJSON_AddStringToObject(p, "hostname",     pi.hostname);
-            cJSON_AddBoolToObject  (p, "online",       pi.online);
-            cJSON_AddBoolToObject  (p, "direct_path",  pi.direct_path);
+            cJSON_AddBoolToObject  (p, "online",       ts_runtime_connected && pi.online);
+            cJSON_AddBoolToObject  (p, "direct_path",  ts_runtime_connected && pi.direct_path);
             cJSON_AddBoolToObject  (p, "is_exit_node", pi.is_exit_node);
             /* microlink_peer_info_t.vpn_ip is host byte order. */
             char buf[16];
