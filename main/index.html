@@ -1556,7 +1556,10 @@
           <div class="stat-list">
             <div class="stat-row">
               <span class="stat-label">Tailnet IP</span>
-              <span class="stat-value mono" id="ts-ip">—</span>
+              <span class="stat-value mono" style="display:flex; flex-direction:column; align-items:flex-end; line-height:1.25;">
+                <span id="ts-ip">—</span>
+                <span id="ts-tailnet-name" style="font-size:0.78em; color:var(--text-muted); display:none;"></span>
+              </span>
             </div>
             <div class="stat-row">
               <span class="stat-label">Hostname</span>
@@ -3143,6 +3146,25 @@
            * the right edge stays stable across rows; the path label
            * for an offline peer is hidden, the IP alone tells the
            * story when the dot is grey. */
+          /* Derive the tailnet-name (the shared MagicDNS suffix —
+           * e.g. "tailnet.ts.net") from any peer's FQDN and surface
+           * it below the device's own Tailnet IP. Every peer in the
+           * tailnet shares the same suffix, so the first one is enough.
+           * Hidden when no peer exposes a dotted hostname. */
+          (function () {
+            var tn = document.getElementById('ts-tailnet-name');
+            if (!tn) return;
+            var withSuffix = peers.find(function (p) {
+              return (p.hostname || '').indexOf('.') > 0;
+            });
+            if (withSuffix) {
+              var dot = withSuffix.hostname.indexOf('.');
+              tn.textContent = withSuffix.hostname.substring(dot + 1);
+              tn.style.display = '';
+            } else {
+              tn.style.display = 'none';
+            }
+          })();
           peerList.innerHTML = peers.map(function (p) {
             var fqdn  = p.hostname || '?';
             var sname = fqdn.split('.')[0];
