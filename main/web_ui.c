@@ -442,16 +442,95 @@ static esp_err_t recv_body(httpd_req_t *req, char *buf, size_t buf_size, int *ou
 
 /* Write an NVS string key only when the JSON object carries a string
  * value for the given json_key. Empty string is accepted as "clear". */
+/* Per-request NVS-error capture. Each save_*_if_present helper sets
+ * this when nvs_param_set_* returns non-OK; the surrounding handler
+ * checks it before claiming success. Reset at handler entry via
+ * nvs_save_errors_reset(). Single-threaded — httpd runs save handlers
+ * one at a time on its worker task so a static is fine. */
+static struct {
+    int       count;
+    esp_err_t first_err;
+    char      first_key[24];
+} s_save_err = { 0 };
+
+static void nvs_save_errors_reset(void) {
+    s_save_err.count = 0;
+    s_save_err.first_err = ESP_OK;
+    s_save_err.first_key[0] = '\0';
+}
+
+static void nvs_save_record_err(const char *nvs_key, esp_err_t err) {
+    if (err == ESP_OK) return;
+    s_save_err.count++;
+    if (s_save_err.first_err == ESP_OK) {
+        s_save_err.first_err = err;
+        strlcpy(s_save_err.first_key, nvs_key, sizeof s_save_err.first_key);
+    }
+}
+
+/* Attach `ok` + optional `nvs_save_error` block to a response body
+ * cJSON object based on the accumulated per-request error state. The
+ * SPA renders nvs_save_error as a red toast — operator sees the
+ * silent NVS-out-of-space failure instead of a green "Saved" lie. */
+static void nvs_save_errors_attach(cJSON *root) {
+    bool ok = (s_save_err.count == 0);
+    cJSON_AddBoolToObject(root, "ok", ok);
+    if (!ok) {
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddNumberToObject(e, "count",     s_save_err.count);
+        cJSON_AddStringToObject(e, "first_key", s_save_err.first_key);
+        cJSON_AddStringToObject(e, "first_err", esp_err_to_name(s_save_err.first_err));
+        cJSON_AddItemToObject(root, "nvs_save_error", e);
+    }
+}
+
+/* Thin wrappers that route every NVS write through the per-request
+ * error tracker. Replaces direct nvs_param_set_*() calls inside save
+ * handlers — operator gets a real toast instead of a green "Saved"
+ * lie when an out-of-space write silently fails. */
+static void nvs_save_str(const char *key, const char *value) {
+    esp_err_t err = nvs_param_set_str(key, value ? value : "");
+    if (err != ESP_OK) {
+        ESP_LOGE("web_ui", "NVS write FAILED for key=%s (str len=%u): %s",
+                 key, (unsigned)(value ? strlen(value) : 0), esp_err_to_name(err));
+        nvs_save_record_err(key, err);
+    }
+}
+static void nvs_save_int(const char *key, int32_t value) {
+    esp_err_t err = nvs_param_set_int(key, value);
+    if (err != ESP_OK) {
+        ESP_LOGE("web_ui", "NVS write FAILED for key=%s (int=%ld): %s",
+                 key, (long)value, esp_err_to_name(err));
+        nvs_save_record_err(key, err);
+    }
+}
+static void nvs_save_u8(const char *key, uint8_t value) {
+    esp_err_t err = nvs_param_set_u8(key, value);
+    if (err != ESP_OK) {
+        ESP_LOGE("web_ui", "NVS write FAILED for key=%s (u8=%u): %s",
+                 key, (unsigned)value, esp_err_to_name(err));
+        nvs_save_record_err(key, err);
+    }
+}
+static void nvs_save_u32(const char *key, uint32_t value) {
+    esp_err_t err = nvs_param_set_u32(key, value);
+    if (err != ESP_OK) {
+        ESP_LOGE("web_ui", "NVS write FAILED for key=%s (u32=%lu): %s",
+                 key, (unsigned long)value, esp_err_to_name(err));
+        nvs_save_record_err(key, err);
+    }
+}
+
 static void save_str_if_present(const cJSON *obj, const char *json_key, const char *nvs_key)
 {
     const cJSON *v = cJSON_GetObjectItem(obj, json_key);
-    if (cJSON_IsString(v)) nvs_param_set_str(nvs_key, v->valuestring);
+    if (cJSON_IsString(v)) nvs_save_str(nvs_key, v->valuestring);
 }
 
 static void save_int_if_present(const cJSON *obj, const char *json_key, const char *nvs_key)
 {
     const cJSON *v = cJSON_GetObjectItem(obj, json_key);
-    if (cJSON_IsNumber(v)) nvs_param_set_int(nvs_key, (int32_t)v->valuedouble);
+    if (cJSON_IsNumber(v)) nvs_save_int(nvs_key, (int32_t)v->valuedouble);
 }
 
 /* Look up the saved password for an SSID we already know about. Used
@@ -636,6 +715,7 @@ static bool maintain_ap_cidr_in_routes(const char *old_cidr,
 static esp_err_t network_save_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    nvs_save_errors_reset();
 
     /* Heap-allocate the body buffer — a 4 KB stack-local on the httpd
      * worker overflows the task stack once cJSON parsing piles on. */
@@ -761,7 +841,7 @@ static esp_err_t network_save_handler(httpd_req_t *req)
         int v = (int)ttl_j->valuedouble;
         if (v < 0)   v = 0;
         if (v > 255) v = 255;
-        nvs_param_set_u8("sta_ttl", (uint8_t)v);
+        nvs_save_u8("sta_ttl", (uint8_t)v);
         netif_hooks_set_sta_ttl((uint8_t)v);
     }
 
@@ -781,7 +861,7 @@ static esp_err_t network_save_handler(httpd_req_t *req)
         save_str_if_present(ap, "dns",      "ap_dns");
         const cJSON *hidden_j = cJSON_GetObjectItem(ap, "hidden");
         if (cJSON_IsBool(hidden_j)) {
-            nvs_param_set_u8("ap_hidden", cJSON_IsTrue(hidden_j) ? 1 : 0);
+            nvs_save_u8("ap_hidden", cJSON_IsTrue(hidden_j) ? 1 : 0);
         }
 
         /* DNS relay — live apply (no restart needed; the forwarder
@@ -832,7 +912,9 @@ static esp_err_t network_save_handler(httpd_req_t *req)
     }
 
     cJSON *resp_json = cJSON_CreateObject();
-    cJSON_AddBoolToObject(resp_json, "ok", true);
+    /* nvs_save_errors_attach decides ok=true/false based on whether
+     * any nvs_save_* call recorded a write failure for this request. */
+    nvs_save_errors_attach(resp_json);
     cJSON_AddBoolToObject(resp_json, "restart_required", true);
     cJSON *offer = cJSON_GetObjectItem(root, "_ap_cidr_offer");
     cJSON *proposed = cJSON_GetObjectItem(root, "_proposed_routes");
@@ -2281,6 +2363,7 @@ static const httpd_uri_t uri_tailscale = {
 static esp_err_t tailscale_save_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    nvs_save_errors_reset();
 
     /* Heap-allocate the body buffer — see network_save_handler comment. */
     size_t buf_size = 2048;
@@ -2304,7 +2387,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
     if (cJSON_IsObject(s)) {
         const cJSON *enabled = cJSON_GetObjectItem(s, "enabled");
         if (cJSON_IsBool(enabled)) {
-            nvs_param_set_int("ts_enabled", cJSON_IsTrue(enabled) ? 1 : 0);
+            nvs_save_int("ts_enabled", cJSON_IsTrue(enabled) ? 1 : 0);
         }
         save_str_if_present(s, "auth_key",         "ts_authkey");
         save_str_if_present(s, "hostname",         "ts_hostname");
@@ -2362,7 +2445,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
         for (size_t i = 0; i < sizeof bool_keys / sizeof bool_keys[0]; i++) {
             const cJSON *v = bool_keys[i][0];
             if (cJSON_IsBool(v)) {
-                nvs_param_set_int((const char *)bool_keys[i][1], cJSON_IsTrue(v) ? 1 : 0);
+                nvs_save_int((const char *)bool_keys[i][1], cJSON_IsTrue(v) ? 1 : 0);
             }
         }
 
@@ -2378,7 +2461,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
             ip4_addr_t a = { 0 };
             if (exit_node->valuestring[0] == '\0' || ip4addr_aton(exit_node->valuestring, &a)) {
                 uint32_t hbo = lwip_ntohl(a.addr);
-                nvs_param_set_int("ts_exit_node", (int32_t)hbo);
+                nvs_save_int("ts_exit_node", (int32_t)hbo);
                 tailscale_exit_node_ip = hbo;
             }
         }
@@ -2408,8 +2491,19 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
     }
 
     cJSON_Delete(root);
+    /* Surface any silent NVS-out-of-space failures from the save_* path
+     * in the response. The SPA renders nvs_save_error as a red toast
+     * so the operator doesn't get a green "Saved" when the on-flash
+     * state isn't actually changing. */
+    cJSON *resp = cJSON_CreateObject();
+    nvs_save_errors_attach(resp);
+    cJSON_AddBoolToObject(resp, "restart_required", true);
+    char *body = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
     httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":true,\"restart_required\":true}");
+    esp_err_t e = httpd_resp_sendstr(req, body ? body : "{\"ok\":false}");
+    free(body);
+    return e;
 }
 
 /* Forward decl — the implementation is below the tailscale block but
@@ -2612,6 +2706,7 @@ static void delayed_restart_task(void *arg)
 static esp_err_t system_save_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    nvs_save_errors_reset();
 
     char buf[512];
     if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
@@ -2627,14 +2722,14 @@ static esp_err_t system_save_handler(httpd_req_t *req)
      * or /api/system. */
     const cJSON *dn = cJSON_GetObjectItem(root, "device_name");
     if (cJSON_IsString(dn)) {
-        nvs_param_set_str("dev_name", dn->valuestring);
+        nvs_save_str("dev_name", dn->valuestring);
     }
 
     /* Timezone — POSIX string. Applied at next boot (tzset is global,
      * easiest to take effect after restart). Empty value clears it. */
     const cJSON *tz_j = cJSON_GetObjectItem(root, "tz");
     if (cJSON_IsString(tz_j)) {
-        nvs_param_set_str("tz", tz_j->valuestring);
+        nvs_save_str("tz", tz_j->valuestring);
         setenv("TZ", tz_j->valuestring[0] ? tz_j->valuestring : "UTC0", 1);
         tzset();
     }
@@ -2648,7 +2743,7 @@ static esp_err_t system_save_handler(httpd_req_t *req)
     if (cJSON_IsNumber(st)) {
         uint32_t v = (uint32_t)st->valuedouble;
         v = session_timeout_clamp(v);
-        nvs_param_set_u32("auth_to_s", v);
+        nvs_save_u32("auth_to_s", v);
         s_session_timeout_s = v;
         if (session_alive()) session_extend();
     }
@@ -2662,7 +2757,7 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         if (v < 0)  v = 0;
         if (v > 84) v = 84;
         if (v != 0 && v < 8) v = 8;        /* IDF rejects values below 8 */
-        nvs_param_set_u8("tx_pwr", (uint8_t)v);
+        nvs_save_u8("tx_pwr", (uint8_t)v);
         if (v >= 8) esp_wifi_set_max_tx_power((int8_t)v);
     }
 
@@ -2709,8 +2804,16 @@ static esp_err_t system_save_handler(httpd_req_t *req)
     }
 
     cJSON_Delete(root);
+    /* Surface any NVS write failures from the save path — see the
+     * twin block in tailscale_save_handler. */
+    cJSON *resp = cJSON_CreateObject();
+    nvs_save_errors_attach(resp);
+    char *body = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
     httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":true}");
+    esp_err_t e = httpd_resp_sendstr(req, body ? body : "{\"ok\":false}");
+    free(body);
+    return e;
 }
 
 static esp_err_t system_restart_handler(httpd_req_t *req)
