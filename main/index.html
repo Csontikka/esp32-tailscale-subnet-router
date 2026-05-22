@@ -3973,6 +3973,23 @@
     });
 
     /* Shared save helper used by the network list + AP card. */
+    /* Render an NVS-save error from a save handler's response. The
+     * backend sets ok:false and attaches nvs_save_error{count, first_key,
+     * first_err} when any nvs_set fails (typically ENOUGH_SPACE on a
+     * full NVS partition). Returns true if the response was a failure
+     * so callers can skip the success/reboot path. */
+    function handleSaveFailure(resp) {
+      if (resp && resp.ok === false && resp.nvs_save_error) {
+        var e = resp.nvs_save_error;
+        showToast('error', 'NVS write failed',
+                  'Key ' + (e.first_key || '?') + ' — ' + (e.first_err || 'unknown') +
+                  ' (' + (e.count || '?') + ' total). Settings did NOT persist; reboot would lose them.',
+                  10000);
+        return true;
+      }
+      return false;
+    }
+
     function saveNetwork(btn, body) {
       btn.disabled = true;
       btn.textContent = 'Saving…';
@@ -3984,6 +4001,11 @@
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function (resp) {
           btn.textContent = 'Save';
+          if (handleSaveFailure(resp)) {
+            /* Re-enable the button — nothing persisted, operator can retry. */
+            btn.disabled = false;
+            return;
+          }
           showToast('success', 'Saved', 'Network settings written to NVS.', 4000);
           if (resp.restart_required) setPendingReboot(true);
           /* AP IP change → backend never auto-writes routes anymore;
@@ -4997,6 +5019,10 @@
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function (resp) {
           btn.textContent = 'Save';
+          if (handleSaveFailure(resp)) {
+            btn.disabled = false;
+            return;
+          }
           showToast('success', 'Saved', 'Tailscale settings written to NVS.', 4000);
           if (resp.restart_required) setPendingReboot(true);
         })
