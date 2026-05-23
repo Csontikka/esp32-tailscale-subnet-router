@@ -367,8 +367,20 @@ static void sender_task(void *arg)
             first_iter = false;
         }
         /* Sleep for 24 h or until the semaphore is given (URL change,
-         * Test button, opt-in toggle). */
-        xSemaphoreTake(s_sem, pdMS_TO_TICKS(TLM_HEARTBEAT_PERIOD_S * 1000));
+         * Test button, opt-in toggle).
+         *
+         * NOTE: do NOT use pdMS_TO_TICKS(86_400_000) here. In the
+         * non-SMP FreeRTOS-Kernel build (the ESP-IDF default), the
+         * macro is `(TickType_t)xTimeInMs * (TickType_t)TICK_RATE_HZ
+         * / 1000U` — both operands cast to uint32_t before the
+         * multiply, so 86_400_000 * 100 overflows to 50_065_408,
+         * yielding ~50_065 ticks ≈ 500 s ≈ 8m21s instead of 24 h.
+         * The bug surfaced as a heartbeat-every-8-minutes flood on
+         * the worker. Compute in uint64_t to keep the result correct. */
+        TickType_t heartbeat_ticks =
+            (TickType_t)((uint64_t)TLM_HEARTBEAT_PERIOD_S * 1000ULL /
+                         (uint64_t)portTICK_PERIOD_MS);
+        xSemaphoreTake(s_sem, heartbeat_ticks);
     }
 }
 
