@@ -2238,24 +2238,39 @@ static esp_err_t log_raw_handler(httpd_req_t *req)
              (unsigned)log_capture_capacity());
     httpd_resp_sendstr_chunk(req, hdr);
 
-    /* Stream JSON-escaped payload. Small esc buffer avoids one strdup per
-     * special byte. */
+    /* Stream JSON-escaped payload. Buffer into 1 KB chunks before
+     * calling httpd_resp_send_chunk(): the previous one-byte-per-call
+     * implementation generated one TCP PSH/ACK pair per character,
+     * and the per-poll latency over a 10 KB log was ~15 s end-to-end —
+     * which then stalled the SPA's other parallel fetches behind it.
+     * Now: ~10 chunk-send calls per 10 KB instead of 10 000. */
+    char  obuf[1024];
+    size_t op = 0;
+    #define LRH_FLUSH() do { \
+        if (op > 0) { httpd_resp_send_chunk(req, obuf, op); op = 0; } \
+    } while (0)
+    #define LRH_EMIT(s, l) do { \
+        if (op + (size_t)(l) > sizeof obuf) LRH_FLUSH(); \
+        memcpy(obuf + op, (s), (l)); op += (l); \
+    } while (0)
     for (size_t i = 0; i < n_raw; i++) {
         unsigned char c = (unsigned char)scratch[i];
-        if      (c == '"')  httpd_resp_sendstr_chunk(req, "\\\"");
-        else if (c == '\\') httpd_resp_sendstr_chunk(req, "\\\\");
-        else if (c == '\n') httpd_resp_sendstr_chunk(req, "\\n");
-        else if (c == '\r') httpd_resp_sendstr_chunk(req, "\\r");
-        else if (c == '\t') httpd_resp_sendstr_chunk(req, "\\t");
+        if      (c == '"')  LRH_EMIT("\\\"", 2);
+        else if (c == '\\') LRH_EMIT("\\\\", 2);
+        else if (c == '\n') LRH_EMIT("\\n",  2);
+        else if (c == '\r') LRH_EMIT("\\r",  2);
+        else if (c == '\t') LRH_EMIT("\\t",  2);
         else if (c < 0x20) {
             char esc[8];
-            snprintf(esc, sizeof esc, "\\u%04x", c);
-            httpd_resp_sendstr_chunk(req, esc);
+            int el = snprintf(esc, sizeof esc, "\\u%04x", c);
+            LRH_EMIT(esc, el);
         } else {
-            char one[2] = { (char)c, 0 };
-            httpd_resp_send_chunk(req, one, 1);
+            LRH_EMIT((const char *)&c, 1);
         }
     }
+    LRH_FLUSH();
+    #undef LRH_EMIT
+    #undef LRH_FLUSH
     free(scratch);
     httpd_resp_sendstr_chunk(req, "\"}");
     httpd_resp_sendstr_chunk(req, NULL);
