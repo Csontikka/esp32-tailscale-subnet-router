@@ -3064,6 +3064,144 @@ static const httpd_uri_t uri_system_ota_install = {
     .handler = system_ota_install_handler,
 };
 
+/* ---- Encrypted-secrets backup endpoints ---------------------------------
+ * Plain-text secrets bundle. NEVER reached without a valid session, and
+ * the SPA passphrase-encrypts the response BEFORE writing the backup
+ * file to disk. Restore is the mirror image — SPA decrypts in the
+ * browser, POSTs the plain bundle here, NVS writes happen atomically
+ * through the same nvs_save_* helpers as every other config handler. */
+static esp_err_t system_secrets_get_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root) { httpd_resp_send_500(req); return ESP_FAIL; }
+
+    /* Tailscale auth key + AP password — both are write-only NVS strings
+     * that the normal GET endpoints intentionally redact. */
+    {
+        char *s = nvs_param_get_str("ts_authkey");
+        cJSON_AddStringToObject(root, "auth_key", s ? s : "");
+        free(s);
+    }
+    {
+        char *s = nvs_param_get_str("ap_passwd");
+        cJSON_AddStringToObject(root, "ap_password", s ? s : "");
+        free(s);
+    }
+
+    /* Full network table including PSK + EAP credentials. Mirrors the
+     * wifi_network_t layout so a round-trip restore reproduces the
+     * exact NVS state. */
+    cJSON *nets = cJSON_CreateArray();
+    int count = wifi_networks_count();
+    for (int i = 0; i < count; i++) {
+        wifi_network_t n;
+        if (!wifi_networks_get(i, &n)) continue;
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "ssid",        n.ssid);
+        cJSON_AddStringToObject(e, "password",    n.passwd);
+        cJSON_AddNumberToObject(e, "eap_method",  n.eap_method);
+        cJSON_AddNumberToObject(e, "eap_phase2",  n.eap_phase2);
+        cJSON_AddBoolToObject  (e, "eap_cert_bundle",
+                                n.eap_use_cert_bundle != 0);
+        cJSON_AddStringToObject(e, "eap_identity", n.eap_identity);
+        cJSON_AddStringToObject(e, "eap_username", n.eap_username);
+        cJSON_AddStringToObject(e, "eap_password", n.eap_password);
+        cJSON_AddItemToArray(nets, e);
+    }
+    cJSON_AddItemToObject(root, "networks", nets);
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+static const httpd_uri_t uri_system_secrets_get = {
+    .uri = "/api/system/secrets", .method = HTTP_GET,
+    .handler = system_secrets_get_handler,
+};
+
+static esp_err_t system_secrets_post_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    nvs_save_errors_reset();
+
+    /* Worst-case bundle: 5 networks × ~400 B of EAP/static fields + a few
+     * top-level strings. 4 KB leaves plenty of slack while still fitting
+     * comfortably on the stack via malloc. */
+    size_t buf_size = 4096;
+    char *buf = malloc(buf_size);
+    if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
+    if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
+
+    cJSON *root = cJSON_Parse(buf);
+    free(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+
+    save_str_if_present(root, "auth_key",    "ts_authkey");
+    save_str_if_present(root, "ap_password", "ap_passwd");
+
+    /* Network array — only rewrite NVS when the client actually sent one,
+     * so a partial restore (e.g. just the auth_key) doesn't wipe the
+     * existing uplink table. */
+    cJSON *nets_j = cJSON_GetObjectItem(root, "networks");
+    if (cJSON_IsArray(nets_j)) {
+        wifi_network_t arr[WIFI_NETWORKS_MAX];
+        memset(arr, 0, sizeof arr);
+        int n_out = 0;
+        cJSON *e;
+        cJSON_ArrayForEach(e, nets_j) {
+            if (n_out >= WIFI_NETWORKS_MAX) break;
+            const cJSON *ssid_j = cJSON_GetObjectItem(e, "ssid");
+            if (!cJSON_IsString(ssid_j) || !ssid_j->valuestring[0]) continue;
+            wifi_network_t *n = &arr[n_out];
+            strlcpy(n->ssid, ssid_j->valuestring, sizeof n->ssid);
+
+            const cJSON *pw  = cJSON_GetObjectItem(e, "password");
+            const cJSON *m   = cJSON_GetObjectItem(e, "eap_method");
+            const cJSON *p2  = cJSON_GetObjectItem(e, "eap_phase2");
+            const cJSON *cb  = cJSON_GetObjectItem(e, "eap_cert_bundle");
+            const cJSON *id  = cJSON_GetObjectItem(e, "eap_identity");
+            const cJSON *un  = cJSON_GetObjectItem(e, "eap_username");
+            const cJSON *epw = cJSON_GetObjectItem(e, "eap_password");
+            if (cJSON_IsString(pw))  strlcpy(n->passwd,       pw->valuestring,  sizeof n->passwd);
+            if (cJSON_IsNumber(m))   n->eap_method = (uint8_t)m->valueint;
+            if (cJSON_IsNumber(p2))  n->eap_phase2 = (uint8_t)p2->valueint;
+            if (cJSON_IsBool(cb))    n->eap_use_cert_bundle = cJSON_IsTrue(cb) ? 1 : 0;
+            if (cJSON_IsString(id))  strlcpy(n->eap_identity, id->valuestring,  sizeof n->eap_identity);
+            if (cJSON_IsString(un))  strlcpy(n->eap_username, un->valuestring,  sizeof n->eap_username);
+            if (cJSON_IsString(epw)) strlcpy(n->eap_password, epw->valuestring, sizeof n->eap_password);
+            n->valid = 1;
+            n_out++;
+        }
+        esp_err_t serr = wifi_networks_set_all(arr, n_out);
+        if (serr != ESP_OK) nvs_save_record_err("wifi_nets", serr);
+    }
+    cJSON_Delete(root);
+
+    /* Mirror the standard save-handler response: { ok, nvs_save_error? }. */
+    cJSON *resp = cJSON_CreateObject();
+    nvs_save_errors_attach(resp);
+    char *out = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t e = httpd_resp_sendstr(req, out ? out : "{\"ok\":true}");
+    free(out);
+    return e;
+}
+static const httpd_uri_t uri_system_secrets_post = {
+    .uri = "/api/system/secrets", .method = HTTP_POST,
+    .handler = system_secrets_post_handler,
+};
+
 /* ---- Session management -------------------------------------------------
  * Single in-memory session, like the OLD repo. 32-byte random token hex-
  * encoded into a cookie. The token never touches NVS — reboot logs
@@ -3463,6 +3601,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_system_ota);
     httpd_register_uri_handler(server, &uri_system_ota_poll);
     httpd_register_uri_handler(server, &uri_system_ota_install);
+    httpd_register_uri_handler(server, &uri_system_secrets_get);
+    httpd_register_uri_handler(server, &uri_system_secrets_post);
     httpd_register_uri_handler(server, &uri_system_debug_crash);
     httpd_register_uri_handler(server, &uri_auth_status);
     httpd_register_uri_handler(server, &uri_auth_login);

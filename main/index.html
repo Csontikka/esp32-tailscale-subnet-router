@@ -2548,7 +2548,7 @@
           <div class="stat-row"><span class="stat-label">Device hash</span>      <span class="stat-value mono" id="sys-dh">—</span></div>
         </div>
         <div class="form-footer">
-          <span class="form-footer-hint">Friendly-name change applies immediately. Backup excludes secrets — restore won't reapply WiFi/AP passwords or auth keys.</span>
+          <span class="form-footer-hint">Friendly-name change applies immediately. Backup optionally includes WiFi/AP/EAP passwords + Tailscale auth key, encrypted with a passphrase you choose.</span>
           <div class="form-footer-actions">
             <input type="file" id="sys-config-restore-file" accept="application/json,.json" style="display:none;">
             <button class="btn btn-ghost btn-md" id="sys-config-restore">Restore…</button>
@@ -6238,24 +6238,131 @@
         if (id === 'sys-tx-power') updateTxPowerDbm(this.value);
       });
     });
+    /* WebCrypto helpers for the encrypted-secrets bundle. PBKDF2-SHA256
+     * (100k iter) derives an AES-GCM-256 key from the operator passphrase;
+     * the salt + IV ride along inside the bundle so a fresh install can
+     * decrypt with nothing more than the same passphrase. */
+    function _b64FromBytes(bytes) {
+      var s = ''; for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+      return btoa(s);
+    }
+    function _bytesFromB64(b64) {
+      var s = atob(b64); var out = new Uint8Array(s.length);
+      for (var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
+      return out;
+    }
+    function _deriveSecretsKey(passphrase, salt) {
+      return crypto.subtle.importKey(
+        'raw', new TextEncoder().encode(passphrase),
+        { name: 'PBKDF2' }, false, ['deriveKey']
+      ).then(function (baseKey) {
+        return crypto.subtle.deriveKey(
+          { name: 'PBKDF2', salt: salt, iterations: 100000, hash: 'SHA-256' },
+          baseKey,
+          { name: 'AES-GCM', length: 256 },
+          false, ['encrypt', 'decrypt']
+        );
+      });
+    }
+    function encryptSecretsBundle(plaintextObj, passphrase) {
+      var salt = crypto.getRandomValues(new Uint8Array(16));
+      var iv   = crypto.getRandomValues(new Uint8Array(12));
+      return _deriveSecretsKey(passphrase, salt).then(function (key) {
+        var pt = new TextEncoder().encode(JSON.stringify(plaintextObj));
+        return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, pt)
+          .then(function (ct) {
+            return {
+              alg:    'AES-GCM-256',
+              kdf:    'PBKDF2-SHA256',
+              iter:   100000,
+              salt:   _b64FromBytes(salt),
+              iv:     _b64FromBytes(iv),
+              ciphertext: _b64FromBytes(new Uint8Array(ct))
+            };
+          });
+      });
+    }
+    function decryptSecretsBundle(blob, passphrase) {
+      var salt = _bytesFromB64(blob.salt);
+      var iv   = _bytesFromB64(blob.iv);
+      var ct   = _bytesFromB64(blob.ciphertext);
+      return _deriveSecretsKey(passphrase, salt).then(function (key) {
+        return crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ct)
+          .then(function (pt) { return JSON.parse(new TextDecoder().decode(pt)); });
+      });
+    }
+
     /* Pull every config-bearing GET endpoint and merge into one JSON
-     * file the operator can download. Secrets (WiFi passwords, AP
-     * password, auth keys, web password hash) are NOT in the source
-     * responses, so the file lands secret-free by construction. */
+     * file the operator can download. WiFi/AP/EAP passwords + Tailscale
+     * auth key are pulled via /api/system/secrets and encrypted with the
+     * operator passphrase before being spliced into the backup as
+     * `secrets_encrypted`. With Include secrets unchecked the file lands
+     * secret-free, same as before. */
     document.getElementById('sys-config-backup').addEventListener('click', function () {
-      var btn = this;
+      showConfirm(
+        'Download config backup',
+        '<p style="margin:0 0 0.75rem 0;">Secrets (WiFi/AP/EAP passwords + Tailscale auth key) are encrypted with your passphrase. You need the same passphrase to restore them on this or another device.</p>' +
+        '<label style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem; cursor:pointer;">' +
+          '<input type="checkbox" id="backup-include-secrets" checked> Include encrypted secrets' +
+        '</label>' +
+        '<div id="backup-passphrase-block">' +
+          '<div class="form-group">' +
+            '<label class="form-label" for="backup-pass1">Passphrase</label>' +
+            '<input class="input mono" type="password" id="backup-pass1" autocomplete="new-password">' +
+          '</div>' +
+          '<div class="form-group">' +
+            '<label class="form-label" for="backup-pass2">Confirm passphrase</label>' +
+            '<input class="input mono" type="password" id="backup-pass2" autocomplete="new-password">' +
+          '</div>' +
+        '</div>',
+        function () {
+          var includeSecrets = document.getElementById('backup-include-secrets').checked;
+          var p1 = document.getElementById('backup-pass1').value;
+          var p2 = document.getElementById('backup-pass2').value;
+          if (includeSecrets) {
+            if (!p1 || p1.length < 8) {
+              showToast('error', 'Passphrase too short', 'Use at least 8 characters.', 5000);
+              return;
+            }
+            if (p1 !== p2) {
+              showToast('error', 'Passphrase mismatch', 'The two passphrases differ.', 5000);
+              return;
+            }
+          }
+          _runConfigBackup(includeSecrets, p1);
+        },
+        { html: true, danger: false, confirmText: 'Download' }
+      );
+      /* Toggle the passphrase block based on the checkbox — wired after
+       * the modal markup lands in the DOM. */
+      setTimeout(function () {
+        var cb = document.getElementById('backup-include-secrets');
+        var pp = document.getElementById('backup-passphrase-block');
+        if (!cb || !pp) return;
+        var sync = function () { pp.style.display = cb.checked ? '' : 'none'; };
+        cb.addEventListener('change', sync); sync();
+      }, 0);
+    });
+
+    function _runConfigBackup(includeSecrets, passphrase) {
+      var btn = document.getElementById('sys-config-backup');
       btn.disabled = true; btn.textContent = 'Gathering…';
-      Promise.all([
+      var fetches = [
         apiFetch('/api/network')           .then(function (r) { return r.json(); }),
         apiFetch('/api/system')            .then(function (r) { return r.json(); }),
         apiFetch('/api/dhcp/reservations') .then(function (r) { return r.json(); }),
         apiFetch('/api/portmap')           .then(function (r) { return r.json(); }),
         apiFetch('/api/tailscale')         .then(function (r) { return r.json(); }),
         apiFetch('/api/firewall')          .then(function (r) { return r.json(); })
-      ]).then(function (parts) {
+      ];
+      if (includeSecrets) {
+        fetches.push(apiFetch('/api/system/secrets').then(function (r) {
+          if (!r.ok) throw new Error('secrets HTTP ' + r.status);
+          return r.json();
+        }));
+      }
+      Promise.all(fetches).then(function (parts) {
         var sys = parts[1] || {};
-        /* Drop runtime + bulky fields from the system block so the backup
-         * captures config, not state. */
         delete sys.log_tail;
         delete sys.reset_history;
         delete sys.session_remaining_s;
@@ -6266,7 +6373,6 @@
           delete sys.telemetry.boot_count;
           delete sys.telemetry.flash_count;
         }
-        /* Drop tailscale runtime peers + tunnel_ip — settings only. */
         var ts = parts[4] || {};
         delete ts.peers;
         delete ts.runtime;
@@ -6281,21 +6387,33 @@
           tailscale:     ts,
           firewall:      parts[5] || {}
         };
-        var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
-        var url = URL.createObjectURL(blob);
-        var a = document.createElement('a');
-        var stamp = new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+$/, '');
-        a.href     = url;
-        a.download = 'tsr-config-' + stamp + '.json';
-        document.body.appendChild(a); a.click(); document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-        showToast('success', 'Downloaded', 'Config snapshot saved. Secrets are not included.', 4000);
-      }).catch(function () {
-        showToast('error', 'Backup failed', 'Could not gather all endpoints.', 5000);
+        var step = Promise.resolve();
+        if (includeSecrets) {
+          var secrets = parts[6] || {};
+          step = encryptSecretsBundle(secrets, passphrase).then(function (enc) {
+            backup.secrets_encrypted = enc;
+          });
+        }
+        return step.then(function () {
+          var blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+          var url = URL.createObjectURL(blob);
+          var a = document.createElement('a');
+          var stamp = new Date().toISOString().replace(/[:T]/g, '-').replace(/\..+$/, '');
+          a.href     = url;
+          a.download = 'tsr-config-' + stamp + '.json';
+          document.body.appendChild(a); a.click(); document.body.removeChild(a);
+          URL.revokeObjectURL(url);
+          showToast('success', 'Downloaded',
+            includeSecrets ? 'Config + encrypted secrets saved. Keep the passphrase safe.'
+                           : 'Config snapshot saved. Secrets are not included.',
+            5000);
+        });
+      }).catch(function (e) {
+        showToast('error', 'Backup failed', (e && e.message) || 'Could not gather all endpoints.', 6000);
       }).finally(function () {
         btn.disabled = false; btn.textContent = 'Download config';
       });
-    });
+    }
 
     /* Restore from a previously-downloaded backup. Pure client-side
      * orchestration — POSTs each section back to the same endpoint
@@ -6321,47 +6439,104 @@
           showToast('error', 'Wrong format', 'Expected tsr-backup-v1.', 5000);
           return;
         }
-        if (!confirm('Restore config from this file?\n\nReplaces networks, AP settings, DHCP reservations, port mappings, Tailscale settings and system block. Secrets (passwords, auth keys) are NOT in the backup — you will need to re-enter them.')) {
-          return;
+        var hasSecrets = !!(data.secrets_encrypted && data.secrets_encrypted.ciphertext);
+        var bodyHtml =
+          '<p style="margin:0 0 0.75rem 0;">Replaces networks, AP settings, DHCP reservations, port mappings, Tailscale settings and system block.</p>' +
+          (hasSecrets
+            ? '<label style="display:flex; align-items:center; gap:0.5rem; margin-bottom:0.75rem; cursor:pointer;">' +
+                '<input type="checkbox" id="restore-include-secrets" checked> Decrypt and restore encrypted secrets (WiFi/AP passwords + Tailscale auth key)' +
+              '</label>' +
+              '<div id="restore-passphrase-block">' +
+                '<div class="form-group">' +
+                  '<label class="form-label" for="restore-pass">Passphrase</label>' +
+                  '<input class="input mono" type="password" id="restore-pass" autocomplete="current-password">' +
+                '</div>' +
+              '</div>'
+            : '<p class="form-hint" style="margin:0;">No encrypted secrets in this backup — passwords and auth keys will need to be re-entered manually after restore.</p>');
+        showConfirm(
+          'Restore config from backup',
+          bodyHtml,
+          function () {
+            var includeSecrets = hasSecrets && document.getElementById('restore-include-secrets').checked;
+            var passphrase     = hasSecrets ? document.getElementById('restore-pass').value : '';
+            if (includeSecrets && !passphrase) {
+              showToast('error', 'Passphrase required', 'Enter the passphrase used at backup time.', 5000);
+              return;
+            }
+            _runConfigRestore(data, includeSecrets, passphrase);
+          },
+          { html: true, danger: false, confirmText: 'Restore' }
+        );
+        if (hasSecrets) {
+          setTimeout(function () {
+            var cb = document.getElementById('restore-include-secrets');
+            var pp = document.getElementById('restore-passphrase-block');
+            if (!cb || !pp) return;
+            var sync = function () { pp.style.display = cb.checked ? '' : 'none'; };
+            cb.addEventListener('change', sync); sync();
+          }, 0);
         }
+        /* Clear so picking the same file again still fires change. */
+        ev.target.value = '';
+      };
+      reader.readAsText(file);
+    });
 
-        var btn = document.getElementById('sys-config-restore');
-        btn.disabled = true; btn.textContent = 'Restoring…';
+    function _runConfigRestore(data, includeSecrets, passphrase) {
+      var btn = document.getElementById('sys-config-restore');
+      btn.disabled = true; btn.textContent = 'Restoring…';
 
-        function post(url, body) {
-          return apiFetch(url, {
-            method:  'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body:    JSON.stringify(body)
-          }).then(function (r) { if (!r.ok) throw new Error(url); return r; });
+      function post(url, body) {
+        return apiFetch(url, {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(body)
+        }).then(function (r) { if (!r.ok) throw new Error(url); return r; });
+      }
+
+      var steps = [];
+      if (data.network) steps.push({ name: 'network',           url: '/api/network',           body: data.network });
+      if (data.dhcp_reservations) steps.push({ name: 'reservations',    url: '/api/dhcp/reservations', body: { reservations: data.dhcp_reservations } });
+      if (data.portmap)           steps.push({ name: 'portmap',         url: '/api/portmap',           body: { mappings:     data.portmap } });
+      if (data.system) {
+        var sb = {};
+        if (typeof data.system.device_name === 'string') sb.device_name = data.system.device_name;
+        if (typeof data.system.tz          === 'string') sb.tz          = data.system.tz;
+        if (typeof data.system.tx_power_nvs === 'number') sb.tx_power = data.system.tx_power_nvs;
+        if (data.system.telemetry && typeof data.system.telemetry.enabled === 'boolean') {
+          sb.telemetry = { enabled: data.system.telemetry.enabled };
         }
+        if (data.system.syslog) sb.syslog = data.system.syslog;
+        if (Object.keys(sb).length) steps.push({ name: 'system', url: '/api/system', body: sb });
+      }
+      if (data.tailscale && data.tailscale.settings) {
+        var ts = data.tailscale.settings;
+        delete ts.auth_key;  /* secret only restored via the encrypted block */
+        steps.push({ name: 'tailscale', url: '/api/tailscale', body: { settings: ts } });
+      }
 
-        var steps = [];
-        if (data.network) steps.push({ name: 'network',           url: '/api/network',           body: data.network });
-        if (data.dhcp_reservations) steps.push({ name: 'reservations',    url: '/api/dhcp/reservations', body: { reservations: data.dhcp_reservations } });
-        if (data.portmap)           steps.push({ name: 'portmap',         url: '/api/portmap',           body: { mappings:     data.portmap } });
-        if (data.system) {
-          /* Re-build the system POST shape — only the fields we accept. */
-          var sb = {};
-          if (typeof data.system.device_name === 'string') sb.device_name = data.system.device_name;
-          if (typeof data.system.tz          === 'string') sb.tz          = data.system.tz;
-          if (typeof data.system.tx_power_nvs === 'number') sb.tx_power = data.system.tx_power_nvs;
-          if (data.system.telemetry && typeof data.system.telemetry.enabled === 'boolean') {
-            sb.telemetry = { enabled: data.system.telemetry.enabled };
-          }
-          if (data.system.syslog) sb.syslog = data.system.syslog;
-          if (Object.keys(sb).length) steps.push({ name: 'system', url: '/api/system', body: sb });
-        }
-        if (data.tailscale && data.tailscale.settings) {
-          var ts = data.tailscale.settings;
-          delete ts.auth_key;  /* secret, not in backup but be paranoid */
-          steps.push({ name: 'tailscale', url: '/api/tailscale', body: { settings: ts } });
-        }
+      /* Pre-decrypt the secrets blob BEFORE firing any steps so a bad
+       * passphrase fails the whole restore upfront instead of half-way
+       * through. The decrypted bundle is queued as the final step so
+       * it lands after the plain network/AP config that defines which
+       * slots the credentials belong to. */
+      var prelude = Promise.resolve(null);
+      if (includeSecrets) {
+        prelude = decryptSecretsBundle(data.secrets_encrypted, passphrase).then(function (sec) {
+          steps.push({ name: 'secrets', url: '/api/system/secrets', body: sec });
+          return sec;
+        }).catch(function () {
+          throw new Error('Decryption failed — wrong passphrase?');
+        });
+      }
 
+      prelude.then(function () {
         function next(i) {
           if (i >= steps.length) {
             btn.disabled = false; btn.textContent = 'Restore…';
-            showToast('success', 'Restored', 'Reboot recommended so every section applies cleanly.', 6000);
+            showToast('success', 'Restored',
+              (includeSecrets ? 'Config + secrets applied. ' : '') +
+              'Reboot recommended so every section applies cleanly.', 6000);
             setPendingReboot(true);
             return;
           }
@@ -6370,16 +6545,16 @@
             .then(function () { next(i + 1); })
             .catch(function () {
               btn.disabled = false; btn.textContent = 'Restore…';
-              showToast('error', 'Restore failed', 'Step "' + s.name + '" did not save. Device is in a mixed state.', 8000);
+              showToast('error', 'Restore failed',
+                'Step "' + s.name + '" did not save. Device is in a mixed state.', 8000);
             });
         }
         next(0);
-
-        /* Clear so picking the same file again still fires change. */
-        ev.target.value = '';
-      };
-      reader.readAsText(file);
-    });
+      }).catch(function (e) {
+        btn.disabled = false; btn.textContent = 'Restore…';
+        showToast('error', 'Restore aborted', (e && e.message) || 'Could not decrypt secrets.', 7000);
+      });
+    }
 
     document.getElementById('sys-device-name-save').addEventListener('click', function () {
       var name     = document.getElementById('sys-device-name').value.trim();
