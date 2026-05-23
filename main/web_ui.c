@@ -55,23 +55,24 @@ extern int connect_count;
 
 static const char *TAG = "web_ui";
 
-/* index.html is generated as a C source by main/CMakeLists.txt
- * (file(READ HEX) → const char index_html_start[]). The PIO build
- * wrapper can't be trusted to assemble .S files emitted by ESP-IDF's
- * EMBED_TXTFILES / target_add_binary_data — see the bug write-up in
- * main/CMakeLists.txt above the file(READ ...) call. */
-extern const char   index_html_start[];
-extern const size_t index_html_len;
+/* index.html is generated as a gzipped C source by main/CMakeLists.txt
+ * via the gen_index_html_gz.py helper. Stored compressed (≈5× smaller
+ * than raw) and served with Content-Encoding: gzip — every modern
+ * browser transparently inflates. See the build script for why the
+ * Python-helper route was chosen over ESP-IDF EMBED_TXTFILES. */
+extern const char   index_html_gz_start[];
+extern const size_t index_html_gz_len;
 
 static esp_err_t index_handler(httpd_req_t *req)
 {
     httpd_resp_set_type(req, "text/html; charset=utf-8");
+    httpd_resp_set_hdr(req, "Content-Encoding", "gzip");
     /* Without this the browser happily reuses last session's SPA HTML
      * out of HTTP cache, so any client-side fix we ship requires the
      * operator to force-refresh before it takes effect. The SPA is
      * tiny and served from RAM — no reason to cache. */
     httpd_resp_set_hdr(req, "Cache-Control", "no-cache, no-store, must-revalidate");
-    return httpd_resp_send(req, index_html_start, index_html_len);
+    return httpd_resp_send(req, index_html_gz_start, index_html_gz_len);
 }
 
 static const httpd_uri_t uri_index = {
