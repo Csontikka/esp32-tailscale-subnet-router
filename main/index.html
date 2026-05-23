@@ -2860,6 +2860,31 @@
       var tabs = document.querySelectorAll('.nav-tab[data-page]');
       var sections = document.querySelectorAll('.page-section');
 
+      /* Pre-init hash sync — runs BEFORE event listeners are bound. The
+       * HTML markup defaults to #page-status .active, so without this
+       * a deep-link reload (#network, #firewall, …) would briefly paint
+       * Status and then snap to the target tab once the IIFE finishes
+       * setting up listeners. Pull-to-refresh on mobile makes that
+       * visible as "Status flashes then jumps to Network". Doing the
+       * class swap up front collapses the visible flash to zero frames. */
+      (function () {
+        var h = (location.hash || '').replace(/^#/, '');
+        if (!h || h === 'status') return;
+        var targetTab = document.querySelector('.nav-tab[data-page="' + h + '"]');
+        var targetSec = document.getElementById('page-' + h);
+        if (!targetTab || !targetSec) return;
+        document.querySelectorAll('.nav-tab.active').forEach(function (t) {
+          t.classList.remove('active');
+          t.setAttribute('aria-selected', 'false');
+        });
+        document.querySelectorAll('.page-section.active').forEach(function (s) {
+          s.classList.remove('active');
+        });
+        targetTab.classList.add('active');
+        targetTab.setAttribute('aria-selected', 'true');
+        targetSec.classList.add('active');
+      })();
+
       function switchToPage(page) {
         var tab = document.querySelector('.nav-tab[data-page="' + page + '"]');
         if (!tab) return false;
@@ -2907,13 +2932,34 @@
       });
 
       /* Hamburger drawer wiring — open/close the .nav-tabs as a
-       * full-screen overlay on narrow viewports. Asztalon az .open
-       * osztály nem csinál semmit (a media-query a felelős). */
+       * full-screen overlay on narrow viewports. The .nav parent has
+       * position:sticky + z-index:100, which creates a stacking
+       * context the inner .nav-tabs (even with position:fixed) can't
+       * climb out of. To make the overlay truly cover the .card
+       * elements that live at <body> scope, we detach .nav-tabs out
+       * of <nav> and reparent it to <body> while open, then move it
+       * back when closed so the desktop layout stays intact. */
       var navTabs   = document.getElementById('navTabs');
+      var navOrigParent = navTabs ? navTabs.parentNode : null;
+      var navOrigNext   = navTabs ? navTabs.nextSibling : null;
       var hamBtn    = document.getElementById('navHamBtn');
       var hamClose  = document.getElementById('navHamClose');
-      function openHamMenu()  { if (navTabs) navTabs.classList.add('open');    if (hamBtn) hamBtn.setAttribute('aria-expanded', 'true'); }
-      function closeHamMenu() { if (navTabs) navTabs.classList.remove('open'); if (hamBtn) hamBtn.setAttribute('aria-expanded', 'false'); }
+      function openHamMenu()  {
+        if (!navTabs) return;
+        document.body.appendChild(navTabs);
+        navTabs.classList.add('open');
+        document.body.style.overflow = 'hidden';
+        if (hamBtn) hamBtn.setAttribute('aria-expanded', 'true');
+      }
+      function closeHamMenu() {
+        if (!navTabs) return;
+        navTabs.classList.remove('open');
+        document.body.style.overflow = '';
+        if (navOrigParent && navTabs.parentNode !== navOrigParent) {
+          navOrigParent.insertBefore(navTabs, navOrigNext);
+        }
+        if (hamBtn) hamBtn.setAttribute('aria-expanded', 'false');
+      }
       if (hamBtn)   hamBtn.addEventListener('click', openHamMenu);
       if (hamClose) hamClose.addEventListener('click', closeHamMenu);
       /* Esc closes the drawer too — common keyboard expectation. */
