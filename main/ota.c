@@ -312,8 +312,18 @@ static void poll_task(void *arg)
                 nvs_close(h);
             }
         }
-        /* Wait for either the poll interval or an explicit wake. */
-        xSemaphoreTake(s_poll_wake, pdMS_TO_TICKS(s_poll_s * 1000));
+        /* Wait for either the poll interval or an explicit wake.
+         *
+         * NOTE: do NOT use pdMS_TO_TICKS(s_poll_s * 1000) here — same
+         * non-SMP FreeRTOS-Kernel overflow as telemetry.c. Anything
+         * over ~11.9 h (uint32 limit / TICK_RATE_HZ) wraps inside the
+         * macro and the sleep ends up minutes instead of hours/days.
+         * OTA_MAX_POLL_S is 7 days, so the macro is unsafe here.
+         * Compute in uint64_t and cast back to TickType_t. */
+        TickType_t poll_ticks =
+            (TickType_t)((uint64_t)s_poll_s * 1000ULL /
+                         (uint64_t)portTICK_PERIOD_MS);
+        xSemaphoreTake(s_poll_wake, poll_ticks);
     }
 }
 
