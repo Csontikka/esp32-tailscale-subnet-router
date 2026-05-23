@@ -981,10 +981,16 @@ static esp_err_t network_scan_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
 
+    /* Passive scan — listens for beacons instead of broadcasting probe
+     * requests. Crucial here because an ACTIVE blocking scan briefly
+     * disassociates the STA, which kills the HTTP TCP socket carrying
+     * this very request and the operator just sees "Scan failed." in
+     * the SPA. Passive keeps the STA link alive throughout. 120 ms
+     * per channel × 13 channels ≈ 1.6 s wall-time. */
     wifi_scan_config_t cfg = {
         .ssid = NULL, .bssid = NULL, .channel = 0, .show_hidden = false,
-        .scan_type = WIFI_SCAN_TYPE_ACTIVE,
-        .scan_time = { .active = { .min = 100, .max = 200 } },
+        .scan_type = WIFI_SCAN_TYPE_PASSIVE,
+        .scan_time = { .passive = 120 },
     };
     if (esp_wifi_scan_start(&cfg, true) != ESP_OK) {
         httpd_resp_send_500(req);
