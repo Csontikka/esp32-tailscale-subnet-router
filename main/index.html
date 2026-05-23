@@ -3142,12 +3142,18 @@
       }
     };
 
-    // RSSI → bars count (1..4) and quality class
+    /* RSSI → bars count (1..4) and quality class.
+     * Single source of truth — used by the Status-tab Uplink card,
+     * the Network-tab scan modal, and the Diagnostics-tab scan list.
+     * One-bar (worst tier) is ALWAYS red: operator feedback was that a
+     * single-bar signal is effectively unusable regardless of whether
+     * the dBm crossed the on-weak/on-poor split, so colour and bar
+     * count now line up 1:1 (4 → green, 3 → soft green, 2 → amber,
+     * 1 → red). */
     function rssiToSignal(rssi) {
       if (rssi >= -55) return { bars: 4, cls: 'on-excellent' };
-      if (rssi >= -65) return { bars: 3, cls: 'on-good' };
+      if (rssi >= -67) return { bars: 3, cls: 'on-good' };
       if (rssi >= -75) return { bars: 2, cls: 'on-fair' };
-      if (rssi >= -85) return { bars: 1, cls: 'on-weak' };
       return { bars: 1, cls: 'on-poor' };
     }
 
