@@ -4486,12 +4486,17 @@
         return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c];
       });
     }
-    function rssiBars(rssi) {
-      if (rssi >= -55) return '████';
-      if (rssi >= -65) return '███░';
-      if (rssi >= -75) return '██░░';
-      if (rssi >= -85) return '█░░░';
-      return '░░░░';
+    /* Inline-renderable variant of renderSignalBars() — returns a fully
+     * formed .signal-bars markup string (so the WiFi-scan list can build
+     * each row's bars without juggling unique IDs). Uses the same CSS
+     * component the Status-page Uplink card uses. */
+    function signalBarsHTML(rssi) {
+      var sig = rssiToSignal(rssi);
+      var bars = '';
+      for (var i = 0; i < 4; i++) {
+        bars += '<span class="bar' + (i < sig.bars ? ' ' + sig.cls : '') + '"></span>';
+      }
+      return '<span class="signal-bars" title="' + rssi + ' dBm">' + bars + '</span>';
     }
     function refreshScan() {
       var body = document.getElementById('scan-body');
@@ -4511,7 +4516,7 @@
             html += '<div class="scan-row" data-ssid="' + escapeHtml(n.ssid) + '"'
                   + ' style="padding:0.7rem 1rem; border-bottom:1px solid var(--border);'
                   + ' cursor:pointer; display:flex; align-items:center; gap:0.75rem;">'
-                  + '<span style="font-family:var(--font-mono); color:var(--accent); width:3rem;">' + rssiBars(n.rssi) + '</span>'
+                  + '<span style="display:inline-flex; align-items:center; width:3rem;">' + signalBarsHTML(n.rssi) + '</span>'
                   + '<span style="flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">' + escapeHtml(n.ssid || '(hidden)') + '</span>'
                   + '<span style="color:var(--text-muted); font-size:0.85rem;">ch' + n.channel + '</span>'
                   + '<span style="color:var(--text-muted); font-size:0.85rem; width:4rem; text-align:right;">' + n.rssi + ' dBm</span>'
