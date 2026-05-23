@@ -4504,13 +4504,50 @@
       }
       return '<span class="signal-bars" title="' + rssi + ' dBm">' + bars + '</span>';
     }
-    function refreshScan() {
-      var body = document.getElementById('scan-body');
-      body.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--text-muted);">Scanning…</div>';
+    /* Two-step async WiFi scan helper.
+     *   GET /api/network/scan         → kicks a non-blocking scan (or
+     *                                   no-ops if one's already in flight)
+     *   GET /api/network/scan/result  → polled every 500 ms until status
+     *                                   flips from "scanning" to "ready"
+     * The HTTP server is never held for more than ~10 ms by either call,
+     * so concurrent fetches no longer pile up behind a blocking scan.
+     *
+     * opts: { onScanning, onReady(networks, age_ms), onError(reason), timeoutMs }
+     */
+    function scanWifi(opts) {
+      var deadline = Date.now() + (opts.timeoutMs || 10000);
       apiFetch('/api/network/scan')
         .then(function (r) { return r.json(); })
         .then(function (d) {
-          var nets = (d && d.networks) || [];
+          if (d.status === 'error') return opts.onError(d.reason || 'start-failed');
+          if (opts.onScanning) opts.onScanning();
+          var poll = function () {
+            apiFetch('/api/network/scan/result')
+              .then(function (r) { return r.json(); })
+              .then(function (d) {
+                if (d.status === 'ready') {
+                  return opts.onReady(d.networks || [], d.age_ms || 0);
+                }
+                if (Date.now() < deadline) {
+                  setTimeout(poll, 500);
+                } else {
+                  opts.onError('timeout');
+                }
+              })
+              .catch(function () { opts.onError('poll-failed'); });
+          };
+          /* First poll after a short head-start — the passive scan takes
+           * ~1.6 s, no point hammering the result endpoint sooner. */
+          setTimeout(poll, 800);
+        })
+        .catch(function () { opts.onError('start-failed'); });
+    }
+
+    function refreshScan() {
+      var body = document.getElementById('scan-body');
+      body.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--text-muted);">Scanning…</div>';
+      scanWifi({
+        onReady: function (nets) {
           nets.sort(function (a, b) { return b.rssi - a.rssi; });
           if (!nets.length) {
             body.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--text-muted);">No networks found.</div>';
@@ -4541,10 +4578,11 @@
               document.getElementById('scanModal').classList.remove('open');
             });
           });
-        })
-        .catch(function () {
-          body.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--danger);">Scan failed.</div>';
-        });
+        },
+        onError: function (reason) {
+          body.innerHTML = '<div style="padding:1.5rem; text-align:center; color:var(--danger);">Scan failed: ' + escapeHtml(reason) + '</div>';
+        }
+      });
     }
     /* Scan modal — opened per network row via its own Scan button.
      * Cancel/refresh/backdrop-click stay shared. */
@@ -5756,11 +5794,9 @@
       var body = document.getElementById('tool-scan-body');
       btn.disabled = true;
       btn.textContent = 'Scanning…';
-      body.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">Scanning… (~3 s)</div>';
-      apiFetch('/api/network/scan')
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          var nets = (d && d.networks) || [];
+      body.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">Scanning… (~2 s)</div>';
+      scanWifi({
+        onReady: function (nets) {
           nets.sort(function (a, b) { return b.rssi - a.rssi; });
           if (!nets.length) {
             body.innerHTML = '<div style="padding:1rem; color:var(--text-muted);">No networks found.</div>';
@@ -5780,11 +5816,13 @@
           });
           html += '</tbody></table></div>';
           body.innerHTML = html;
-        })
-        .catch(function () {
-          body.innerHTML = '<div style="padding:1rem; color:var(--danger);">Scan failed.</div>';
-        })
-        .finally(function () { btn.disabled = false; btn.textContent = 'Run scan'; });
+          btn.disabled = false; btn.textContent = 'Run scan';
+        },
+        onError: function (reason) {
+          body.innerHTML = '<div style="padding:1rem; color:var(--danger);">Scan failed: ' + escapeHtml(reason) + '</div>';
+          btn.disabled = false; btn.textContent = 'Run scan';
+        }
+      });
     });
 
     // =====================================================================

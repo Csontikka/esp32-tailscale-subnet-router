@@ -977,51 +977,125 @@ static const char *wifi_authmode_str(wifi_auth_mode_t m)
     }
 }
 
+/* === Async WiFi scan ====================================================
+ *
+ * The old handler called esp_wifi_scan_start(blocking=true), which held
+ * the single httpd-server task in a wait state for ~2 s per call. Any
+ * other HTTP request landing in that window queued up and frequently
+ * timed out client-side. The SPA-load alone fires 5–7 parallel fetches.
+ *
+ * Now: the GET /api/network/scan handler just KICKS a scan
+ * (non-blocking) and returns immediately. The actual scan result lands
+ * in s_scan_cache via the WIFI_EVENT_SCAN_DONE event handler. SPA
+ * polls /api/network/scan/result every 500 ms until status == "ready".
+ *
+ * Handler latency goes from ~2 s to <10 ms; concurrent requests are
+ * no longer serialised behind it. */
+
+typedef enum {
+    SCAN_IDLE = 0,
+    SCAN_RUNNING,
+    SCAN_READY,
+    SCAN_ERROR,
+} scan_state_t;
+
+#define SCAN_CACHE_MAX 32
+static volatile scan_state_t s_scan_state    = SCAN_IDLE;
+static uint16_t              s_scan_count    = 0;
+static wifi_ap_record_t      s_scan_cache[SCAN_CACHE_MAX];
+static uint32_t              s_scan_done_ms  = 0;
+static SemaphoreHandle_t     s_scan_mutex    = NULL;
+
+static void scan_done_event(void *arg, esp_event_base_t base, int32_t id, void *data)
+{
+    (void)arg; (void)data;
+    if (base != WIFI_EVENT || id != WIFI_EVENT_SCAN_DONE) return;
+    uint16_t n = 0;
+    esp_wifi_scan_get_ap_num(&n);
+    if (n > SCAN_CACHE_MAX) n = SCAN_CACHE_MAX;
+    xSemaphoreTake(s_scan_mutex, portMAX_DELAY);
+    if (n) esp_wifi_scan_get_ap_records(&n, s_scan_cache);
+    s_scan_count   = n;
+    s_scan_done_ms = (uint32_t)(esp_timer_get_time() / 1000);
+    s_scan_state   = SCAN_READY;
+    xSemaphoreGive(s_scan_mutex);
+    ESP_LOGI("web_ui", "async scan done: %u networks", (unsigned)n);
+}
+
+/* Lazy init — first scan request creates the mutex + subscribes to the
+ * SCAN_DONE event. Keeps the init footprint zero until somebody actually
+ * uses the scan endpoint. */
+static void scan_init_once(void)
+{
+    if (s_scan_mutex) return;
+    s_scan_mutex = xSemaphoreCreateMutex();
+    esp_event_handler_register(WIFI_EVENT, WIFI_EVENT_SCAN_DONE,
+                                scan_done_event, NULL);
+}
+
 static esp_err_t network_scan_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    scan_init_once();
 
-    /* Passive scan — listens for beacons instead of broadcasting probe
-     * requests. Crucial here because an ACTIVE blocking scan briefly
-     * disassociates the STA, which kills the HTTP TCP socket carrying
-     * this very request and the operator just sees "Scan failed." in
-     * the SPA. Passive keeps the STA link alive throughout. 120 ms
-     * per channel × 13 channels ≈ 1.6 s wall-time. */
-    wifi_scan_config_t cfg = {
-        .ssid = NULL, .bssid = NULL, .channel = 0, .show_hidden = false,
-        .scan_type = WIFI_SCAN_TYPE_PASSIVE,
-        .scan_time = { .passive = 120 },
-    };
-    if (esp_wifi_scan_start(&cfg, true) != ESP_OK) {
-        httpd_resp_send_500(req);
-        return ESP_FAIL;
-    }
+    xSemaphoreTake(s_scan_mutex, portMAX_DELAY);
+    bool kick = (s_scan_state != SCAN_RUNNING);
+    if (kick) s_scan_state = SCAN_RUNNING;
+    xSemaphoreGive(s_scan_mutex);
 
-    uint16_t n = 0;
-    esp_wifi_scan_get_ap_num(&n);
-    if (n > 32) n = 32;
-
-    wifi_ap_record_t *recs = NULL;
-    if (n) {
-        recs = calloc(n, sizeof *recs);
-        if (!recs) {
-            httpd_resp_send_500(req);
-            return ESP_FAIL;
+    if (kick) {
+        /* Passive scan — listens for beacons, never disassociates the
+         * STA (which used to kill the very TCP socket carrying this
+         * request back in the synchronous era). */
+        wifi_scan_config_t cfg = {
+            .ssid = NULL, .bssid = NULL, .channel = 0, .show_hidden = false,
+            .scan_type = WIFI_SCAN_TYPE_PASSIVE,
+            .scan_time = { .passive = 120 },
+        };
+        if (esp_wifi_scan_start(&cfg, false) != ESP_OK) {
+            xSemaphoreTake(s_scan_mutex, portMAX_DELAY);
+            s_scan_state = SCAN_ERROR;
+            xSemaphoreGive(s_scan_mutex);
+            httpd_resp_set_type(req, "application/json");
+            return httpd_resp_sendstr(req,
+                "{\"status\":\"error\",\"reason\":\"esp_wifi_scan_start failed\"}");
         }
-        esp_wifi_scan_get_ap_records(&n, recs);
     }
+
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, "{\"status\":\"scanning\"}");
+}
+
+static esp_err_t network_scan_result_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    scan_init_once();
 
     cJSON *root = cJSON_CreateObject();
     cJSON *arr  = cJSON_CreateArray();
+
+    xSemaphoreTake(s_scan_mutex, portMAX_DELAY);
+    scan_state_t st = s_scan_state;
+    uint16_t n = (st == SCAN_READY) ? s_scan_count : 0;
+    uint32_t age = (st == SCAN_READY)
+        ? ((uint32_t)(esp_timer_get_time() / 1000) - s_scan_done_ms)
+        : 0;
     for (uint16_t i = 0; i < n; i++) {
         cJSON *e = cJSON_CreateObject();
-        cJSON_AddStringToObject(e, "ssid",    (const char *)recs[i].ssid);
-        cJSON_AddNumberToObject(e, "rssi",    recs[i].rssi);
-        cJSON_AddNumberToObject(e, "channel", recs[i].primary);
-        cJSON_AddStringToObject(e, "auth",    wifi_authmode_str(recs[i].authmode));
+        cJSON_AddStringToObject(e, "ssid",    (const char *)s_scan_cache[i].ssid);
+        cJSON_AddNumberToObject(e, "rssi",    s_scan_cache[i].rssi);
+        cJSON_AddNumberToObject(e, "channel", s_scan_cache[i].primary);
+        cJSON_AddStringToObject(e, "auth",    wifi_authmode_str(s_scan_cache[i].authmode));
         cJSON_AddItemToArray(arr, e);
     }
-    free(recs);
+    xSemaphoreGive(s_scan_mutex);
+
+    const char *status_str = "idle";
+    if (st == SCAN_RUNNING) status_str = "scanning";
+    else if (st == SCAN_READY) status_str = "ready";
+    else if (st == SCAN_ERROR) status_str = "error";
+    cJSON_AddStringToObject(root, "status", status_str);
+    cJSON_AddNumberToObject(root, "age_ms", age);
     cJSON_AddItemToObject(root, "networks", arr);
 
     char *body = cJSON_PrintUnformatted(root);
@@ -1036,6 +1110,13 @@ static const httpd_uri_t uri_network_scan = {
     .uri      = "/api/network/scan",
     .method   = HTTP_GET,
     .handler  = network_scan_handler,
+    .user_ctx = NULL,
+};
+
+static const httpd_uri_t uri_network_scan_result = {
+    .uri      = "/api/network/scan/result",
+    .method   = HTTP_GET,
+    .handler  = network_scan_result_handler,
     .user_ctx = NULL,
 };
 
@@ -3316,6 +3397,15 @@ void web_ui_init(void)
     config.stack_size       = 12288; /* +50 % over default — multi-net POST
                                       * pushes cJSON parse + handler locals
                                       * past the previous 8 KB ceiling. */
+    /* SPA opens 5-7 parallel fetches on first paint (/api/status,
+     * /api/tailscale, /api/system, /api/log/precrash, …); the default
+     * 7-socket pool ran out the moment anything slow held the handler
+     * thread. Bumping to 13 + LRU-eviction so a stale/abandoned socket
+     * gets dropped instead of blocking a fresh request. Doesn't fix
+     * the single-handler serialisation by itself — see the async scan
+     * refactor — but stops the connection-level pile-up. */
+    config.max_open_sockets = 13;
+    config.lru_purge_enable = true;
 
     if (httpd_start(&server, &config) != ESP_OK) {
         ESP_LOGE(TAG, "httpd_start failed");
@@ -3326,6 +3416,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_network);
     httpd_register_uri_handler(server, &uri_network_save);
     httpd_register_uri_handler(server, &uri_network_scan);
+    httpd_register_uri_handler(server, &uri_network_scan_result);
     httpd_register_uri_handler(server, &uri_tools_route);
     httpd_register_uri_handler(server, &uri_tools_ping);
     httpd_register_uri_handler(server, &uri_tools_trace);
