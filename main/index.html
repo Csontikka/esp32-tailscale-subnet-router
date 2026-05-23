@@ -1430,9 +1430,9 @@
           <p class="page-subtitle" id="status-updated">Last updated just now</p>
         </div>
         <div class="page-header-actions">
-          <span class="badge badge-success" id="overall-badge">
-            <span class="badge-dot badge-dot-pulse"></span>
-            Online
+          <span class="badge badge-neutral" id="overall-badge">
+            <span class="badge-dot"></span>
+            Loading…
           </span>
         </div>
       </div>
@@ -3374,6 +3374,15 @@
       var refreshIcon = document.querySelector('#refreshBtn svg');
       if (refreshIcon) refreshIcon.style.animation = 'spin 0.7s linear infinite';
 
+      /* Show a "Refreshing…" pill until the response comes back. Without
+       * this the badge keeps the last-known state (or the markup default
+       * "Loading…") and the operator can't tell whether the data on screen
+       * is current or stale. applyStatus() flips it to Online / Degraded
+       * once data lands; the catch arm sets Unreachable on real failure. */
+      var ob = document.getElementById('overall-badge');
+      ob.className = 'badge badge-info';
+      ob.innerHTML = '<span class="badge-dot badge-dot-pulse"></span> Refreshing…';
+
       fetch('/api/status', { credentials: 'same-origin' })
         .then(function (r) {
           if (r.status === 401) {
@@ -3388,8 +3397,16 @@
         })
         .catch(function (err) {
           if (err && err.message === '401') return; // already handled
-          // Running standalone from filesystem — use sample data silently
-          applyStatus(SAMPLE_STATUS);
+          /* file:// preview-mode fallback: when the SPA is opened
+           * straight from disk for design work there is no API, so we
+           * paint sample data. On the real device a fetch failure is
+           * an honest error — surface it. */
+          if (location.protocol === 'file:') {
+            applyStatus(SAMPLE_STATUS);
+            return;
+          }
+          ob.className = 'badge badge-danger';
+          ob.innerHTML = '<span class="badge-dot"></span> Unreachable';
         })
         .finally(function () {
           if (refreshIcon) refreshIcon.style.animation = '';
