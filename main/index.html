@@ -2491,19 +2491,19 @@
             <div class="form-group">
               <label class="form-label" for="sys-tz">Timezone</label>
               <select class="input" id="sys-tz">
-                <option value="">UTC</option>
-                <option value="CET-1CEST,M3.5.0,M10.5.0/3">Europe/Budapest, Berlin, Paris, Rome, Madrid (CET/CEST)</option>
-                <option value="EET-2EEST,M3.5.0/3,M10.5.0/4">Europe/Helsinki, Athens, Bucharest (EET/EEST)</option>
-                <option value="GMT0BST,M3.5.0/1,M10.5.0">Europe/London (GMT/BST)</option>
-                <option value="WET0WEST,M3.5.0/1,M10.5.0">Europe/Lisbon (WET/WEST)</option>
-                <option value="EST5EDT,M3.2.0,M11.1.0">America/New_York, Toronto (EST/EDT)</option>
-                <option value="CST6CDT,M3.2.0,M11.1.0">America/Chicago (CST/CDT)</option>
-                <option value="MST7MDT,M3.2.0,M11.1.0">America/Denver (MST/MDT)</option>
-                <option value="PST8PDT,M3.2.0,M11.1.0">America/Los_Angeles (PST/PDT)</option>
-                <option value="JST-9">Asia/Tokyo, Seoul (JST, no DST)</option>
-                <option value="CST-8">Asia/Shanghai, Singapore, Taipei (CST, no DST)</option>
-                <option value="IST-5:30">Asia/Kolkata (IST, no DST)</option>
-                <option value="AEST-10AEDT,M10.1.0,M4.1.0/3">Australia/Sydney, Melbourne (AEST/AEDT)</option>
+                <option value="">UTC (UTC+0)</option>
+                <option value="CET-1CEST,M3.5.0,M10.5.0/3">UTC+1 / +2 — Europe/Budapest, Berlin, Paris, Rome, Madrid (CET/CEST)</option>
+                <option value="EET-2EEST,M3.5.0/3,M10.5.0/4">UTC+2 / +3 — Europe/Helsinki, Athens, Bucharest (EET/EEST)</option>
+                <option value="GMT0BST,M3.5.0/1,M10.5.0">UTC+0 / +1 — Europe/London (GMT/BST)</option>
+                <option value="WET0WEST,M3.5.0/1,M10.5.0">UTC+0 / +1 — Europe/Lisbon (WET/WEST)</option>
+                <option value="EST5EDT,M3.2.0,M11.1.0">UTC−5 / −4 — America/New_York, Toronto (EST/EDT)</option>
+                <option value="CST6CDT,M3.2.0,M11.1.0">UTC−6 / −5 — America/Chicago (CST/CDT)</option>
+                <option value="MST7MDT,M3.2.0,M11.1.0">UTC−7 / −6 — America/Denver (MST/MDT)</option>
+                <option value="PST8PDT,M3.2.0,M11.1.0">UTC−8 / −7 — America/Los_Angeles (PST/PDT)</option>
+                <option value="JST-9">UTC+9 — Asia/Tokyo, Seoul (JST, no DST)</option>
+                <option value="CST-8">UTC+8 — Asia/Shanghai, Singapore, Taipei (CST, no DST)</option>
+                <option value="IST-5:30">UTC+5:30 — Asia/Kolkata (IST, no DST)</option>
+                <option value="AEST-10AEDT,M10.1.0,M4.1.0/3">UTC+10 / +11 — Australia/Sydney, Melbourne (AEST/AEDT)</option>
               </select>
               <span class="form-hint">Applied at next boot for log timestamps. Picks a POSIX rule under the hood — DST handled automatically.</span>
             </div>
@@ -3034,9 +3034,21 @@
     // =====================================================================
     var _modalCallback = null;
 
-    function showConfirm(title, body, onConfirm) {
+    /* showConfirm — opts.body can be plain text or HTML (when opts.html
+     * is true). opts.confirmText / cancelText override the default
+     * "Confirm" / "Cancel" labels. opts.danger=false uses the accent
+     * primary style instead of the destructive red one (handy for
+     * non-destructive prompts like "Apply this change?"). */
+    function showConfirm(title, body, onConfirm, opts) {
+      opts = opts || {};
       document.getElementById('modal-title').textContent = title;
-      document.getElementById('modal-body').textContent = body;
+      var bodyEl = document.getElementById('modal-body');
+      if (opts.html) bodyEl.innerHTML = body;
+      else           bodyEl.textContent = body;
+      var btn = document.getElementById('modal-confirm');
+      btn.textContent = opts.confirmText || 'Confirm';
+      btn.className = 'btn btn-md ' + (opts.danger === false ? 'btn-primary' : 'btn-danger');
+      document.getElementById('modal-cancel').textContent = opts.cancelText || 'Cancel';
       _modalCallback = onConfirm;
       document.getElementById('confirmModal').classList.add('open');
     }
@@ -4412,25 +4424,31 @@
      * /api/tailscale. Failure is non-fatal; same edit can be done by
      * hand on the Tailscale tab. */
     function offerAddApCidr(cidr, proposedRoutes) {
-      var msg = 'AP subnet is now ' + cidr + '.\n\n'
-              + 'Advertised routes will become:\n'
-              + '──────────────────────────\n'
-              + (proposedRoutes || cidr) + '\n'
-              + '──────────────────────────\n\n'
-              + 'Apply this change?';
-      if (!confirm(msg)) return;
-      apiFetch('/api/tailscale', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settings: { advertise_routes: proposedRoutes || cidr } })
-      }).then(function (r) { if (!r.ok) throw 0; })
-        .then(function () {
-          showToast('success', 'Routes updated', 'New advertised routes saved. Reboot to apply.', 5000);
-          if (typeof loadTailscale === 'function') loadTailscale();
-        })
-        .catch(function () {
-          showToast('error', 'Update failed', 'Could not write — edit manually on the Tailscale tab.', 6000);
-        });
+      var newRoutes = proposedRoutes || cidr;
+      showConfirm(
+        'Update advertised routes?',
+        '<p style="margin:0 0 0.6rem 0;">The AP subnet changed to <code class="mono">' + escapeHtml(cidr) + '</code>. '
+        + 'Tailscale needs to advertise the new range so remote peers can still reach the LAN.</p>'
+        + '<p style="margin:0 0 0.3rem 0; color:var(--fg-muted); font-size:var(--text-xs); text-transform:uppercase; letter-spacing:0.05em;">New advertised routes</p>'
+        + '<pre class="mono" style="margin:0 0 0.6rem 0; padding:0.5rem 0.7rem; background:var(--bg-elevated); border:1px solid var(--border); border-radius:4px; font-size:var(--text-sm); word-break:break-all; white-space:pre-wrap;">'
+        + escapeHtml(newRoutes) + '</pre>'
+        + '<p style="margin:0; color:var(--fg-muted); font-size:var(--text-xs);">Takes effect after the next reboot.</p>',
+        function () {
+          apiFetch('/api/tailscale', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ settings: { advertise_routes: newRoutes } })
+          }).then(function (r) { if (!r.ok) throw 0; })
+            .then(function () {
+              showToast('success', 'Routes updated', 'New advertised routes saved. Reboot to apply.', 5000);
+              if (typeof loadTailscale === 'function') loadTailscale();
+            })
+            .catch(function () {
+              showToast('error', 'Update failed', 'Could not write — edit manually on the Tailscale tab.', 6000);
+            });
+        },
+        { html: true, confirmText: 'Apply', danger: false }
+      );
     }
 
     /* Save the whole network list. */
@@ -4780,28 +4798,45 @@
         btn.addEventListener('click', function () {
           var mac  = this.dataset.mac;
           var name = this.dataset.name || '';
-          if (!confirm('Deny ' + mac + ' from associating to this AP?\n\nIt will be added to the denylist and kicked. Remove from the Denied MACs card to allow it again.')) return;
-          if (s_deny_list.some(function (e) { return (e.mac || '').toLowerCase() === mac.toLowerCase(); })) {
-            showToast('info', 'Already denied', mac + ' is already on the list.', 3500);
-            return;
-          }
-          if (s_deny_list.length >= s_deny_max) {
-            showToast('error', 'Denylist full', 'Max ' + s_deny_max + ' MACs. Remove one first.', 5000);
-            return;
-          }
-          var next = s_deny_list.concat([{ mac: mac, name: name }]);
-          saveDenylist(next, function () {
-            showToast('success', 'Denied', mac + ' — kicked + blocked.', 4000);
-            setTimeout(loadDhcpLeases, 1500);
-          });
+          showConfirm(
+            'Deny this client?',
+            '<p style="margin:0 0 0.5rem 0;">Block <code class="mono">' + escapeHtml(mac) + '</code>'
+            + (name ? ' (<strong>' + escapeHtml(name) + '</strong>)' : '')
+            + ' from associating to this AP.</p>'
+            + '<ul style="margin:0 0 0.5rem 1.2rem; padding:0; color:var(--fg-secondary); font-size:var(--text-sm);">'
+            +   '<li>Added to the AP denylist immediately</li>'
+            +   '<li>Currently-connected client is kicked</li>'
+            +   '<li>The MAC cannot re-associate until removed from <em>Denied MACs</em></li>'
+            + '</ul>',
+            function () {
+              if (s_deny_list.some(function (e) { return (e.mac || '').toLowerCase() === mac.toLowerCase(); })) {
+                showToast('info', 'Already denied', mac + ' is already on the list.', 3500);
+                return;
+              }
+              if (s_deny_list.length >= s_deny_max) {
+                showToast('error', 'Denylist full', 'Max ' + s_deny_max + ' MACs. Remove one first.', 5000);
+                return;
+              }
+              var next = s_deny_list.concat([{ mac: mac, name: name }]);
+              saveDenylist(next, function () {
+                showToast('success', 'Denied', mac + ' — kicked + blocked.', 4000);
+                setTimeout(loadDhcpLeases, 1500);
+              });
+            },
+            { html: true, confirmText: 'Deny', danger: true }
+          );
         });
       });
       document.querySelectorAll('.dhcp-kick').forEach(function (btn) {
         btn.addEventListener('click', function () {
           var mac = this.dataset.mac;
-          if (!confirm('Kick client ' + mac + '?\nIt will be deauthed and have to reconnect — that re-runs DHCP so any new reservation takes effect.')) return;
           var b = this;
-          b.disabled = true; b.textContent = 'Kicking…';
+          showConfirm(
+            'Kick this client?',
+            '<p style="margin:0 0 0.5rem 0;">Deauth <code class="mono">' + escapeHtml(mac) + '</code> from the AP.</p>'
+            + '<p style="margin:0; color:var(--fg-muted); font-size:var(--text-xs);">The client will reconnect automatically and re-run DHCP, so any pending reservation takes effect on the next lease. The MAC is <strong>not</strong> blocked — for a permanent block use Deny instead.</p>',
+            function () {
+              b.disabled = true; b.textContent = 'Kicking…';
           apiFetch('/api/dhcp/kick', {
             method:  'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -4819,6 +4854,9 @@
               showToast('error', 'Kick failed', 'Network error.', 5000);
               b.disabled = false; b.textContent = 'Kick';
             });
+            },
+            { html: true, confirmText: 'Kick', danger: true }
+          );
         });
       });
     }
@@ -5403,23 +5441,36 @@
      * register attempt gets a fresh node-key the control plane will
      * see as a brand-new node. */
     document.getElementById('ts-reset-identity').addEventListener('click', function () {
-      if (!confirm('Regenerate the device node identity?\n\n• Erases the stored WireGuard / machine / DISCO keys\n• Erases the cached peer table\n• Reboots the device\n\nAfter the reboot, the next Tailscale register will look like a brand-new node to the control plane.\n\nThe operator auth-key on the Headscale side may need to be valid + unused for the new register to succeed.')) return;
       var btn = this;
-      btn.disabled = true; btn.textContent = 'Regenerating…';
-      apiFetch('/api/tailscale/reset_identity', { method: 'POST' })
-        .then(function (r) { return r.json(); })
-        .then(function (d) {
-          if (d.ok) {
-            showToast('success', 'Identity wiped', 'Device is rebooting — refresh in ~10 s.', 8000);
-          } else {
-            showToast('error', 'Reset failed', d.reason || 'unknown', 6000);
-            btn.disabled = false; btn.textContent = 'Regenerate identity…';
-          }
-        })
-        .catch(function () {
-          showToast('error', 'Reset failed', 'Network error.', 5000);
-          btn.disabled = false; btn.textContent = 'Regenerate identity…';
-        });
+      showConfirm(
+        'Regenerate device identity?',
+        '<p style="margin:0 0 0.75rem 0;">This action <strong>cannot be undone</strong> and forces the device to register as a brand-new node next time it talks to the control plane.</p>'
+        + '<p style="margin:0 0 0.4rem 0; color:var(--fg-muted); font-size:var(--text-xs); text-transform:uppercase; letter-spacing:0.05em;">What happens</p>'
+        + '<ul style="margin:0 0 0.75rem 1.2rem; padding:0; color:var(--fg-secondary);">'
+        +   '<li>Erases stored WireGuard / machine / DISCO keys</li>'
+        +   '<li>Erases the cached peer table</li>'
+        +   '<li>Reboots the device</li>'
+        + '</ul>'
+        + '<p style="margin:0; color:var(--fg-muted); font-size:var(--text-xs);">Make sure the Headscale auth-key is still valid and unused — otherwise the device will boot with a fresh identity and fail to register.</p>',
+        function () {
+          btn.disabled = true; btn.textContent = 'Regenerating…';
+          apiFetch('/api/tailscale/reset_identity', { method: 'POST' })
+            .then(function (r) { return r.json(); })
+            .then(function (d) {
+              if (d.ok) {
+                showToast('success', 'Identity wiped', 'Device is rebooting — refresh in ~10 s.', 8000);
+              } else {
+                showToast('error', 'Reset failed', d.reason || 'unknown', 6000);
+                btn.disabled = false; btn.textContent = 'Regenerate identity…';
+              }
+            })
+            .catch(function () {
+              showToast('error', 'Reset failed', 'Network error.', 5000);
+              btn.disabled = false; btn.textContent = 'Regenerate identity…';
+            });
+        },
+        { html: true, confirmText: 'Regenerate', danger: true }
+      );
     });
     document.getElementById('ts-auth-show').addEventListener('click', function () {
       var inp = document.getElementById('ts-auth-key');
