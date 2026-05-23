@@ -5765,7 +5765,7 @@
                    + '</tr></thead><tbody>';
           nets.forEach(function (n) {
             html += '<tr>'
-              + '<td style="font-family:var(--font-mono); color:var(--accent);">' + rssiBars(n.rssi) + '</td>'
+              + '<td>' + signalBarsHTML(n.rssi) + '</td>'
               + '<td>' + escapeHtml(n.ssid || '(hidden)') + '</td>'
               + '<td>' + n.channel + '</td>'
               + '<td>' + n.rssi + ' dBm</td>'
