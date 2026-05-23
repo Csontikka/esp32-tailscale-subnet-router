@@ -3076,16 +3076,22 @@
       renderSignalBars('uplink-signal-bars', ul.rssi != null ? ul.rssi : -90);
 
       var uplinkBadge = document.getElementById('uplink-status-badge');
+      var overall    = document.getElementById('overall-badge');
       if (ul.connected) {
         uplinkBadge.className = 'badge badge-success';
         uplinkBadge.textContent = 'Connected';
         document.getElementById('card-uplink').className = 'card card-stripe-success';
+        /* Restore overall-badge to Online — a momentary disconnect on an
+         * earlier tick used to bump it to Degraded and the badge stayed
+         * stuck until the operator reloaded the page. */
+        overall.className = 'badge badge-success';
+        overall.innerHTML = '<span class="badge-dot badge-dot-pulse"></span> Online';
       } else {
         uplinkBadge.className = 'badge badge-danger';
         uplinkBadge.textContent = 'Disconnected';
         document.getElementById('card-uplink').className = 'card card-stripe-danger';
-        document.getElementById('overall-badge').className = 'badge badge-warning';
-        document.getElementById('overall-badge').innerHTML = '<span class="badge-dot"></span> Degraded';
+        overall.className = 'badge badge-warning';
+        overall.innerHTML = '<span class="badge-dot"></span> Degraded';
       }
 
       // AP
