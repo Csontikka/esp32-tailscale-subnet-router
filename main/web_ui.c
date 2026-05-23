@@ -6,6 +6,7 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_http_server.h"
+#include "esp_https_server.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
@@ -32,6 +33,7 @@
 #include "portmap.h"
 #include "mac_deny.h"
 #include "reset_history.h"
+#include "https_cert.h"
 #include "ota.h"
 #include <stdlib.h>
 #include <time.h>
@@ -3545,24 +3547,45 @@ void web_ui_init(void)
      * persisted Max-Age instead of the compile-time default. */
     session_timeout_load();
 
-    httpd_config_t config   = HTTPD_DEFAULT_CONFIG();
-    config.uri_match_fn     = httpd_uri_match_wildcard;
-    config.max_uri_handlers = 48;   /* we have 36 today + room to grow */
-    config.stack_size       = 12288; /* +50 % over default — multi-net POST
-                                      * pushes cJSON parse + handler locals
-                                      * past the previous 8 KB ceiling. */
-    /* SPA opens 5-7 parallel fetches on first paint (/api/status,
-     * /api/tailscale, /api/system, /api/log/precrash, …); the default
-     * 7-socket pool ran out the moment anything slow held the handler
-     * thread. Bumping to 13 + LRU-eviction so a stale/abandoned socket
-     * gets dropped instead of blocking a fresh request. Doesn't fix
-     * the single-handler serialisation by itself — see the async scan
-     * refactor — but stops the connection-level pile-up. */
-    config.max_open_sockets = 13;
-    config.lru_purge_enable = true;
+    /* PEM buffers handed to esp_https_server must stay valid for the
+     * lifetime of the server, so they live in static module storage
+     * rather than the start-server stack. */
+    static unsigned char *s_https_crt = NULL;
+    static unsigned char *s_https_key = NULL;
+    size_t crt_len = 0, key_len = 0;
+    if (https_cert_get_or_create(&s_https_crt, &crt_len,
+                                  &s_https_key, &key_len) != ESP_OK) {
+        ESP_LOGE(TAG, "no HTTPS cert — refusing to start web UI");
+        return;
+    }
 
-    if (httpd_start(&server, &config) != ESP_OK) {
-        ESP_LOGE(TAG, "httpd_start failed");
+    httpd_ssl_config_t conf       = HTTPD_SSL_CONFIG_DEFAULT();
+    conf.httpd.uri_match_fn       = httpd_uri_match_wildcard;
+    conf.httpd.max_uri_handlers   = 48;    /* we have 38 today + room to grow */
+    conf.httpd.stack_size         = 12288; /* +50 % over default — multi-net POST
+                                            * pushes cJSON parse + handler
+                                            * locals past the 8 KB ceiling. */
+    /* TLS handshake holds ~16-32 KB of mbedTLS state per connection,
+     * so the 13-socket pool the plain-HTTP server got away with would
+     * starve heap during a parallel SPA fetch storm. 6 leaves plenty
+     * of room for first-paint (5-7 parallel) without blowing 200 KB
+     * of heap on mbedTLS contexts alone. LRU-purge so a half-dropped
+     * connection still rotates out instead of pinning a slot. */
+    conf.httpd.max_open_sockets   = 6;
+    conf.httpd.lru_purge_enable   = true;
+    conf.transport_mode           = HTTPD_SSL_TRANSPORT_SECURE;
+    conf.port_secure              = 443;
+    /* The *_len fields take the buffer size INCLUDING the NUL terminator
+     * for PEM-encoded material — see esp_https_server.h. */
+    conf.servercert               = s_https_crt;
+    conf.servercert_len           = crt_len + 1;
+    conf.prvtkey_pem              = s_https_key;
+    conf.prvtkey_len              = key_len + 1;
+
+    if (httpd_ssl_start(&server, &conf) != ESP_OK) {
+        ESP_LOGE(TAG, "httpd_ssl_start failed");
+        free(s_https_crt); s_https_crt = NULL;
+        free(s_https_key); s_https_key = NULL;
         return;
     }
     httpd_register_uri_handler(server, &uri_index);
@@ -3611,5 +3634,5 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_auth_setup);
     httpd_register_uri_handler(server, &uri_auth_change_password);
     httpd_register_uri_handler(server, &uri_auth_clear_password);
-    ESP_LOGI(TAG, "web UI listening on :%d", config.server_port);
+    ESP_LOGI(TAG, "web UI listening on :%d (HTTPS)", conf.port_secure);
 }

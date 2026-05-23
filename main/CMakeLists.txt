@@ -39,6 +39,7 @@ idf_component_register(SRCS "main.c"
                             "telemetry.c"
                             "lwip_route_hook.c"
                             "web_ui.c"
+                            "https_cert.c"
                             "netif_hooks.c"
                             "wifi_networks.c"
                             "dhcp_reservations.c"
@@ -50,7 +51,7 @@ idf_component_register(SRCS "main.c"
                     PRIV_REQUIRES esp_wifi nvs_flash esp_event esp_netif esp_timer
                                   lwip microlink wpa_supplicant
                                   esp_http_client esp-tls mbedtls
-                                  esp_http_server json esp_app_format
+                                  esp_http_server esp_https_server json esp_app_format
                                   acl syslog pcap_capture remote_console
                                   web_password net_diag dhcpserver
                                   espcoredump dns_relay cli
