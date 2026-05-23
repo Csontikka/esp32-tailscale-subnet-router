@@ -290,6 +290,20 @@ static esp_err_t status_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(tlm, "flash_count", tm.flash_count);
     cJSON_AddItemToObject(root, "telemetry", tlm);
 
+    /* OTA banner hint — minimal subset of /api/system ota{} so the
+     * Status page banner can render without a second round-trip. */
+    {
+        ota_state_t os;
+        ota_get_state(&os);
+        cJSON *o = cJSON_CreateObject();
+        cJSON_AddBoolToObject  (o, "update_available", os.update_available);
+        cJSON_AddBoolToObject  (o, "auto_install",     os.auto_install);
+        cJSON_AddNumberToObject(o, "install_hour",     os.install_hour);
+        cJSON_AddStringToObject(o, "latest_version",   os.last_version);
+        cJSON_AddStringToObject(o, "running_version",  os.running_version);
+        cJSON_AddItemToObject(root, "ota", o);
+    }
+
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     if (!body) {
@@ -2655,17 +2669,21 @@ static esp_err_t system_handler(httpd_req_t *req)
         free(log_buf);
     }
 
-    /* OTA — poller state + last result. The poller updates these from a
-     * background task; the manual upload path leaves them alone. */
+    /* OTA — poller state. Poll period is now a fixed 24 h, not a
+     * setting; the only opt-in is auto_install + a preferred install
+     * hour (-1 = ASAP). update_available drives the Status banner. */
     {
         ota_state_t os;
         ota_get_state(&os);
         cJSON *o = cJSON_CreateObject();
-        cJSON_AddBoolToObject  (o, "auto_enabled",  os.enabled);
-        cJSON_AddNumberToObject(o, "poll_s",        os.poll_s);
-        cJSON_AddNumberToObject(o, "last_check",    os.last_check);
-        cJSON_AddStringToObject(o, "last_version",  os.last_version);
-        cJSON_AddStringToObject(o, "last_status",   os.last_status);
+        cJSON_AddBoolToObject  (o, "auto_install",     os.auto_install);
+        cJSON_AddNumberToObject(o, "install_hour",     os.install_hour);
+        cJSON_AddNumberToObject(o, "last_check",       os.last_check);
+        cJSON_AddStringToObject(o, "running_version",  os.running_version);
+        cJSON_AddStringToObject(o, "last_version",     os.last_version);
+        cJSON_AddStringToObject(o, "release_notes",    os.release_notes);
+        cJSON_AddStringToObject(o, "last_status",      os.last_status);
+        cJSON_AddBoolToObject  (o, "update_available", os.update_available);
         cJSON_AddItemToObject(root, "ota", o);
     }
 
@@ -2781,20 +2799,20 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         if (cJSON_IsBool(en))  telemetry_set_enabled(cJSON_IsTrue(en));
     }
 
-    /* OTA settings — auto-poll toggle + interval. The handler clamps
-     * the interval; sending poll_s=0 picks the default. */
+    /* OTA settings — auto_install toggle + preferred install_hour.
+     * Polling itself is non-configurable (daily). Omitting either
+     * key preserves its current value, so the SPA can PATCH one
+     * field without round-tripping both. */
     const cJSON *o = cJSON_GetObjectItem(root, "ota");
     if (cJSON_IsObject(o)) {
-        const cJSON *en = cJSON_GetObjectItem(o, "auto_enabled");
-        const cJSON *ps = cJSON_GetObjectItem(o, "poll_s");
-        bool     enabled = cJSON_IsBool(en) ? cJSON_IsTrue(en) : false;
-        uint32_t poll_s  = cJSON_IsNumber(ps) ? (uint32_t)ps->valuedouble : 0;
-        if (!cJSON_IsBool(en)) {
-            /* Operator left the toggle unchanged — preserve current. */
-            ota_state_t cur; ota_get_state(&cur);
-            enabled = cur.enabled;
-        }
-        ota_set_settings(enabled, poll_s);
+        ota_state_t cur; ota_get_state(&cur);
+        const cJSON *en = cJSON_GetObjectItem(o, "auto_install");
+        const cJSON *ih = cJSON_GetObjectItem(o, "install_hour");
+        bool auto_install = cJSON_IsBool(en)   ? cJSON_IsTrue(en)
+                                               : cur.auto_install;
+        int  install_hour = cJSON_IsNumber(ih) ? (int)ih->valuedouble
+                                               : cur.install_hour;
+        ota_set_settings(auto_install, install_hour);
     }
 
     /* Syslog block — { enabled, server, port }. Toggling enabled fires
@@ -2916,6 +2934,32 @@ static esp_err_t system_ota_poll_handler(httpd_req_t *req)
 }
 static const httpd_uri_t uri_system_ota_poll = {
     .uri = "/api/system/ota/poll", .method = HTTP_POST, .handler = system_ota_poll_handler,
+};
+
+/* Operator-driven "install now" — applies the cached pending update
+ * (set by the latest poll) and reboots. No-op if update_available
+ * is false. */
+static esp_err_t system_ota_install_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    ota_state_t cur; ota_get_state(&cur);
+    if (!cur.update_available) {
+        httpd_resp_set_type(req, "application/json");
+        return httpd_resp_sendstr(req,
+            "{\"ok\":false,\"reason\":\"no update available\"}");
+    }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t e = httpd_resp_sendstr(req,
+        "{\"ok\":true,\"reboot_required\":true}");
+    /* Fire-and-forget so the HTTP response gets flushed before the
+     * blocking download begins. ota_install_now() reboots on success. */
+    xTaskCreate((TaskFunction_t)ota_install_now, "ota_inst",
+                6144, NULL, 3, NULL);
+    return e;
+}
+static const httpd_uri_t uri_system_ota_install = {
+    .uri = "/api/system/ota/install", .method = HTTP_POST,
+    .handler = system_ota_install_handler,
 };
 
 /* ---- Session management -------------------------------------------------
@@ -3306,6 +3350,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_system_factory_reset);
     httpd_register_uri_handler(server, &uri_system_ota);
     httpd_register_uri_handler(server, &uri_system_ota_poll);
+    httpd_register_uri_handler(server, &uri_system_ota_install);
     httpd_register_uri_handler(server, &uri_system_debug_crash);
     httpd_register_uri_handler(server, &uri_auth_status);
     httpd_register_uri_handler(server, &uri_auth_login);

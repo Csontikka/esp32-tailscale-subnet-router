@@ -1437,6 +1437,26 @@
         </div>
       </div>
 
+      <!-- Firmware-update banner — surfaced only when the OTA poller saw a
+           newer release than what's currently running. Clicking it jumps
+           to the System tab OTA card. -->
+      <div id="status-ota-banner" class="card mb-4" role="alert" tabindex="0"
+           style="display:none; cursor:pointer; padding:0.75rem 1rem;
+                  background:var(--warning-muted); border:1px solid var(--warning-border);
+                  display:none; align-items:center; gap:0.75rem;">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/>
+          <line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <div style="flex:1;">
+          <strong>Firmware update available:</strong>
+          <span class="mono" id="status-ota-banner-version">—</span>
+          <span class="form-hint" id="status-ota-banner-detail" style="margin-left:0.5rem;"></span>
+        </div>
+        <span style="color:var(--warning); font-weight:var(--weight-semibold);">View →</span>
+      </div>
+
       <!-- Row 1: Uplink + AP (side by side on tablet+) -->
       <div class="grid grid-cols-2 mb-4">
 
@@ -2476,29 +2496,43 @@
           <span class="badge badge-neutral" id="sys-ota-badge">—</span>
         </div>
         <div class="card-body">
-          <p class="form-hint" style="margin:0 0 0.75rem 0;">Upload a <code class="mono">firmware.bin</code> directly, or enable the periodic check against the project's GitHub Releases. The device reboots into the new partition after a successful flash.</p>
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="sys-ota-auto"> Periodically check GitHub for new releases
-            </label>
-          </div>
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">The device checks the project's GitHub Releases once a day and right after boot. You can opt in to automatic install, pick a preferred install hour, or apply updates manually.</p>
           <div class="grid grid-cols-2">
-            <div class="form-group">
-              <label class="form-label" for="sys-ota-poll">Check interval</label>
-              <select class="input" id="sys-ota-poll">
-                <option value="3600">Every hour</option>
-                <option value="21600" selected>Every 6 hours</option>
-                <option value="86400">Daily</option>
-                <option value="604800">Weekly</option>
-              </select>
+            <div class="stat-row" style="border-top:none;">
+              <span class="stat-label">Running</span>
+              <span class="stat-value mono" id="sys-ota-running">—</span>
             </div>
-            <div class="form-group">
-              <label class="form-label">Last check</label>
-              <div class="stat-value mono" id="sys-ota-last">—</div>
-              <span class="form-hint" id="sys-ota-status">—</span>
+            <div class="stat-row" style="border-top:none;">
+              <span class="stat-label">Latest seen</span>
+              <span class="stat-value mono" id="sys-ota-latest">—</span>
+            </div>
+            <div class="stat-row" style="border-top:none;">
+              <span class="stat-label">Last check</span>
+              <span class="stat-value mono" id="sys-ota-last">—</span>
+            </div>
+            <div class="stat-row" style="border-top:none;">
+              <span class="stat-label">Status</span>
+              <span class="stat-value mono" id="sys-ota-status">—</span>
             </div>
           </div>
           <div class="form-group" style="margin-top:0.5rem;">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="sys-ota-auto"> Install updates automatically
+            </label>
+          </div>
+          <div class="form-group" id="sys-ota-hour-wrap">
+            <label class="form-label" for="sys-ota-hour">Install hour (local time)</label>
+            <select class="input" id="sys-ota-hour">
+              <option value="-1">As soon as detected</option>
+            </select>
+            <span class="form-hint">When auto-install is on and an update is found, the install waits for this hour and then reboots into the new firmware.</span>
+          </div>
+          <details id="sys-ota-notes-wrap" style="margin-top:0.6rem;">
+            <summary style="cursor:pointer; color:var(--fg-secondary);">Release notes</summary>
+            <pre class="mono" id="sys-ota-notes" style="white-space:pre-wrap; word-break:break-word; padding:0.6rem; background:var(--bg-elevated); border:1px solid var(--border); border-radius:4px; font-size:var(--text-xs); max-height:240px; overflow-y:auto;">—</pre>
+          </details>
+          <hr style="border:none; border-top:1px solid var(--border); margin:1rem 0 0.5rem 0;">
+          <div class="form-group">
             <label class="form-label" for="sys-ota-file">Manual upload (firmware.bin)</label>
             <input type="file" id="sys-ota-file" accept=".bin,application/octet-stream">
             <span class="form-hint">Pick a built <code class="mono">firmware.bin</code> — the upload streams to flash, then the device reboots. Cancel takes effect only before the first byte goes out.</span>
@@ -2514,6 +2548,7 @@
           <span class="form-footer-hint" id="sys-ota-last-ver">—</span>
           <div class="form-footer-actions">
             <button class="btn btn-secondary btn-md" id="sys-ota-check">Check now</button>
+            <button class="btn btn-primary btn-md" id="sys-ota-install" disabled>Install now</button>
             <button class="btn btn-primary btn-md" id="sys-ota-upload" disabled>Upload &amp; reboot</button>
             <button class="btn btn-primary btn-md" id="sys-ota-save" disabled>Save</button>
           </div>
@@ -3152,6 +3187,9 @@
        * adding payload to the hot /api/status response. */
       fetchTailscalePeers();
 
+      /* Surface the OTA banner if a newer release was seen. */
+      updateOtaBanner(data.ota || {});
+
       // Telemetry
       var tlm = data.telemetry || {};
       var tlmBadge = document.getElementById('telemetry-badge');
@@ -3171,6 +3209,53 @@
       // Timestamp
       document.getElementById('status-updated').textContent = 'Last updated ' + new Date().toLocaleTimeString();
     }
+
+    /* Status-page firmware-update banner. Shown whenever the OTA poller
+     * has seen a release newer than the running app. Auto-install on +
+     * scheduled hour gets a "scheduled for HH:00" hint; auto-install off
+     * gets the more urgent "click to install" framing. */
+    function updateOtaBanner(o) {
+      var b   = document.getElementById('status-ota-banner');
+      var v   = document.getElementById('status-ota-banner-version');
+      var det = document.getElementById('status-ota-banner-detail');
+      if (!b || !v || !det) return;
+      if (!o || !o.update_available) {
+        b.style.display = 'none';
+        return;
+      }
+      v.textContent = o.latest_version || '?';
+      var detail = 'currently running ' + (o.running_version || '?');
+      if (o.auto_install) {
+        if (o.install_hour < 0 || o.install_hour > 23) {
+          detail += ' — auto-install at next opportunity';
+        } else {
+          var hh = (o.install_hour < 10 ? '0' : '') + o.install_hour;
+          detail += ' — auto-install scheduled at ' + hh + ':00';
+        }
+      } else {
+        detail += ' — auto-install is off; click to install manually';
+      }
+      det.textContent = detail;
+      b.style.display = 'flex';
+    }
+
+    /* One-shot wiring — click the banner to jump to the System tab's
+     * OTA card. Runs at script-eval time; the banner element exists
+     * even when hidden, so the listener attaches once. */
+    (function () {
+      var b = document.getElementById('status-ota-banner');
+      if (!b) return;
+      b.addEventListener('click', function () {
+        var tab = document.querySelector('.nav-tab[data-page="system"]');
+        if (tab) tab.click();
+        setTimeout(function () {
+          var card = document.getElementById('sys-ota-badge');
+          if (card && card.scrollIntoView) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'center' });
+          }
+        }, 100);
+      });
+    })();
 
     /* Pull the live peer list from /api/tailscale and render it on the
      * Status-page peer mini-table. Replaces the designer-prototype
@@ -5603,28 +5688,52 @@
         }).catch(function () {});
     }
 
-    function renderOtaState(o) {
-      var auto = document.getElementById('sys-ota-auto');
-      var poll = document.getElementById('sys-ota-poll');
-      var last = document.getElementById('sys-ota-last');
-      var stat = document.getElementById('sys-ota-status');
-      var lver = document.getElementById('sys-ota-last-ver');
-      var badge = document.getElementById('sys-ota-badge');
-      if (auto) auto.checked = !!o.auto_enabled;
-      if (poll) {
-        var ps = String(o.poll_s || 21600);
-        var found = false;
-        for (var i = 0; i < poll.options.length; i++) {
-          if (poll.options[i].value === ps) { found = true; break; }
-        }
-        poll.value = found ? ps : '21600';
+    /* Populate the install-hour <select> with 00:00..23:00 entries
+     * once at DOM load. Done lazily so we only touch the element once. */
+    (function () {
+      var sel = document.getElementById('sys-ota-hour');
+      if (!sel) return;
+      for (var h = 0; h < 24; h++) {
+        var o = document.createElement('option');
+        o.value = String(h);
+        o.textContent = (h < 10 ? '0' : '') + h + ':00';
+        sel.appendChild(o);
       }
-      if (last) last.textContent = _fmtWallclock(o.last_check);
-      if (stat) stat.textContent = o.last_status || '—';
-      if (lver) lver.textContent = o.last_version ? ('Last seen on GitHub: ' + o.last_version) : '—';
-      if (badge) {
-        badge.className = o.auto_enabled ? 'badge badge-success' : 'badge badge-neutral';
-        badge.textContent = o.auto_enabled ? 'Auto on' : 'Manual';
+    })();
+
+    function renderOtaState(o) {
+      var auto  = document.getElementById('sys-ota-auto');
+      var hour  = document.getElementById('sys-ota-hour');
+      var hourWrap = document.getElementById('sys-ota-hour-wrap');
+      var last  = document.getElementById('sys-ota-last');
+      var stat  = document.getElementById('sys-ota-status');
+      var run   = document.getElementById('sys-ota-running');
+      var lat   = document.getElementById('sys-ota-latest');
+      var lver  = document.getElementById('sys-ota-last-ver');
+      var notes = document.getElementById('sys-ota-notes');
+      var badge = document.getElementById('sys-ota-badge');
+      var inst  = document.getElementById('sys-ota-install');
+
+      auto.checked = !!o.auto_install;
+      hour.value   = String(o.install_hour != null ? o.install_hour : -1);
+      /* The hour select only matters when auto-install is on. */
+      hourWrap.style.opacity = auto.checked ? '1' : '0.45';
+      last.textContent = _fmtWallclock(o.last_check);
+      stat.textContent = o.last_status || '—';
+      run.textContent  = o.running_version || '—';
+      lat.textContent  = o.last_version    || '—';
+      notes.textContent = o.release_notes  || '— no notes available —';
+
+      if (o.update_available) {
+        badge.className = 'badge badge-warning';
+        badge.textContent = 'update available';
+        inst.disabled = false;
+        lver.textContent = 'Update available: ' + (o.last_version || '?');
+      } else {
+        badge.className = o.auto_install ? 'badge badge-success' : 'badge badge-neutral';
+        badge.textContent = o.auto_install ? 'Auto-install on' : 'Manual install';
+        inst.disabled = true;
+        lver.textContent = '';
       }
       document.getElementById('sys-ota-save').disabled = true;
     }
@@ -5685,11 +5794,16 @@
       el.textContent = '≈ ' + (v * 0.25).toFixed(2) + ' dBm';
     }
 
-    /* OTA card wiring — auto-poll save, "Check now" trigger, manual
-     * upload via XHR with progress callback. */
-    ['sys-ota-auto', 'sys-ota-poll'].forEach(function (id) {
+    /* OTA card wiring — auto-install + install-hour save, "Check now"
+     * trigger, "Install now" trigger, manual upload via XHR. */
+    ['sys-ota-auto', 'sys-ota-hour'].forEach(function (id) {
       document.getElementById(id).addEventListener('change', function () {
         document.getElementById('sys-ota-save').disabled = false;
+        /* live-toggle the hour-select dim when auto flips */
+        if (id === 'sys-ota-auto') {
+          document.getElementById('sys-ota-hour-wrap').style.opacity =
+            document.getElementById('sys-ota-auto').checked ? '1' : '0.45';
+        }
       });
     });
     document.getElementById('sys-ota-file').addEventListener('change', function () {
@@ -5702,13 +5816,33 @@
         headers: { 'Content-Type': 'application/json' },
         body:    JSON.stringify({
           ota: {
-            auto_enabled: document.getElementById('sys-ota-auto').checked,
-            poll_s:       parseInt(document.getElementById('sys-ota-poll').value, 10) || 21600
+            auto_install: document.getElementById('sys-ota-auto').checked,
+            install_hour: parseInt(document.getElementById('sys-ota-hour').value, 10)
           }
         })
       }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); })
         .then(function () { btn.textContent = 'Save'; showToast('success', 'Saved', 'OTA settings written.', 4000); loadSystem(); })
         .catch(function (e) { btn.disabled = false; btn.textContent = 'Save'; showToast('error', 'Save failed', e.message || '', 5000); });
+    });
+    document.getElementById('sys-ota-install').addEventListener('click', function () {
+      var lat = (document.getElementById('sys-ota-latest').textContent || '').trim();
+      if (!confirm('Install ' + (lat || 'the new firmware') + ' now and reboot?')) return;
+      var btn = this; btn.disabled = true; btn.textContent = 'Installing…';
+      apiFetch('/api/system/ota/install', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          if (d.ok) {
+            showToast('success', 'Install started',
+                      'Downloading + flashing, then the device will reboot. Refresh in ~30 s.', 8000);
+          } else {
+            btn.disabled = false; btn.textContent = 'Install now';
+            showToast('error', 'Install failed', d.reason || 'unknown', 6000);
+          }
+        })
+        .catch(function () {
+          btn.disabled = false; btn.textContent = 'Install now';
+          showToast('error', 'Install failed', '', 5000);
+        });
     });
     document.getElementById('sys-ota-check').addEventListener('click', function () {
       var btn = this; btn.disabled = true; btn.textContent = 'Checking…';
