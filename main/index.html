@@ -356,12 +356,16 @@
       padding: var(--sp-3) var(--sp-4);
       border-bottom: 1px solid var(--border);
       gap: var(--sp-3);
+      flex-wrap: wrap;     /* on narrow viewports the right-side action
+                            * (badge, Clear button, dropdown …) drops to
+                            * a new row instead of pushing past the edge */
+      row-gap: var(--sp-2);
     }
-
     .card-header-left {
       display: flex;
       align-items: center;
       gap: var(--sp-2);
+      min-width: 0;   /* let the title shrink + wrap on narrow viewports */
     }
 
     .card-header-icon {
@@ -935,6 +939,9 @@
     .form-footer-actions {
       display: flex;
       gap: var(--sp-2);
+      flex-wrap: wrap;   /* let buttons drop to a new row on narrow viewports
+                          * instead of running off the right edge */
+      justify-content: flex-end;
     }
 
     /* =====================================================================
@@ -1131,13 +1138,72 @@
     }
 
     /* =====================================================================
+       COMPONENT — HAMBURGER (mobile nav)
+       ===================================================================== */
+    .nav-ham-btn {
+      display: none;            /* shown only on ≤ 768 px via the @media block */
+      background: none;
+      border: 0;
+      color: var(--fg-primary);
+      font-size: 22px;
+      line-height: 1;
+      padding: 6px 10px;
+      margin-right: 4px;
+      cursor: pointer;
+      border-radius: 6px;
+    }
+    .nav-ham-btn:hover, .nav-ham-btn:focus { background: var(--bg-elevated); outline: none; }
+
+    /* Full-screen overlay close button — sits at the top-right of the
+     * expanded .nav-tabs panel on mobile. */
+    .nav-ham-close {
+      display: none;            /* only on mobile when overlay is open */
+      align-self: flex-end;
+      background: none;
+      border: 0;
+      color: var(--fg-primary);
+      font-size: 24px;
+      line-height: 1;
+      cursor: pointer;
+      padding: 6px 12px;
+      margin: 0 0 6px 0;
+    }
+
+    /* =====================================================================
        RESPONSIVE ADJUSTMENTS
        ===================================================================== */
-    @media (max-width: 480px) {
+    @media (max-width: 768px) {
       .nav-brand-name { display: none; }
-      .nav-tab { padding: 5px 8px; gap: 4px; }
+      .nav-ham-btn    { display: inline-flex; align-items: center; }
+
+      /* Inline tab row → full-screen overlay drawer, hidden by default. */
+      .nav-tabs {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 90;
+        background: var(--bg-base);
+        flex-direction: column;
+        padding: 1rem;
+        gap: 0.3rem;
+        overflow-y: auto;
+      }
+      .nav-tabs.open       { display: flex; }
+      .nav-tabs .nav-tab   {
+        padding: 14px 18px;
+        font-size: 16px;
+        border-radius: 8px;
+        width: 100%;
+        justify-content: flex-start;
+      }
+      .nav-tabs.open .nav-ham-close { display: inline-flex; }
+
       .page-header { flex-direction: column; align-items: flex-start; }
-      .stat-label { min-width: 100px; }
+      .stat-label  { min-width: 100px; }
+    }
+
+    @media (max-width: 480px) {
+      .nav-tab { padding: 5px 8px; gap: 4px; }
     }
 
     /* =====================================================================
@@ -1267,6 +1333,7 @@
        NAVIGATION BAR
        =================================================================== -->
   <nav class="nav">
+    <button class="nav-ham-btn" id="navHamBtn" aria-label="Open menu" aria-controls="navTabs" aria-expanded="false">≡</button>
     <div class="nav-brand">
       <div class="nav-brand-icon">
         <!-- Router / network icon -->
@@ -1279,7 +1346,8 @@
       <span class="nav-brand-name" id="brandName">ESP32 Router</span>
     </div>
 
-    <div class="nav-tabs" role="tablist">
+    <div class="nav-tabs" role="tablist" id="navTabs">
+      <button class="nav-ham-close" id="navHamClose" aria-label="Close menu" type="button">✕</button>
       <a class="nav-tab active" role="tab" data-page="status" aria-selected="true" href="#status">
         <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/>
@@ -2833,8 +2901,24 @@
           var page = this.dataset.page;
           if (switchToPage(page)) {
             try { history.replaceState(null, '', '#' + page); } catch (_) {}
+            closeHamMenu();   /* hide the drawer on mobile after a pick */
           }
         });
+      });
+
+      /* Hamburger drawer wiring — open/close the .nav-tabs as a
+       * full-screen overlay on narrow viewports. Asztalon az .open
+       * osztály nem csinál semmit (a media-query a felelős). */
+      var navTabs   = document.getElementById('navTabs');
+      var hamBtn    = document.getElementById('navHamBtn');
+      var hamClose  = document.getElementById('navHamClose');
+      function openHamMenu()  { if (navTabs) navTabs.classList.add('open');    if (hamBtn) hamBtn.setAttribute('aria-expanded', 'true'); }
+      function closeHamMenu() { if (navTabs) navTabs.classList.remove('open'); if (hamBtn) hamBtn.setAttribute('aria-expanded', 'false'); }
+      if (hamBtn)   hamBtn.addEventListener('click', openHamMenu);
+      if (hamClose) hamClose.addEventListener('click', closeHamMenu);
+      /* Esc closes the drawer too — common keyboard expectation. */
+      document.addEventListener('keydown', function (e) {
+        if (e.key === 'Escape' && navTabs && navTabs.classList.contains('open')) closeHamMenu();
       });
 
       /* On first paint honour any #hash in the URL (set by a middle-click
