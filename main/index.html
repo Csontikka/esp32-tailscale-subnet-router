@@ -2707,6 +2707,29 @@
     </div>
   </div>
 
+  <!-- Post-login crash alert: surfaces when the last boot reason was a
+       PANIC / TASK_WDT so the operator can't miss it. Dismissed per
+       session via sessionStorage keyed on the entry wallclock. -->
+  <div class="modal-backdrop" id="panicAlertModal" role="dialog" aria-modal="true" aria-labelledby="panic-title">
+    <div class="modal" style="max-width:560px;">
+      <div class="modal-header">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--danger)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/>
+          <line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/>
+        </svg>
+        <span class="modal-title" id="panic-title">Crash detected on last boot</span>
+      </div>
+      <div class="modal-body">
+        <div id="panic-summary" style="margin-bottom:0.6rem;"></div>
+        <div class="mono" id="panic-crash" style="font-size:var(--text-xs); padding:0.5rem; background:var(--bg-elevated); border:1px solid var(--border); border-radius:4px; word-break:break-all;"></div>
+        <div style="font-size:var(--text-xs); color:var(--fg-muted); margin-top:0.6rem;">Open <strong>Diagnostics → Reset history</strong> for the full trail. The pre-crash log card on the System tab has the last log lines before the panic.</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-danger btn-md" id="panic-ack">OK, noted</button>
+      </div>
+    </div>
+  </div>
+
   <!-- ===================================================================
        JAVASCRIPT
        =================================================================== -->
@@ -3721,6 +3744,46 @@
     // =====================================================================
     function loadDashboard() {
       fetchStatus();
+      checkPanicAndWarn();
+    }
+
+    /* Post-login crash check. If the most recent reset_history entry is a
+     * panic-class boot (PANIC, TASK_WDT, INT_WDT, BROWNOUT), surface a
+     * modal the operator has to click through so a silent night-time
+     * panic doesn't go unnoticed. Dismissed per session via
+     * sessionStorage keyed on the entry's wallclock so the same crash
+     * doesn't pop up on every tab refresh. */
+    function checkPanicAndWarn() {
+      apiFetch('/api/system')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var hist = (d && d.reset_history) || [];
+          if (!hist.length) return;
+          var e = hist[0];
+          var critical = { PANIC:1, TASK_WDT:1, INT_WDT:1, BROWNOUT:1 };
+          if (!critical[e.reason]) return;
+          var key = 'panicAck:' + (e.wallclock || 0) + ':' + e.reason;
+          if (sessionStorage.getItem(key) === '1') return;
+          var when = e.wallclock
+            ? new Date(e.wallclock * 1000).toLocaleString()
+            : '(time unknown — SNTP unsynced at boot)';
+          document.getElementById('panic-summary').innerHTML =
+              '<strong>' + escapeHtml(e.reason) + '</strong> on ' +
+              escapeHtml(when) +
+              (e.who ? ' (attributed to: ' + escapeHtml(e.who) + ')' : '');
+          document.getElementById('panic-crash').textContent =
+              e.crash || '(no crash one-liner stored — check coredump partition)';
+          var modal = document.getElementById('panicAlertModal');
+          modal.classList.add('open');
+          var ack = document.getElementById('panic-ack');
+          var onClick = function () {
+            sessionStorage.setItem(key, '1');
+            modal.classList.remove('open');
+            ack.removeEventListener('click', onClick);
+          };
+          ack.addEventListener('click', onClick);
+        })
+        .catch(function () { /* /api/system 401 or net error — quiet */ });
     }
 
     // =====================================================================
