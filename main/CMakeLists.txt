@@ -1,26 +1,35 @@
-# Generate index_html_data.c from index.html at configure time. We can't
-# use EMBED_TXTFILES / target_add_binary_data because PIO's SCons wrapper
-# double-prefixes the .S output path, breaking the assembly step. CMake's
-# file(READ HEX) + regex sidesteps that — the result is plain C the PIO
-# wrapper handles normally.
+# Generate index_html_data.c by gzipping main/index.html at configure
+# time. We can't use EMBED_TXTFILES / target_add_binary_data because
+# PIO's SCons wrapper double-prefixes the .S output path, breaking the
+# assembly step. A helper Python script (gen_index_html_gz.py) does the
+# gzip + hex-array emission — Python ships with PIO's toolchain so we
+# lose no cross-platform support.
 #
-# Written under main/ rather than ${CMAKE_CURRENT_BINARY_DIR} because the
-# latter is empty during PIO's first configure pass and ends up dropping
-# the file in the project root. The generated file is in .gitignore.
+# Written under main/ rather than ${CMAKE_CURRENT_BINARY_DIR} because
+# the latter is empty during PIO's first configure pass and ends up
+# dropping the file in the project root. The generated file is in
+# .gitignore.
 #
-# Tell CMake to re-run this whole configure step whenever index.html
-# changes — without this, file(READ) only fires when CMakeLists.txt is
-# touched, and the device ends up serving a stale SPA blob.
+# Tell CMake to re-run the helper whenever index.html OR the helper
+# itself changes — without this the device would keep serving a stale
+# SPA blob.
 set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-             "${CMAKE_CURRENT_LIST_DIR}/index.html")
-file(READ "${CMAKE_CURRENT_LIST_DIR}/index.html" _INDEX_HTML_HEX HEX)
-string(REGEX REPLACE "(..)" "0x\\1," _INDEX_HTML_BYTES "${_INDEX_HTML_HEX}")
-file(WRITE "${CMAKE_CURRENT_LIST_DIR}/index_html_data.c"
-"/* GENERATED FILE — see main/CMakeLists.txt. Do not edit by hand. */
-#include <stddef.h>
-const char index_html_start[] = { ${_INDEX_HTML_BYTES} 0 };
-const size_t index_html_len = sizeof(index_html_start) - 1;
-")
+             "${CMAKE_CURRENT_LIST_DIR}/index.html"
+             "${CMAKE_CURRENT_LIST_DIR}/gen_index_html_gz.py")
+find_package(Python3 REQUIRED)
+execute_process(
+    COMMAND ${Python3_EXECUTABLE}
+            "${CMAKE_CURRENT_LIST_DIR}/gen_index_html_gz.py"
+            "${CMAKE_CURRENT_LIST_DIR}/index.html"
+            "${CMAKE_CURRENT_LIST_DIR}/index_html_data.c"
+    RESULT_VARIABLE _gz_rc
+    OUTPUT_VARIABLE _gz_out
+    ERROR_VARIABLE  _gz_err)
+if(NOT _gz_rc EQUAL 0)
+    message(FATAL_ERROR
+            "gen_index_html_gz.py failed (rc=${_gz_rc}):\n${_gz_out}${_gz_err}")
+endif()
+message(STATUS "index.html: ${_gz_out}")
 
 idf_component_register(SRCS "main.c"
                             "log_capture.c"
