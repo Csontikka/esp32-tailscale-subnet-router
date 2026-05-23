@@ -17,35 +17,40 @@
 #include "esp_http_client.h"
 #include "esp_event.h"
 #include "esp_system.h"
+#include "esp_timer.h"
 #include "nvs.h"
 #include "cJSON.h"
 
 static const char *TAG = "ota";
 
-#define OTA_REPO_OWNER   "Csontikka"
-#define OTA_REPO_NAME    "esp32-tailscale-subnet-router"
-#define OTA_ASSET_NAME   "firmware.bin"
-#define OTA_DEFAULT_POLL_S  (6 * 3600)   /* 6 h */
-#define OTA_MIN_POLL_S      900          /* 15 min — anything shorter wastes flash cycles */
-#define OTA_MAX_POLL_S      (24 * 3600 * 7)
-#define OTA_HTTP_RX_BUF     2048
-#define OTA_API_JSON_MAX    16384        /* GitHub releases.latest JSON is ~5 KB. */
+#define OTA_REPO_OWNER       "Csontikka"
+#define OTA_REPO_NAME        "esp32-tailscale-subnet-router"
+#define OTA_ASSET_NAME       "firmware.bin"
+#define OTA_HTTP_RX_BUF      2048
+#define OTA_API_JSON_MAX     16384       /* GitHub releases.latest JSON ~5 KB */
 
-/* Cached settings + last-poll telemetry. The string buffers are
- * written from both the poller task and httpd-tasks that call
- * ota_poll_now(); a mutex serialises access. The u32 settings stay
- * volatile-and-atomic since they fit in a single store. */
-static volatile bool     s_enabled       = false;
-static volatile uint32_t s_poll_s        = OTA_DEFAULT_POLL_S;
-static volatile uint32_t s_last_check    = 0;
-static char              s_last_version[32]  = {0};
-static char              s_last_status[64]   = {0};
+#define OTA_POLL_INTERVAL_S  (24 * 3600) /* 1 day — non-configurable */
+#define OTA_BOOT_GRACE_S     20          /* settle before the first poll */
+#define OTA_TICK_S           60          /* scheduler loop tick — checks
+                                          * the install_hour and re-polls
+                                          * every OTA_POLL_INTERVAL_S */
+
+/* Settings (NVS-backed) + observed-state. Strings are guarded by the
+ * recursive mutex; bool/int settings stay volatile-and-atomic since they
+ * fit in a single store. */
+static volatile bool     s_auto_install     = false;
+static volatile int      s_install_hour     = -1;  /* -1 = install ASAP */
+static volatile uint32_t s_last_check       = 0;
+static volatile bool     s_update_available = false;
+static char              s_last_version[32]   = {0};
+static char              s_release_notes[768] = {0};
+static char              s_last_status[64]    = {0};
 
 static TaskHandle_t      s_poll_task   = NULL;
 static SemaphoreHandle_t s_poll_wake   = NULL;
-/* Recursive — `ota_poll_now` takes it around the whole poll_once(), and
- * poll_once() internally calls set_status() which takes it again. A
- * non-recursive mutex would deadlock the second take from the same task. */
+/* Recursive — `ota_poll_now` takes it around poll_once(), and poll_once()
+ * itself calls set_status() / writes the version + notes strings inside
+ * the same critical section. */
 static SemaphoreHandle_t s_state_mutex = NULL;
 
 #define WITH_STATE_LOCK(BLK) do {                                          \
@@ -144,7 +149,6 @@ static char *http_get_text(const char *url, int max_bytes, int *out_status)
         .timeout_ms     = 15000,
         .buffer_size    = 2048,
         .crt_bundle_attach = esp_crt_bundle_attach,
-        /* user-agent — GitHub API politely requires a non-empty UA. */
         .user_agent     = "esp32-tailscale-subnet-router-ota",
     };
     esp_http_client_handle_t cli = esp_http_client_init(&cfg);
@@ -152,7 +156,7 @@ static char *http_get_text(const char *url, int max_bytes, int *out_status)
 
     esp_err_t err = esp_http_client_open(cli, 0);
     if (err != ESP_OK) { esp_http_client_cleanup(cli); return NULL; }
-    int total = esp_http_client_fetch_headers(cli);
+    (void)esp_http_client_fetch_headers(cli);
     if (out_status) *out_status = esp_http_client_get_status_code(cli);
 
     char *buf = malloc(max_bytes + 1);
@@ -166,23 +170,31 @@ static char *http_get_text(const char *url, int max_bytes, int *out_status)
     buf[n] = '\0';
     esp_http_client_close(cli);
     esp_http_client_cleanup(cli);
-    (void)total;
     return buf;
 }
 
-/* Pluck {tag_name, download_url} from the JSON. Returns true on success
- * and writes into the caller-owned buffers. The asset URL is the
- * browser_download_url of the asset whose name matches OTA_ASSET_NAME. */
-static bool parse_release_json(const char *json, char *tag, size_t tag_len,
-                               char *url, size_t url_len)
+/* Pluck {tag_name, download_url, body} from the JSON. body is truncated
+ * to `notes_len-1` chars if longer (Markdown source from the release). */
+static bool parse_release_json(const char *json,
+                               char *tag,   size_t tag_len,
+                               char *url,   size_t url_len,
+                               char *notes, size_t notes_len)
 {
     cJSON *root = cJSON_Parse(json);
     if (!root) return false;
     bool ok = false;
+    if (notes && notes_len) notes[0] = 0;
+
     cJSON *t = cJSON_GetObjectItem(root, "tag_name");
     if (cJSON_IsString(t) && t->valuestring) {
         strlcpy(tag, t->valuestring, tag_len);
     } else { goto out; }
+
+    cJSON *body = cJSON_GetObjectItem(root, "body");
+    if (notes && cJSON_IsString(body) && body->valuestring) {
+        strlcpy(notes, body->valuestring, notes_len);
+    }
+
     cJSON *assets = cJSON_GetObjectItem(root, "assets");
     if (cJSON_IsArray(assets)) {
         int n = cJSON_GetArraySize(assets);
@@ -204,11 +216,6 @@ out:
     return ok;
 }
 
-/* Parse the leading "X.Y.Z" (any of the three optional) into a tuple
- * (major, minor, patch). Suffixes after the last digit are ignored.
- * Used by version_is_newer to compare numerically — strcmp != is a
- * downgrade trap when a release is yanked and re-tagged at an older
- * value. */
 static void parse_version_tuple(const char *s, int *maj, int *min, int *pat)
 {
     *maj = *min = *pat = 0;
@@ -223,21 +230,24 @@ static void parse_version_tuple(const char *s, int *maj, int *min, int *pat)
     *pat = atoi(p + 1);
 }
 
-/* True iff `remote` is strictly newer than the running app. Equal
- * versions and downgrades (remote older) both return false — we only
- * apply OTAs that move forward, so a yanked release that lands an
- * older tag on /releases/latest can't flash-wear-loop the device. */
+/* True iff `remote` is strictly newer than the running app. Equal +
+ * downgrade both return false — yanked releases can't flash-wear-loop. */
 static bool version_is_newer(const char *remote_tag)
 {
     const esp_app_desc_t *desc = esp_app_get_description();
     const char *local = desc ? desc->version : "";
-    int rM = 0, rm = 0, rp = 0, lM = 0, lm = 0, lp = 0;
+    int rM=0,rm=0,rp=0,lM=0,lm=0,lp=0;
     parse_version_tuple(remote_tag, &rM, &rm, &rp);
     parse_version_tuple(local,      &lM, &lm, &lp);
     if (rM != lM) return rM > lM;
     if (rm != lm) return rm > lm;
     return rp > lp;
 }
+
+/* Cached URL for the latest-release asset, captured at poll time and
+ * reused by do_install() so the scheduler doesn't have to re-poll on
+ * the way to flashing. */
+static char s_pending_asset_url[256] = {0};
 
 static esp_err_t do_https_ota(const char *url)
 {
@@ -252,6 +262,8 @@ static esp_err_t do_https_ota(const char *url)
     return esp_https_ota(&ota);
 }
 
+/* Fetch /releases/latest, parse, refresh observed-state. Does NOT
+ * install — the scheduler / operator owns that decision. */
 static void poll_once(void)
 {
     char url_api[160];
@@ -267,63 +279,122 @@ static void poll_once(void)
         return;
     }
 
-    char tag[32] = {0};
+    char tag[32]        = {0};
     char asset_url[256] = {0};
-    if (!parse_release_json(json, tag, sizeof tag, asset_url, sizeof asset_url)) {
+    char notes[768]     = {0};
+    if (!parse_release_json(json, tag, sizeof tag,
+                            asset_url, sizeof asset_url,
+                            notes, sizeof notes)) {
         set_status("parse failed (no %s asset?)", OTA_ASSET_NAME);
         free(json);
         return;
     }
     free(json);
-    WITH_STATE_LOCK({ strlcpy(s_last_version, tag, sizeof s_last_version); });
 
-    if (!version_is_newer(tag)) {
-        set_status("up to date (%s)", tag);
-        return;
+    bool newer = version_is_newer(tag);
+    WITH_STATE_LOCK({
+        strlcpy(s_last_version,  tag,       sizeof s_last_version);
+        strlcpy(s_release_notes, notes,     sizeof s_release_notes);
+        strlcpy(s_pending_asset_url, asset_url, sizeof s_pending_asset_url);
+        s_update_available = newer;
+    });
+
+    /* Persist the snapshot — survives reboot so the Status banner can
+     * show "update available" immediately on next boot too. */
+    nvs_handle_t h;
+    if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        time_t now = 0; time(&now);
+        if (now > 1700000000) {
+            s_last_check = (uint32_t)now;
+            nvs_set_u32(h, "ota_last_check", s_last_check);
+        }
+        nvs_set_str(h, "ota_last_ver", s_last_version);
+        nvs_commit(h);
+        nvs_close(h);
     }
 
-    ESP_LOGW(TAG, "applying OTA: %s ← %s", tag, asset_url);
-    esp_err_t err = do_https_ota(asset_url);
+    set_status(newer ? "update available: %s" : "up to date (%s)", tag);
+}
+
+/* Synchronously download + flash s_pending_asset_url, then reboot.
+ * Caller must hold the state mutex around the poll that primed
+ * s_pending_asset_url. No-op if no pending URL. */
+static void do_install(void)
+{
+    char url[sizeof s_pending_asset_url];
+    char tag[sizeof s_last_version];
+    WITH_STATE_LOCK({
+        strlcpy(url, s_pending_asset_url, sizeof url);
+        strlcpy(tag, s_last_version,      sizeof tag);
+    });
+    if (!url[0]) {
+        set_status("install skipped — no asset url");
+        return;
+    }
+    ESP_LOGW(TAG, "applying OTA: %s ← %s", tag, url);
+    set_status("installing %s …", tag);
+    esp_err_t err = do_https_ota(url);
     if (err != ESP_OK) {
         set_status("ota failed: %s", esp_err_to_name(err));
         return;
     }
-    set_status("ota applied %s — rebooting", tag);
+    set_status("applied %s — rebooting", tag);
     vTaskDelay(pdMS_TO_TICKS(500));
     esp_restart();
+}
+
+/* True iff the wall-clock local-time hour matches install_hour AND we
+ * haven't already attempted at this hour mark. Guarded by
+ * s_last_install_attempt so multiple OTA_TICK_S ticks inside the same
+ * hour don't re-fire. */
+static uint32_t s_last_install_attempt = 0;
+
+static bool is_install_window_now(int hour_wanted)
+{
+    if (hour_wanted < 0 || hour_wanted > 23) return false;
+    time_t now_t = 0; time(&now_t);
+    if (now_t < 1700000000) return false;   /* SNTP not synced yet */
+    struct tm lt;
+    localtime_r(&now_t, &lt);
+    if (lt.tm_hour != hour_wanted) return false;
+    if ((uint32_t)now_t - s_last_install_attempt < 3600) return false;
+    s_last_install_attempt = (uint32_t)now_t;
+    return true;
 }
 
 static void poll_task(void *arg)
 {
     (void)arg;
     /* Initial settle so we don't race the network bring-up. */
-    vTaskDelay(pdMS_TO_TICKS(20000));
+    vTaskDelay(pdMS_TO_TICKS(OTA_BOOT_GRACE_S * 1000));
+
+    uint32_t last_poll_uptime_s = 0;
+    bool first = true;
+
     while (1) {
-        if (s_enabled) {
+        uint32_t up_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+
+        /* 1. Periodic GitHub check — first iteration + every 24 h after. */
+        if (first || (up_s - last_poll_uptime_s) >= OTA_POLL_INTERVAL_S) {
             poll_once();
-            time_t now = 0; time(&now);
-            if (now > 1700000000) s_last_check = (uint32_t)now;
-            /* Persist the snapshot so the System tab survives reboot. */
-            nvs_handle_t h;
-            if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
-                nvs_set_u32(h, "ota_last_check", s_last_check);
-                nvs_set_str(h, "ota_last_ver",   s_last_version);
-                nvs_commit(h);
-                nvs_close(h);
+            last_poll_uptime_s = up_s;
+            first = false;
+        }
+
+        /* 2. Install scheduler — only acts when auto-install is on
+         *    AND a newer version is available. */
+        if (s_auto_install && s_update_available) {
+            if (s_install_hour < 0) {
+                do_install();   /* "ASAP" mode — reboots if successful */
+            } else if (is_install_window_now(s_install_hour)) {
+                do_install();
             }
         }
-        /* Wait for either the poll interval or an explicit wake.
-         *
-         * NOTE: do NOT use pdMS_TO_TICKS(s_poll_s * 1000) here — same
-         * non-SMP FreeRTOS-Kernel overflow as telemetry.c. Anything
-         * over ~11.9 h (uint32 limit / TICK_RATE_HZ) wraps inside the
-         * macro and the sleep ends up minutes instead of hours/days.
-         * OTA_MAX_POLL_S is 7 days, so the macro is unsafe here.
-         * Compute in uint64_t and cast back to TickType_t. */
-        TickType_t poll_ticks =
-            (TickType_t)((uint64_t)s_poll_s * 1000ULL /
-                         (uint64_t)portTICK_PERIOD_MS);
-        xSemaphoreTake(s_poll_wake, poll_ticks);
+
+        /* Sleep for OTA_TICK_S or until a setting change / manual wake. */
+        TickType_t tick = (TickType_t)((uint64_t)OTA_TICK_S * 1000ULL /
+                                       (uint64_t)portTICK_PERIOD_MS);
+        xSemaphoreTake(s_poll_wake, tick);
     }
 }
 
@@ -331,18 +402,22 @@ static void poll_task(void *arg)
 
 void ota_init(void)
 {
-    uint8_t en = 0;
-    nvs_param_get_u8("ota_auto_en", &en);
-    s_enabled = en != 0;
-
-    uint32_t poll = 0;
-    {
-        int32_t v = 0;
-        if (nvs_param_get_int("ota_poll_s", &v) == ESP_OK && v > 0) poll = (uint32_t)v;
+    /* New key `ota_auto_in` (install opt-in). Fall back to the legacy
+     * `ota_auto_en` so devices upgrading across this commit don't lose
+     * their preference. */
+    uint8_t v8 = 0;
+    if (nvs_param_get_u8("ota_auto_in", &v8) != ESP_OK) {
+        (void)nvs_param_get_u8("ota_auto_en", &v8);
     }
-    if (poll < OTA_MIN_POLL_S) poll = OTA_DEFAULT_POLL_S;
-    if (poll > OTA_MAX_POLL_S) poll = OTA_MAX_POLL_S;
-    s_poll_s = poll;
+    s_auto_install = v8 != 0;
+
+    int32_t hour = -1;
+    if (nvs_param_get_int("ota_inst_h", &hour) == ESP_OK) {
+        if (hour < -1 || hour > 23) hour = -1;
+    } else {
+        hour = -1;
+    }
+    s_install_hour = (int)hour;
 
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
@@ -351,54 +426,70 @@ void ota_init(void)
         nvs_get_str(h, "ota_last_ver", s_last_version, &l);
         nvs_close(h);
     }
+    /* Compute update_available from the persisted last_version vs the
+     * current running version, so the Status banner is correct even
+     * before the first post-boot poll completes. */
+    if (s_last_version[0]) s_update_available = version_is_newer(s_last_version);
 
     if (!s_state_mutex) s_state_mutex = xSemaphoreCreateRecursiveMutex();
     if (!s_poll_wake)   s_poll_wake   = xSemaphoreCreateBinary();
     if (!s_poll_task) {
         xTaskCreate(poll_task, "ota_poll", 6144, NULL, 3, &s_poll_task);
     }
-    ESP_LOGI(TAG, "ota_init: enabled=%d poll_s=%lu",
-             (int)s_enabled, (unsigned long)s_poll_s);
+    ESP_LOGI(TAG, "ota_init: auto_install=%d install_hour=%d update_avail=%d",
+             (int)s_auto_install, s_install_hour, (int)s_update_available);
 }
 
 void ota_get_state(ota_state_t *out)
 {
     if (!out) return;
-    out->enabled    = s_enabled;
-    out->poll_s     = s_poll_s;
-    out->last_check = s_last_check;
+    out->auto_install      = s_auto_install;
+    out->install_hour      = s_install_hour;
+    out->last_check        = s_last_check;
+    out->update_available  = s_update_available;
+    const esp_app_desc_t *desc = esp_app_get_description();
+    strlcpy(out->running_version, desc ? desc->version : "",
+            sizeof out->running_version);
     WITH_STATE_LOCK({
-        strlcpy(out->last_version, s_last_version, sizeof out->last_version);
-        strlcpy(out->last_status,  s_last_status,  sizeof out->last_status);
+        strlcpy(out->last_version,   s_last_version,   sizeof out->last_version);
+        strlcpy(out->release_notes,  s_release_notes,  sizeof out->release_notes);
+        strlcpy(out->last_status,    s_last_status,    sizeof out->last_status);
     });
 }
 
-esp_err_t ota_set_settings(bool enabled, uint32_t poll_s)
+esp_err_t ota_set_settings(bool auto_install, int install_hour)
 {
-    if (poll_s > 0 && poll_s < OTA_MIN_POLL_S) poll_s = OTA_MIN_POLL_S;
-    if (poll_s > OTA_MAX_POLL_S)               poll_s = OTA_MAX_POLL_S;
-    if (poll_s == 0)                           poll_s = OTA_DEFAULT_POLL_S;
-    s_enabled = enabled;
-    s_poll_s  = poll_s;
-    nvs_param_set_u8 ("ota_auto_en", enabled ? 1 : 0);
-    nvs_param_set_int("ota_poll_s",  (int32_t)poll_s);
-    /* Kick the poller so it picks up the new interval immediately. */
+    if (install_hour < -1 || install_hour > 23) install_hour = -1;
+    s_auto_install = auto_install;
+    s_install_hour = install_hour;
+    nvs_param_set_u8 ("ota_auto_in", auto_install ? 1 : 0);
+    nvs_param_set_int("ota_inst_h",  (int32_t)install_hour);
+    /* Wake the scheduler so a newly-enabled auto_install + ASAP can
+     * react without waiting OTA_TICK_S. */
     if (s_poll_wake) xSemaphoreGive(s_poll_wake);
     return ESP_OK;
 }
 
 void ota_poll_now(char *out_status, size_t status_len)
 {
-    /* Hold the recursive state mutex across the whole poll so the
-     * background poll_task can't race us mid-poll. set_status() and
-     * the strlcpy() of s_last_version inside poll_once() each re-enter
-     * the same mutex; recursive semantics keep that safe. The HTTP
-     * fetch is slow (~3 s) so the held window is real, but
-     * ota_poll_now is an explicit operator click, not a hot path. */
+    /* Hold the mutex across the whole poll so the background poll_task
+     * can't race us mid-poll. set_status() and the strlcpy()s inside
+     * poll_once() each re-enter the same mutex; recursive semantics keep
+     * that safe. The HTTP fetch is slow (~3 s) so the held window is
+     * real, but ota_poll_now is an explicit operator click. */
     WITH_STATE_LOCK({
         poll_once();
         if (out_status && status_len) {
             strlcpy(out_status, s_last_status, status_len);
         }
     });
+}
+
+void ota_install_now(void)
+{
+    if (!s_update_available) {
+        set_status("install skipped — no newer version known");
+        return;
+    }
+    do_install();
 }
