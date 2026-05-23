@@ -2492,18 +2492,44 @@
               <label class="form-label" for="sys-tz">Timezone</label>
               <select class="input" id="sys-tz">
                 <option value="">UTC (UTC+0)</option>
-                <option value="CET-1CEST,M3.5.0,M10.5.0/3">UTC+1 / +2 — Europe/Budapest, Berlin, Paris, Rome, Madrid (CET/CEST)</option>
-                <option value="EET-2EEST,M3.5.0/3,M10.5.0/4">UTC+2 / +3 — Europe/Helsinki, Athens, Bucharest (EET/EEST)</option>
-                <option value="GMT0BST,M3.5.0/1,M10.5.0">UTC+0 / +1 — Europe/London (GMT/BST)</option>
-                <option value="WET0WEST,M3.5.0/1,M10.5.0">UTC+0 / +1 — Europe/Lisbon (WET/WEST)</option>
-                <option value="EST5EDT,M3.2.0,M11.1.0">UTC−5 / −4 — America/New_York, Toronto (EST/EDT)</option>
-                <option value="CST6CDT,M3.2.0,M11.1.0">UTC−6 / −5 — America/Chicago (CST/CDT)</option>
-                <option value="MST7MDT,M3.2.0,M11.1.0">UTC−7 / −6 — America/Denver (MST/MDT)</option>
-                <option value="PST8PDT,M3.2.0,M11.1.0">UTC−8 / −7 — America/Los_Angeles (PST/PDT)</option>
-                <option value="JST-9">UTC+9 — Asia/Tokyo, Seoul (JST, no DST)</option>
-                <option value="CST-8">UTC+8 — Asia/Shanghai, Singapore, Taipei (CST, no DST)</option>
-                <option value="IST-5:30">UTC+5:30 — Asia/Kolkata (IST, no DST)</option>
-                <option value="AEST-10AEDT,M10.1.0,M4.1.0/3">UTC+10 / +11 — Australia/Sydney, Melbourne (AEST/AEDT)</option>
+                <optgroup label="Europe">
+                  <option value="GMT0BST,M3.5.0/1,M10.5.0">UTC+0 / +1 — Europe/London (GMT/BST)</option>
+                  <option value="WET0WEST,M3.5.0/1,M10.5.0">UTC+0 / +1 — Europe/Lisbon (WET/WEST)</option>
+                  <option value="CET-1CEST,M3.5.0,M10.5.0/3">UTC+1 / +2 — Europe/Budapest, Berlin, Paris, Rome, Madrid (CET/CEST)</option>
+                  <option value="EET-2EEST,M3.5.0/3,M10.5.0/4">UTC+2 / +3 — Europe/Helsinki, Athens, Bucharest, Kiev (EET/EEST)</option>
+                  <option value="MSK-3">UTC+3 — Europe/Moscow, Istanbul (MSK, no DST)</option>
+                </optgroup>
+                <optgroup label="Americas">
+                  <option value="AST4ADT,M3.2.0,M11.1.0">UTC−4 / −3 — America/Halifax (AST/ADT)</option>
+                  <option value="EST5EDT,M3.2.0,M11.1.0">UTC−5 / −4 — America/New_York, Toronto (EST/EDT)</option>
+                  <option value="CST6CDT,M3.2.0,M11.1.0">UTC−6 / −5 — America/Chicago, Mexico_City (CST/CDT)</option>
+                  <option value="MST7MDT,M3.2.0,M11.1.0">UTC−7 / −6 — America/Denver (MST/MDT)</option>
+                  <option value="MST7">UTC−7 — America/Phoenix (MST, no DST)</option>
+                  <option value="PST8PDT,M3.2.0,M11.1.0">UTC−8 / −7 — America/Los_Angeles, Vancouver (PST/PDT)</option>
+                  <option value="AKST9AKDT,M3.2.0,M11.1.0">UTC−9 / −8 — America/Anchorage (AKST/AKDT)</option>
+                  <option value="HST10">UTC−10 — Pacific/Honolulu (HST, no DST)</option>
+                  <option value="BRT3">UTC−3 — America/Sao_Paulo, Buenos_Aires (no DST)</option>
+                </optgroup>
+                <optgroup label="Asia &amp; Middle East">
+                  <option value="GST-4">UTC+4 — Asia/Dubai, Baku (GST, no DST)</option>
+                  <option value="IRST-3:30">UTC+3:30 — Asia/Tehran (IRST, no DST)</option>
+                  <option value="IST-5:30">UTC+5:30 — Asia/Kolkata, Colombo (IST, no DST)</option>
+                  <option value="NPT-5:45">UTC+5:45 — Asia/Kathmandu (NPT)</option>
+                  <option value="ICT-7">UTC+7 — Asia/Bangkok, Jakarta, Ho_Chi_Minh (ICT)</option>
+                  <option value="CST-8">UTC+8 — Asia/Shanghai, Hong_Kong, Singapore, Taipei (CST, no DST)</option>
+                  <option value="JST-9">UTC+9 — Asia/Tokyo, Seoul (JST, no DST)</option>
+                </optgroup>
+                <optgroup label="Africa">
+                  <option value="WAT-1">UTC+1 — Africa/Lagos, Algiers (WAT, no DST)</option>
+                  <option value="CAT-2">UTC+2 — Africa/Johannesburg, Cairo, Harare (CAT, no DST)</option>
+                  <option value="EAT-3">UTC+3 — Africa/Nairobi, Addis_Ababa (EAT, no DST)</option>
+                </optgroup>
+                <optgroup label="Pacific &amp; Australia">
+                  <option value="AWST-8">UTC+8 — Australia/Perth (AWST, no DST)</option>
+                  <option value="ACST-9:30ACDT,M10.1.0,M4.1.0/3">UTC+9:30 / +10:30 — Australia/Adelaide (ACST/ACDT)</option>
+                  <option value="AEST-10AEDT,M10.1.0,M4.1.0/3">UTC+10 / +11 — Australia/Sydney, Melbourne, Brisbane (AEST/AEDT)</option>
+                  <option value="NZST-12NZDT,M9.5.0,M4.1.0/3">UTC+12 / +13 — Pacific/Auckland (NZST/NZDT)</option>
+                </optgroup>
               </select>
               <span class="form-hint">Applied at next boot for log timestamps. Picks a POSIX rule under the hood — DST handled automatically.</span>
             </div>
