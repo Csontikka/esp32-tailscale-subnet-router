@@ -6515,6 +6515,39 @@
         steps.push({ name: 'tailscale', url: '/api/tailscale', body: { settings: ts } });
       }
 
+      /* Firewall — backup includes every list's rules, but until now the
+       * restore flow silently dropped them. Re-apply by clearing each
+       * list and re-adding rules in their original order (matching is
+       * first-rule-wins, so order is load-bearing). The four lists are
+       * independent so we drive them in parallel. */
+      if (data.firewall && Array.isArray(data.firewall.lists)) {
+        steps.push({
+          name: 'firewall',
+          fn: function () {
+            return Promise.all(data.firewall.lists.map(function (L) {
+              return post('/api/firewall/clear', { acl: L.index })
+                .then(function () {
+                  var rules = Array.isArray(L.rules) ? L.rules : [];
+                  return rules.reduce(function (chain, r) {
+                    return chain.then(function () {
+                      return post('/api/firewall/add', {
+                        acl:     L.index,
+                        src:     r.src  || 'any',
+                        dest:    r.dest || 'any',
+                        proto:   r.proto  || 0,
+                        s_port:  r.s_port || 0,
+                        d_port:  r.d_port || 0,
+                        action:  typeof r.action === 'number' ? r.action : 1,
+                        monitor: !!r.monitor
+                      });
+                    });
+                  }, Promise.resolve());
+                });
+            }));
+          }
+        });
+      }
+
       /* Pre-decrypt the secrets blob BEFORE firing any steps so a bad
        * passphrase fails the whole restore upfront instead of half-way
        * through. The decrypted bundle is queued as the final step so
@@ -6534,19 +6567,25 @@
         function next(i) {
           if (i >= steps.length) {
             btn.disabled = false; btn.textContent = 'Restore…';
-            showToast('success', 'Restored',
+            showToast('success', 'Restored — rebooting',
               (includeSecrets ? 'Config + secrets applied. ' : '') +
-              'Reboot recommended so every section applies cleanly.', 6000);
-            setPendingReboot(true);
+              'Device is rebooting now so every section actually takes effect.',
+              6000);
+            /* Force-reboot the device — most restored values (WiFi nets,
+             * Tailscale auth_key, web-server certs) only re-read from
+             * NVS at boot, so the SPA staying online without a reboot
+             * would mislead the operator into thinking nothing applied. */
+            post('/api/system/restart', {}).catch(function () {});
             return;
           }
           var s = steps[i];
-          post(s.url, s.body)
-            .then(function () { next(i + 1); })
+          var p = (typeof s.fn === 'function') ? s.fn() : post(s.url, s.body);
+          p.then(function () { next(i + 1); })
             .catch(function () {
               btn.disabled = false; btn.textContent = 'Restore…';
               showToast('error', 'Restore failed',
-                'Step "' + s.name + '" did not save. Device is in a mixed state.', 8000);
+                'Step "' + s.name + '" did not save. Device is in a mixed state — fix and retry, no auto-reboot.',
+                9000);
             });
         }
         next(0);
