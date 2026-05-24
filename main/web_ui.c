@@ -3537,6 +3537,39 @@ static const httpd_uri_t uri_auth_clear_password = {
     .uri = "/api/auth/clear_password", .method = HTTP_POST, .handler = auth_clear_password_handler,
 };
 
+/* Catch-all handler bound to HTTPD_404_NOT_FOUND on the port-80 listener.
+ * Because that listener has no URI handlers registered, every incoming
+ * request lands here and gets bounced over to https://<same-host>/<same-path>. */
+static esp_err_t http_to_https_redirect(httpd_req_t *req, httpd_err_code_t err)
+{
+    (void)err;
+    char host_hdr[80];
+    if (httpd_req_get_hdr_value_str(req, "Host", host_hdr, sizeof host_hdr) != ESP_OK) {
+        /* Compliant clients always send Host; pick a stable fallback for
+         * the handful that don't (raw curl --resolve, embedded probes). */
+        char *hn = nvs_param_get_str("hostname");
+        strlcpy(host_hdr, (hn && hn[0]) ? hn : "esp32-router", sizeof host_hdr);
+        free(hn);
+    }
+    /* Drop ":80" if the client included it — we want the canonical
+     * https://host/path, not https://host:80/path which most browsers
+     * resolve fine but some certificate-pinning libs don't. */
+    char *colon = strchr(host_hdr, ':');
+    if (colon) *colon = '\0';
+
+    /* host_hdr is 80 B, req->uri is bounded by CONFIG_HTTPD_MAX_URI_LEN
+     * (512 here), and the literal "https://" is 8 B + NUL. 640 covers
+     * the worst case with headroom and keeps the compiler's
+     * format-truncation analyser happy. */
+    char location[640];
+    snprintf(location, sizeof location, "https://%s%s", host_hdr, req->uri);
+
+    httpd_resp_set_status(req, "308 Permanent Redirect");
+    httpd_resp_set_hdr(req, "Location", location);
+    httpd_resp_set_type(req, "text/plain");
+    return httpd_resp_sendstr(req, "Redirecting to HTTPS\n");
+}
+
 void web_ui_init(void)
 {
     static httpd_handle_t server = NULL;
@@ -3635,4 +3668,28 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_auth_change_password);
     httpd_register_uri_handler(server, &uri_auth_clear_password);
     ESP_LOGI(TAG, "web UI listening on :%d (HTTPS)", conf.port_secure);
+
+    /* ---- Plain-HTTP → HTTPS redirector on port 80 -----------------------
+     * Old bookmarks and curl calls aimed at http://<host>/ used to fail
+     * with "connection refused" after Phase B closed port 80. Spin up a
+     * tiny no-handler esp_http_server here whose only job is to 308
+     * every request over to the matching https://<host>/<path> URL.
+     * Adds ~1-2 KB to flash and lets the operator stop manually retyping
+     * the scheme. */
+    static httpd_handle_t redirect_server = NULL;
+    httpd_config_t rconf      = HTTPD_DEFAULT_CONFIG();
+    rconf.server_port         = 80;
+    rconf.ctrl_port           = conf.httpd.ctrl_port + 1; /* avoid port clash with HTTPS handle */
+    rconf.stack_size          = 4096;  /* one handler, tiny scratch */
+    rconf.max_uri_handlers    = 1;
+    rconf.max_open_sockets    = 3;     /* throwaway connections */
+    rconf.lru_purge_enable    = true;
+    if (httpd_start(&redirect_server, &rconf) == ESP_OK) {
+        httpd_register_err_handler(redirect_server, HTTPD_404_NOT_FOUND,
+                                     http_to_https_redirect);
+        ESP_LOGI(TAG, "HTTP→HTTPS redirect listening on :80");
+    } else {
+        ESP_LOGW(TAG, "HTTP redirect server failed to start "
+                       "(non-fatal — HTTPS panel still works)");
+    }
 }
