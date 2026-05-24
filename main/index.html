@@ -1926,8 +1926,8 @@
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
             <label class="form-label" for="net-ap-dns">DNS served to AP clients</label>
-            <input class="input mono" type="text" id="net-ap-dns" placeholder="empty = upstream STA DNS">
-            <span class="form-hint">Override DHCP Option 6 — e.g. <code class="mono">1.1.1.1</code> to bypass the upstream router's resolver. Empty mirrors whatever the STA learned.</span>
+            <input class="input mono" type="text" id="net-ap-dns" placeholder="empty = this device (on-board forwarder)">
+            <span class="form-hint">DHCP Option 6 — what AP clients learn as their resolver. Empty hands out this device's own AP IP and routes lookups through the on-board forwarder below (the usual setup). Pin an external IP (Pi-hole, <code class="mono">1.1.1.1</code>) to bypass the forwarder entirely.</span>
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
             <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
