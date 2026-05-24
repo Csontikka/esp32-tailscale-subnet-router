@@ -2710,9 +2710,9 @@ static const httpd_uri_t uri_tailscale_save = {
  * resolves into the same object. */
 static uint32_t s_session_timeout_s;
 static uint32_t session_timeout_clamp(uint32_t v);
-static uint32_t session_remaining_s(void);
+static uint32_t session_remaining_s_for_req(httpd_req_t *req);
 static bool     session_alive(void);
-static void     session_extend(void);
+static void     session_extend_all_alive(void);
 
 static esp_err_t system_handler(httpd_req_t *req)
 {
@@ -2750,7 +2750,7 @@ static esp_err_t system_handler(httpd_req_t *req)
      * tab. session_remaining_s lets the SPA render a discrete countdown
      * next to the lock button without needing its own /api/auth poll. */
     cJSON_AddNumberToObject(root, "session_timeout_s",   s_session_timeout_s);
-    cJSON_AddNumberToObject(root, "session_remaining_s", session_remaining_s());
+    cJSON_AddNumberToObject(root, "session_remaining_s", session_remaining_s_for_req(req));
 
     /* TX-power override (0 = IDF default ≈ 20 dBm, 8..84 = custom in
      * 0.25 dBm steps). Reading via the live API gives whatever was
@@ -2905,7 +2905,7 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         v = session_timeout_clamp(v);
         nvs_save_u32("auth_to_s", v);
         s_session_timeout_s = v;
-        if (session_alive()) session_extend();
+        session_extend_all_alive();
     }
 
     /* TX-power override — clamp + persist + apply live. 0 disables the
@@ -3478,9 +3478,22 @@ static const httpd_uri_t uri_system_diag = {
 #define WEB_UI_SESSION_TIMEOUT_MIN_S 60
 #define WEB_UI_SESSION_TIMEOUT_MAX_S (8 * 60 * 60)
 
-static char     s_session_token[WEB_UI_SESSION_TOKEN_LEN * 2 + 1] = {0};
-static uint64_t s_session_expires_us = 0;
-static uint32_t s_session_timeout_s  = WEB_UI_SESSION_TIMEOUT_DEF_S;
+/* Multi-session table. The original "one global s_session_token" model
+ * kicked any earlier session as soon as anyone (operator's other tab,
+ * a curl probe, this very file's smoke tests) called /api/auth/login
+ * — the new login overwrote the only slot and the previous holder
+ * started bouncing off the login overlay. WEB_UI_SESSION_MAX
+ * concurrent slots let the operator keep a tab on phone + laptop and
+ * still allow scripted diag access without logging anyone out. */
+#define WEB_UI_SESSION_MAX 4
+
+typedef struct {
+    char     token[WEB_UI_SESSION_TOKEN_LEN * 2 + 1];   /* hex; "" = unused */
+    uint64_t expires_us;
+} web_session_t;
+
+static web_session_t s_sessions[WEB_UI_SESSION_MAX] = {0};
+static uint32_t      s_session_timeout_s = WEB_UI_SESSION_TIMEOUT_DEF_S;
 
 static void hex_encode(const uint8_t *src, size_t len, char *out)
 {
@@ -3505,37 +3518,110 @@ static void session_timeout_load(void)
     }
 }
 
+/* Returns the slot index of any non-expired live session, or -1 if
+ * the whole table is empty. Used by anonymous endpoints that just
+ * want to know "is anyone logged in right now". */
 static bool session_alive(void)
 {
-    return s_session_token[0] && (uint64_t)esp_timer_get_time() < s_session_expires_us;
+    uint64_t now = (uint64_t)esp_timer_get_time();
+    for (int i = 0; i < WEB_UI_SESSION_MAX; i++) {
+        if (s_sessions[i].token[0] && now < s_sessions[i].expires_us) return true;
+    }
+    return false;
 }
 
-static void session_clear(void)
+/* Wipe every slot. Used by password-change and password-clear so a
+ * credential rotation invalidates ALL existing tabs. Regular logout
+ * uses session_clear_slot(). */
+static void session_clear_all(void)
 {
-    s_session_token[0]   = '\0';
-    s_session_expires_us = 0;
+    for (int i = 0; i < WEB_UI_SESSION_MAX; i++) {
+        s_sessions[i].token[0]   = '\0';
+        s_sessions[i].expires_us = 0;
+    }
 }
 
-static void session_extend(void)
+/* Locate the slot a request's ts_session cookie points at. Returns
+ * the index, or -1 if no cookie / no match / matched-but-expired. */
+static int session_find_for_req(httpd_req_t *req)
 {
-    s_session_expires_us = (uint64_t)esp_timer_get_time()
-                         + (uint64_t)s_session_timeout_s * 1000000ULL;
+    char hdr[160];
+    if (httpd_req_get_hdr_value_str(req, "Cookie", hdr, sizeof hdr) != ESP_OK) return -1;
+    const char *p = strstr(hdr, "ts_session=");
+    if (!p) return -1;
+    p += strlen("ts_session=");
+    uint64_t now = (uint64_t)esp_timer_get_time();
+    for (int i = 0; i < WEB_UI_SESSION_MAX; i++) {
+        if (!s_sessions[i].token[0])    continue;
+        if (now >= s_sessions[i].expires_us) continue;
+        size_t n = strlen(s_sessions[i].token);
+        if (strncmp(p, s_sessions[i].token, n) == 0
+            && (p[n] == '\0' || p[n] == ';')) {
+            return i;
+        }
+    }
+    return -1;
 }
 
-static void session_create(void)
+/* Pick a slot for a fresh session: prefer an empty one; otherwise
+ * recycle the slot whose expiry is the oldest (LRU). */
+static int session_pick_new_slot(void)
 {
+    int      oldest_idx = 0;
+    uint64_t oldest_exp = UINT64_MAX;
+    for (int i = 0; i < WEB_UI_SESSION_MAX; i++) {
+        if (!s_sessions[i].token[0]) return i;
+        if (s_sessions[i].expires_us < oldest_exp) {
+            oldest_exp  = s_sessions[i].expires_us;
+            oldest_idx  = i;
+        }
+    }
+    return oldest_idx;
+}
+
+/* Forge a fresh token, install it in the slot, return a pointer to
+ * the token string (still owned by the slot). */
+static const char *session_create(void)
+{
+    int idx = session_pick_new_slot();
     uint8_t raw[WEB_UI_SESSION_TOKEN_LEN];
     esp_fill_random(raw, sizeof raw);
-    hex_encode(raw, sizeof raw, s_session_token);
-    session_extend();
+    hex_encode(raw, sizeof raw, s_sessions[idx].token);
+    s_sessions[idx].expires_us = (uint64_t)esp_timer_get_time()
+                                + (uint64_t)s_session_timeout_s * 1000000ULL;
+    return s_sessions[idx].token;
 }
 
-static uint32_t session_remaining_s(void)
+static void session_clear_slot(int idx)
 {
-    if (!s_session_token[0]) return 0;
+    if (idx < 0 || idx >= WEB_UI_SESSION_MAX) return;
+    s_sessions[idx].token[0]   = '\0';
+    s_sessions[idx].expires_us = 0;
+}
+
+/* Push every alive slot's expiry to (now + current timeout). Hooked
+ * from the System tab's timeout-change save so a freshly-extended
+ * window applies to existing tabs immediately, not just to the next
+ * authenticated request. */
+static void session_extend_all_alive(void)
+{
     uint64_t now = (uint64_t)esp_timer_get_time();
-    if (now >= s_session_expires_us) return 0;
-    return (uint32_t)((s_session_expires_us - now) / 1000000ULL);
+    uint64_t new_exp = now + (uint64_t)s_session_timeout_s * 1000000ULL;
+    for (int i = 0; i < WEB_UI_SESSION_MAX; i++) {
+        if (s_sessions[i].token[0] && now < s_sessions[i].expires_us) {
+            s_sessions[i].expires_us = new_exp;
+        }
+    }
+}
+
+/* Remaining seconds for the request's session, or 0 if none / expired. */
+static uint32_t session_remaining_s_for_req(httpd_req_t *req)
+{
+    int idx = session_find_for_req(req);
+    if (idx < 0) return 0;
+    uint64_t now = (uint64_t)esp_timer_get_time();
+    if (now >= s_sessions[idx].expires_us) return 0;
+    return (uint32_t)((s_sessions[idx].expires_us - now) / 1000000ULL);
 }
 
 static bool request_authenticated(httpd_req_t *req)
@@ -3543,22 +3629,12 @@ static bool request_authenticated(httpd_req_t *req)
     /* No password set → entire UI is open. Mirrors the OLD repo's
      * behaviour and lets first-boot show the password wizard. */
     if (!is_web_password_set()) return true;
-    if (!session_alive())       return false;
-
-    char hdr[160];
-    if (httpd_req_get_hdr_value_str(req, "Cookie", hdr, sizeof hdr) != ESP_OK) {
-        return false;
-    }
-    const char *p = strstr(hdr, "ts_session=");
-    if (!p) return false;
-    p += strlen("ts_session=");
-    size_t n = strlen(s_session_token);
-    if (strncmp(p, s_session_token, n) != 0 || (p[n] != '\0' && p[n] != ';')) {
-        return false;
-    }
-    /* Sliding window: every authenticated hit pushes the expiry out,
-     * so a tab the operator is actively poking never times out. */
-    session_extend();
+    int idx = session_find_for_req(req);
+    if (idx < 0) return false;
+    /* Sliding window: every authenticated hit pushes the matching slot's
+     * expiry out, so a tab the operator is actively poking never times out. */
+    s_sessions[idx].expires_us = (uint64_t)esp_timer_get_time()
+                                + (uint64_t)s_session_timeout_s * 1000000ULL;
     return true;
 }
 
@@ -3585,7 +3661,7 @@ static esp_err_t auth_status_handler(httpd_req_t *req)
      * trip. Both are safe pre-auth — they tell you the policy, not who's
      * logged in. */
     cJSON_AddNumberToObject(root, "session_timeout_s",   s_session_timeout_s);
-    cJSON_AddNumberToObject(root, "session_remaining_s", session_remaining_s());
+    cJSON_AddNumberToObject(root, "session_remaining_s", session_remaining_s_for_req(req));
     char *body = cJSON_PrintUnformatted(root);
     cJSON_Delete(root);
     httpd_resp_set_type(req, "application/json");
@@ -3625,11 +3701,11 @@ static esp_err_t auth_login_handler(httpd_req_t *req)
         return ESP_FAIL;
     }
 
-    session_create();
+    const char *new_token = session_create();
     char cookie[160];
     snprintf(cookie, sizeof cookie,
              "ts_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%u",
-             s_session_token, (unsigned)s_session_timeout_s);
+             new_token, (unsigned)s_session_timeout_s);
     httpd_resp_set_hdr(req, "Set-Cookie", cookie);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -3637,7 +3713,9 @@ static esp_err_t auth_login_handler(httpd_req_t *req)
 
 static esp_err_t auth_logout_handler(httpd_req_t *req)
 {
-    session_clear();
+    /* Clear only the slot this request authenticates against — the
+     * operator's other tabs (or a parallel scripted session) survive. */
+    session_clear_slot(session_find_for_req(req));
     httpd_resp_set_hdr(req, "Set-Cookie", "ts_session=; Path=/; HttpOnly; Max-Age=0");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -3717,11 +3795,11 @@ static esp_err_t auth_setup_handler(httpd_req_t *req)
 
     /* Log the new operator in straight away so the SPA can transition
      * from the wizard into the normal dashboard without a second POST. */
-    session_create();
+    const char *setup_token = session_create();
     char cookie[160];
     snprintf(cookie, sizeof cookie,
              "ts_session=%s; Path=/; HttpOnly; SameSite=Strict; Max-Age=%u",
-             s_session_token, (unsigned)s_session_timeout_s);
+             setup_token, (unsigned)s_session_timeout_s);
     httpd_resp_set_hdr(req, "Set-Cookie", cookie);
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -3769,8 +3847,9 @@ static esp_err_t auth_change_password_handler(httpd_req_t *req)
 
     /* Force re-login after a successful change — matches the OLD repo's
      * behaviour and means a stolen-cookie attacker stays out even if the
-     * operator updates the password from a separate browser tab. */
-    session_clear();
+     * operator updates the password from a separate browser tab. Wipes
+     * every slot, not just the requesting one. */
+    session_clear_all();
     httpd_resp_set_hdr(req, "Set-Cookie", "ts_session=; Path=/; HttpOnly; Max-Age=0");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
@@ -3786,7 +3865,7 @@ static esp_err_t auth_clear_password_handler(httpd_req_t *req)
      * Once cleared the device reverts to first-boot wizard mode. */
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
     set_web_password_hashed("");
-    session_clear();
+    session_clear_all();
     httpd_resp_set_hdr(req, "Set-Cookie", "ts_session=; Path=/; HttpOnly; Max-Age=0");
     httpd_resp_set_type(req, "application/json");
     return httpd_resp_sendstr(req, "{\"ok\":true}");
