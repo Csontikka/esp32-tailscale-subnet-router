@@ -6,10 +6,15 @@
 # key inventory needs (~3.5K of actual data; the rest of the 24K was
 # fragmented across superseded versions). Subsequent partitions keep
 # their 64K-aligned offsets — ota_0 stays at 0x20000.
+# ota_0 / ota_1 grown 1664K → 1920K (2026-05-24): the original "storage"
+# (FAT, 320K) partition went unused by every component — no FATFS mount,
+# no fopen, no esp_partition_find_first("storage") anywhere in main/,
+# components/, or external/microlink. Reclaimed and split across the
+# two OTA slots so each holds 1920K, giving the running firmware 256K
+# of fresh headroom over the previous 1664K ceiling.
 nvs,       data, nvs,     0x9000,  64K,
 otadata,   data, ota,     0x19000, 8K,
 phy_init,  data, phy,     0x1b000, 4K,
-ota_0,     app,  ota_0,   0x20000, 1664K,
-ota_1,     app,  ota_1,   ,        1664K,
-storage,   data, fat,     ,        320K,
+ota_0,     app,  ota_0,   0x20000, 1920K,
+ota_1,     app,  ota_1,   ,        1920K,
 coredump,  data, coredump,,        64K,
