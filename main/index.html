@@ -1724,16 +1724,38 @@
                     <path d="M8 21h8M12 17v4"/>
                   </svg>
                 </span>
-                <span class="card-title">Memory</span>
+                <span class="card-title">System</span>
               </div>
             </div>
-            <div class="metric-card">
-              <span class="metric-label">Free Heap</span>
-              <span class="metric-value" id="heap-value">—</span>
-              <div class="heap-bar-track">
-                <div class="heap-bar-fill" id="heap-bar" style="width: 0%; background: var(--success);"></div>
+            <div class="metric-card" style="gap:0.55rem;">
+              <div>
+                <div style="display:flex; justify-content:space-between; align-items:baseline; font-size:var(--text-xs); color:var(--text-secondary);">
+                  <span>Internal DRAM</span>
+                  <span class="mono" id="sys-mem-internal-val">—</span>
+                </div>
+                <div class="heap-bar-track" style="margin-top:0.2rem;">
+                  <div class="heap-bar-fill" id="sys-mem-internal-bar" style="width:0%; background:var(--success);"></div>
+                </div>
               </div>
-              <span class="metric-sub" id="heap-total">—</span>
+              <div>
+                <div style="display:flex; justify-content:space-between; align-items:baseline; font-size:var(--text-xs); color:var(--text-secondary);">
+                  <span>SPIRAM</span>
+                  <span class="mono" id="sys-mem-spiram-val">—</span>
+                </div>
+                <div class="heap-bar-track" style="margin-top:0.2rem;">
+                  <div class="heap-bar-fill" id="sys-mem-spiram-bar" style="width:0%; background:var(--success);"></div>
+                </div>
+              </div>
+              <div style="display:grid; grid-template-columns:1fr 1fr; gap:0.5rem; margin-top:0.15rem;">
+                <div>
+                  <span style="font-size:var(--text-xs); color:var(--text-secondary); display:block;">CPU</span>
+                  <span class="mono" id="sys-cpu-load" style="font-size:var(--text-base); font-weight:600;">—</span>
+                </div>
+                <div>
+                  <span style="font-size:var(--text-xs); color:var(--text-secondary); display:block;">Temp</span>
+                  <span class="mono" id="sys-cpu-temp" style="font-size:var(--text-base); font-weight:600;">—</span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -2833,13 +2855,15 @@
             <span class="card-title" style="color:var(--accent);">☕ Support the project</span>
           </div>
         </div>
-        <div class="card-body" style="text-align:center;">
-          <img alt="Csontikka owl" title="Csontikka" style="width:54px; height:72px; image-rendering:pixelated; margin:0 auto 0.5rem auto; display:block;"
+        <div class="card-body">
+          <p style="margin:0 0 0.75rem 0; color:var(--text-secondary); text-align:center;">If this firmware saved you a router purchase or an afternoon of debugging, you can chip in:</p>
+          <div style="display:flex; align-items:center; justify-content:flex-start; gap:1rem;">
+          <img alt="Csontikka owl" title="Csontikka" style="width:40px; height:54px; image-rendering:pixelated; flex:0 0 auto;"
                src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADYAAABICAQAAAAXZM7nAAAImElEQVR42s2YDWxV5RnHvae3rbTOUsr4UJygbHXTYYZufIyyjQScAxkgg8lgIy4qptXI4jCoc0bdVq3swwlOIgmQbeK+HCPoAriFgaUbEUYKooOCwNoVuoIttL23957z2z0P/3Byc+/p7SWZ8Tm5yX3P+77P//l+n/dckkk4RC65SMK5iOUUXBRUNPUbzau8zgKKiJBbaK6n4qKhxnIMjJ7IIbIvCXUkaOUFLs3LnMaYKbQDceK4tFNhHMMNyCTAA2BealSYj/GZxVkgQRKXBDBDuoXKdg8ucRIkOMKnjEl/tfoSCTwDAY9e4Ne5wBYCvdp0iKv6Aaf4ZQsQI0mMZbQB8C+ioYa0qeXgSyjZNlMQeI4IERwK7J2DYk1CTgOSJuK61Gi3cYlxc4iw2rTBNHNJkiQOrPQ9R9SHyLaDqJ7tppfLYYbgaATfMq6hxvirNANXbr4j0JyhVDKJcYxiNOWUXJiZCFo928Y/BLqBhwwsJOxLeQ9IAm+b/V08WphKNavZwH7aTV44Rzf/4SBrWcFiJvArPHqArRT7EcxKsPHz5pyQ4P0scYtGqOFH0jGNLABiFt7p5JqPPpPiUeRrJrBfmGYhHptrHksAMylkP64xjtNDLyFkwHET8C0LHUsD+ew1UyIEbBkoPKpSo6lAQG00sJlaanmEh1nOWjbRSBMSg6NM97mYhcZZgMEe4xrJ7rOdQK9tLCdCAXewmzP8hbuZyNCsIVXCjYxjAV+jzOehXzknAJdORkm3DKiBtiQObD+fVSbpcLTYsiyKHtMhI0/FqYTDBgY3CCzDiFVA0jR7QW8KBFJMkaAi6SISxUnnIs2awWK6xN5kAZsNJAzs3kBOha62pG3Vf77Ig3yPBVxzQbOraMcD9go+0wTUgJVg+KrBaytlzGUNe3idGi6XWSQgt7MLRB1U4xinSrqNz1YiONljcQ0QJ4nH+MCM3EULAb3DJ304zS1R7vXQQxyAn0tXbPySrcsK9jstOelHnjLmCwAkjF2vze5jkD9HhDF0mCVcAFwrxF0mzDQl9VNZwBRp9Qr8gxSqUn6ME3hBvbAkhxWqE6uBXpurpwEISvdcgd2XBUxB3qi8/xOObF+tJIff8DTHNWplsEXcUTxj/5wJu95GHo1EmC1O88M0i7BT8rxo0L5m28Rul3lpMjFc8+nE1Gi+amcHI43DFBtDO5eyWGDTwzQr5KCWPHm++2AQp+TF7+JYxjSCSb8o9f8BPGLGfJBZ4etae4oilgJJurg+rH5czgmB1QisjCMYA8XYZAsGF6hSa+Sajx+1w+lNmfGN1OhhAJoZmC3LHEvEc2JdbQel4pNe0+BupvMunhmuneGpuQHsxrXZJGt5CxQgj6TmNgKwK7wRu46YOo955jOrKQoJLy0aVykaFwJx6YqgTjGUQvYCsF4eywJWBdo4wV+kt1vBMixBQnnWxggivjCU+pqbtt30kDDA21J7blBCfDvLOS3WE8wgLl1YpVaEDja4gI4yxWYVVNRxDkR/58vG7fs60a+xlVmbuAUK5RhjtEh9CUvYQStn+Ce1VGguKMPXcifPUcstOAb/UdpwgT/ihJ/S8xUenVybWeMZwgj7nyZrepmVJ3+imL69r/5jkRa16MwVmX800r80UtuqzpI55luPY3xEXEIb7zhwiAGZy4jkutPgmIdPisvyEL3kswdAYKUCy4Mk8I/VF5/iCpk4ZOE0gb3HQAryA5NewzitWnpvrvvLzSqyZxmWGqmp0cWif3o9AeofS0N3KcQraNN59gqTM+QO1VXzDtdxTu3SHAPPcXN8FU+nF2ziMe5nHjO4kTKtkZ4KGD04RNNCfotxy2mGyWA2F6Col2ZeZipFgR0yteQWOizoexmfE0ymXEq3APwnbo8H6gFfYRaVlErLKIUUUsanWczLeLZLB29/g/fz/J73AfAC/ezmglGcQzSwg0beZj8H+DdJAN3ODlMuQ+ckycQIvsExPDyOsI0WOjCSidNJnZeV8DZd+ftLauAu4ySeTqTBjGQhj7OFTsLJxaWbsUrlPOAcKuki4YMhk0jjmSxjFS+xnZ3spZ5VbOS3PE2dkvlZWSefsqOOVtdUy7Jon3lWpfWr8wJTnfyOmrqfafMFE6uuWPBLkCKizJRm2zWTN1g3sC5cUiJBOeAKq4pwWCdGXmZcJ82eMfDc+VlGC+BiDStOfmAvhrTP4RX/NYk3Mw+vySybtFVguQ1PnXbcb+N8iAZtfagfW3X0ystr8tSMKH8T2OOpcTGR3IbnTgV/A06+0fhnyVkXsBP1/bkGOhil8O+nx+ZzDJeENaz/YCFF53usPmvOKLpUum/yWzrB5ZTxURVdD/X47OWb2Ru5oHekkhZdQuoYEqzuG2qGvl65Bpckpjpfz9Sse8xkPEundrhAM/cxIBxQxuBKmqw1SGorRjESAPwAfatP7yYtKz0EprUHWIQ0DNPrl0AcdPeHbay1zZ4AVdXTDLgeTLwErp64jtpWnmFwGNR01Y19PK9/f0i9Hc8G4hJijw+RtudBmV1nmpkee9cDwHGWmjXSLc9lNJG06asZrc9KO7CU5iY2A+9TY9oEUF8BfRM6yz5dJRu4R5dBBPikrc6QMUmz3c4G0gTARrsE2UI+x8ell8SjguMCOMMUbpX2+2z+NtbTCupMIul1exCtZoJbdfHZBEC92Drp1yWJ91PJfoZJqdFYenCBN5EWDGclnXRRaxiBlAygXnePqNWQpwBo0vmkaE0TL8q7FrXd2Gc1BvCOkqQYhwLZYyQjxSFt83DGnZc9yDd9vnVCAmoFEKPaTB2hhAMW+qcZJo7yL5Hw01dgeHST5C4bZ11JMbMY48/LNgfB0qUgEC/sqqvqJ+0+oXCemKsMB95kDqf5r3m9IN92bglv8BjlypIQ8dLl5mquFPz/mwIP5U2+1PndQOWhDw1R/MFh/Q8JgubCCn07iAAAAABJRU5ErkJggg==">
-          <p style="margin:0 0 0.75rem 0; color:var(--text-secondary);">If this firmware saved you a router purchase or an afternoon of debugging, you can chip in:</p>
-          <a href="https://www.buymeacoffee.com/csontikka" target="_blank" rel="noopener" class="btn btn-primary btn-md" style="text-decoration:none;">
+          <a href="https://www.buymeacoffee.com/csontikka" target="_blank" rel="noopener" class="btn btn-primary btn-md" style="text-decoration:none; flex:0 0 auto;">
             ☕ Buy me a coffee
           </a>
+          </div>
         </div>
       </div>
 
@@ -3359,29 +3383,47 @@
       apClientsBadge.textContent = (ap.clients != null ? ap.clients + ' client' + (ap.clients !== 1 ? 's' : '') : '—');
       apClientsBadge.className = (typeof ap.clients === 'number' && ap.clients > 0) ? 'badge badge-success' : 'badge badge-neutral';
 
-      // Heap — backend reports free_heap + heap_total (in bytes).
-      var heapFree  = data.free_heap  || 0;
-      var heapTotal = data.heap_total || (heapFree || 1);
-      var heapKB    = Math.round(heapFree / 1024);
-      var heapPct   = Math.round(heapFree / heapTotal * 100);
-      document.getElementById('heap-value').textContent = heapKB + ' KB';
-      document.getElementById('heap-total').textContent = 'of ' + Math.round(heapTotal / 1024) + ' KB total DRAM';
-      document.getElementById('heap-bar').style.width   = heapPct + '%';
+      /* System tile — internal DRAM + SPIRAM bars, CPU load %, CPU temp.
+       * Backend reports mem_internal_free/total, mem_spiram_free/total,
+       * cpu_load_pct, cpu_temp_c (degC) — all optional, "—" if absent. */
+      function renderMemBar(freeBytes, totalBytes, valEl, barEl) {
+        if (!totalBytes) { valEl.textContent = '—'; barEl.style.width = '0%'; return; }
+        var freeKB  = Math.round(freeBytes / 1024);
+        var totalKB = Math.round(totalBytes / 1024);
+        var usedPct = Math.max(0, Math.min(100, Math.round(100 * (totalBytes - freeBytes) / totalBytes)));
+        valEl.textContent = freeKB + ' / ' + totalKB + ' KB free';
+        barEl.style.width = (100 - usedPct) + '%';
+        barEl.style.background = (usedPct > 90) ? 'var(--danger)'
+                                : (usedPct > 75) ? 'var(--warning)'
+                                :                  'var(--success)';
+      }
+      renderMemBar(data.mem_internal_free, data.mem_internal_total,
+                    document.getElementById('sys-mem-internal-val'),
+                    document.getElementById('sys-mem-internal-bar'));
+      renderMemBar(data.mem_spiram_free, data.mem_spiram_total,
+                    document.getElementById('sys-mem-spiram-val'),
+                    document.getElementById('sys-mem-spiram-bar'));
 
-      var heapEl = document.getElementById('heap-value');
-      var heapCard = document.getElementById('card-heap');
-      if (heapKB < 50) {
-        heapEl.className = 'metric-value text-danger';
-        document.getElementById('heap-bar').style.background = 'var(--danger)';
-        heapCard.className = 'card card-stripe-danger';
-      } else if (heapKB < 100) {
-        heapEl.className = 'metric-value text-warning';
-        document.getElementById('heap-bar').style.background = 'var(--warning)';
-        heapCard.className = 'card card-stripe-warning';
+      var cpuLoadEl = document.getElementById('sys-cpu-load');
+      if (typeof data.cpu_load_pct === 'number') {
+        cpuLoadEl.textContent = data.cpu_load_pct + ' %';
+        cpuLoadEl.style.color = data.cpu_load_pct > 80 ? 'var(--danger)'
+                              : data.cpu_load_pct > 50 ? 'var(--warning)'
+                              :                          'var(--success)';
       } else {
-        heapEl.className = 'metric-value text-success';
-        document.getElementById('heap-bar').style.background = 'var(--success)';
-        heapCard.className = 'card card-stripe-success';
+        cpuLoadEl.textContent = '—';
+        cpuLoadEl.style.color = '';
+      }
+
+      var cpuTempEl = document.getElementById('sys-cpu-temp');
+      if (typeof data.cpu_temp_c === 'number') {
+        cpuTempEl.textContent = data.cpu_temp_c.toFixed(1) + ' °C';
+        cpuTempEl.style.color = data.cpu_temp_c > 75 ? 'var(--danger)'
+                              : data.cpu_temp_c > 60 ? 'var(--warning)'
+                              :                        'var(--success)';
+      } else {
+        cpuTempEl.textContent = '—';
+        cpuTempEl.style.color = '';
       }
 
       // Uptime

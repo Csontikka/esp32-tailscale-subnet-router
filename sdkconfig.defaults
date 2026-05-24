@@ -111,6 +111,10 @@ CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=y
 # --- FreeRTOS extras for the 'tasks' CLI command ---------------------------
 CONFIG_FREERTOS_USE_TRACE_FACILITY=y
 CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
+# Per-task runtime counters — needed by /api/status to compute live CPU %
+# from the IDLE0+IDLE1 task fractions. Overhead is one esp_timer read per
+# context switch (~0.5 % CPU on the S3 at standard load).
+CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 
 # --- HTTPS server + run-time self-signed cert ------------------------------
 # Browsers gate the WebCrypto SubtleCrypto API behind secure contexts
