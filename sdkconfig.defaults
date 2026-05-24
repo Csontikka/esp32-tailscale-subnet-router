@@ -40,9 +40,22 @@ CONFIG_LWIP_L2_TO_L3_COPY=y
 # "httpd_accept_conn: error in accept (23)" — errno 23 = ENFILE. Up to 24.
 CONFIG_LWIP_MAX_SOCKETS=24
 # Bigger TCP window/buffer so a single stream can fill the link before the
-# encryption itself becomes the limit.
-CONFIG_LWIP_TCP_WND_DEFAULT=32768
-CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
+# encryption itself becomes the limit. The 32K value above used to be the
+# threshold under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384; ESP-IDF
+# routes any TCP buffer alloc > 16K straight to SPIRAM, so bumping to 64K
+# costs nothing on the internal heap.
+CONFIG_LWIP_TCP_WND_DEFAULT=65535
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=65535
+
+# WiFi block-ACK RX window — default is 6, max is 64. Higher window lets
+# the peer aggregate more frames into a single A-MPDU burst before
+# blocking on an ACK, which is the right knob when the radio is the
+# bottleneck (AP+STA time-share on a single 2.4 GHz chain). Bumped to
+# the standard 32; further to 64 if a real measurement shows headroom.
+CONFIG_ESP_WIFI_RX_BA_WIN=32
+# IDF requires BA_WIN <= 2 * STATIC_RX_BUFFER_NUM; default STATIC is 10
+# (caps BA_WIN at 20), bumped to 16 to allow the full 32-window.
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
 
 # --- DHCP server ------------------------------------------------------------
