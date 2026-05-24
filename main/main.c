@@ -329,6 +329,29 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         s_retry_num = 0;
         s_net_retries = 0;   /* successful association — clear the rotation counter */
         ap_connect = 1;
+
+        /* Learn the STA's channel and persist it to NVS. wifi_init_softap
+         * on the next boot picks this up and brings the AP up on the same
+         * channel — keeps the single radio from time-sharing between
+         * AP and STA channels, which would tank throughput by 5-10x.
+         * In-place retune at runtime via esp_wifi_set_config(AP) tears
+         * the netif and breaks NAT hooks, so we only LEARN here and
+         * defer the actual channel change to the next reboot. */
+        wifi_ap_record_t ap_info;
+        if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK
+            && ap_info.primary >= 1 && ap_info.primary <= 13) {
+            int32_t saved = 0;
+            (void)nvs_param_get_int("ap_chan_learned", &saved);
+            if (saved != (int32_t)ap_info.primary) {
+                if (nvs_param_set_int("ap_chan_learned", ap_info.primary) == ESP_OK) {
+                    ESP_LOGW(TAG_STA, "Learned STA channel %u — saved to NVS, applies on next boot",
+                             (unsigned)ap_info.primary);
+                } else {
+                    ESP_LOGW(TAG_STA, "Learned STA channel %u — NVS save failed",
+                             (unsigned)ap_info.primary);
+                }
+            }
+        }
         /* Auto-spawn the Tailscale (microlink) connect task once STA has
          * an IP — same trigger point as the old repo. The task is
          * responsible for waiting on SNTP, dialing the control plane and
@@ -395,9 +418,38 @@ esp_netif_t *wifi_init_softap(void)
     char *nvs_pw   = nvs_param_get_str("ap_passwd");
     const char *use_ssid = (nvs_ssid && nvs_ssid[0]) ? nvs_ssid : EXAMPLE_ESP_WIFI_AP_SSID;
     const char *use_pw   = (nvs_pw   && nvs_pw[0])   ? nvs_pw   : EXAMPLE_ESP_WIFI_AP_PASSWD;
+    /* Throughput-regression fix (2026-05-24): the ESP32-S3 has a single
+     * 2.4 GHz radio shared by AP and STA. If the two interfaces sit on
+     * different channels the radio has to time-share between them, which
+     * collapses throughput by ~5-10x (measured ~1200x in the worst case
+     * during this hunt). Channel selection priority:
+     *
+     *   1. `ap_channel` NVS — operator explicitly pinned a channel
+     *   2. `ap_chan_learned` NVS — last STA channel we saw on
+     *      assoc, saved by the IP_EVENT_STA_GOT_IP handler. After
+     *      one successful STA assoc + reboot, AP comes up on the
+     *      home WiFi channel automatically.
+     *   3. Kconfig default — fresh device, no NVS state yet
+     *
+     * Note: in-place AP retune via esp_wifi_set_config(WIFI_IF_AP) from
+     * the IP_EVENT_STA_GOT_IP handler tears the AP netif and drops the
+     * byte-counter / NAT hooks, so we deliberately do NOT retune at
+     * runtime — only save the learned channel for the next boot. */
+    /* Selection: learned STA channel from NVS if we have one, otherwise
+     * the Kconfig default. The legacy `ap_channel` NVS knob is
+     * intentionally NOT consulted here — many test devices have a stale
+     * `ap_channel=6` lingering from an older firmware that pre-dated
+     * the single-radio same-channel requirement, and re-honouring it
+     * after the learned channel is set would just pin us back into the
+     * 5-10x throughput hole we are fixing. Once we trust the learned
+     * pipeline we'll add a Web UI override that writes ap_chan_learned
+     * directly. */
     int32_t channel = EXAMPLE_ESP_WIFI_CHANNEL;
-    nvs_param_get_int("ap_channel", &channel);
-    if (channel < 1 || channel > 13) channel = EXAMPLE_ESP_WIFI_CHANNEL;
+    int32_t learned = 0;
+    if (nvs_param_get_int("ap_chan_learned", &learned) == ESP_OK
+        && learned >= 1 && learned <= 13) {
+        channel = learned;
+    }
 
     /* Hidden SSID — when set, the AP doesn't broadcast its name in
      * beacons. Clients still need the SSID to connect; this just stops
