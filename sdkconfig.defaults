@@ -18,6 +18,13 @@ CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_BOOT_HW_INIT=y
 
+# Let WiFi & lwIP buffers spill to SPIRAM under internal-heap pressure.
+# Without this, the tail end of a WG TX burst hits pbuf_alloc(PBUF_RAM)
+# failures (ERR_MEM, -1) on the magicsock path while there's 8 MB of
+# SPIRAM sitting idle. With it enabled and the SPIRAM custom-pbuf path
+# in ml_wg_mgr.c the per-packet drop rate dropped from ~5.7/s to ~0/s.
+CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+
 # --- Main task: more stack than the default 3584 ----------------------------
 # Several boot-time init paths (microlink_init, http_server start, NAPT
 # setup) push into the same task. 7 KB keeps the canary intact.
