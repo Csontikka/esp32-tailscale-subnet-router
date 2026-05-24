@@ -147,6 +147,71 @@ static const char *reset_reason_str(void)
     }
 }
 
+/* Live CPU-load percentage from the FreeRTOS runtime-stats counters.
+ * Compares the IDLE0+IDLE1 task tick deltas against total task ticks
+ * since the previous sample, so the first call returns 0 and every
+ * call after that gives the load over the elapsed interval. Throttled
+ * to 1-per-second so the same /api/status poll burst doesn't churn
+ * the sampler. Requires CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y. */
+static uint8_t sample_cpu_load_pct(void)
+{
+    static uint64_t s_last_sample_us = 0;
+    static uint32_t s_last_total     = 0;
+    static uint32_t s_last_idle      = 0;
+    static uint8_t  s_last_load_pct  = 0;
+
+    uint64_t now = (uint64_t)esp_timer_get_time();
+    if (s_last_sample_us != 0 && now - s_last_sample_us < 1000000) {
+        return s_last_load_pct;
+    }
+
+    UBaseType_t n = uxTaskGetNumberOfTasks();
+    TaskStatus_t *arr = malloc(sizeof(TaskStatus_t) * n);
+    if (!arr) return s_last_load_pct;
+    uint32_t total = 0;
+    UBaseType_t got = uxTaskGetSystemState(arr, n, &total);
+
+    uint32_t idle = 0;
+    for (UBaseType_t i = 0; i < got; i++) {
+        if (arr[i].pcTaskName && strncmp(arr[i].pcTaskName, "IDLE", 4) == 0) {
+            idle += arr[i].ulRunTimeCounter;
+        }
+    }
+    free(arr);
+
+    if (s_last_sample_us != 0 && total > s_last_total) {
+        uint32_t total_delta = total - s_last_total;
+        uint32_t idle_delta  = idle  - s_last_idle;
+        if (idle_delta >= total_delta) {
+            s_last_load_pct = 0;
+        } else {
+            s_last_load_pct = (uint8_t)(100 - ((uint64_t)idle_delta * 100 / total_delta));
+        }
+    }
+    s_last_total     = total;
+    s_last_idle      = idle;
+    s_last_sample_us = now;
+    return s_last_load_pct;
+}
+
+/* Internal CPU temperature in °C, or -999 if the sensor isn't available.
+ * Lazy-installs on first call; the sensor draws ~1 mA continuously while
+ * enabled, so we keep it running once installed rather than turn it on
+ * and off per sample. Diag-tab also calls into this via its own copy
+ * (kept until the diag handler migrates to this shared helper). */
+static float sample_cpu_temp_c(void)
+{
+    static temperature_sensor_handle_t s_sensor = NULL;
+    if (!s_sensor) {
+        temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
+        if (temperature_sensor_install(&cfg, &s_sensor) != ESP_OK) return -999.0f;
+        temperature_sensor_enable(s_sensor);
+    }
+    float tc = 0;
+    if (temperature_sensor_get_celsius(s_sensor, &tc) != ESP_OK) return -999.0f;
+    return tc;
+}
+
 static esp_err_t status_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -166,6 +231,18 @@ static esp_err_t status_handler(httpd_req_t *req)
      * isn't important — what matters is that it stays >= free_heap. */
     cJSON_AddNumberToObject(root, "heap_total",   heap_caps_get_total_size(MALLOC_CAP_8BIT));
     cJSON_AddNumberToObject(root, "free_psram",   heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    /* Per-heap split for the Status System tile — separate progress bars
+     * for internal DRAM vs SPIRAM let the operator see which heap is
+     * actually under pressure (internal is the constrained one). */
+    cJSON_AddNumberToObject(root, "mem_internal_free",  heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "mem_internal_total", heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
+    cJSON_AddNumberToObject(root, "mem_spiram_free",    heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+    cJSON_AddNumberToObject(root, "mem_spiram_total",   heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+    cJSON_AddNumberToObject(root, "cpu_load_pct",       sample_cpu_load_pct());
+    {
+        float tc = sample_cpu_temp_c();
+        if (tc > -100.0f) cJSON_AddNumberToObject(root, "cpu_temp_c", tc);
+    }
     cJSON_AddStringToObject(root, "reset_reason", reset_reason_str());
 
     /* STA (uplink) — SSID, IP, RSSI, MAC. */
