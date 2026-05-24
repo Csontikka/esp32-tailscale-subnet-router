@@ -2962,10 +2962,21 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         nvs_save_str("dev_name", dn->valuestring);
     }
 
-    /* Timezone — POSIX string. Applied at next boot (tzset is global,
-     * easiest to take effect after restart). Empty value clears it. */
+    /* Timezone — POSIX string. tzset() pulls in the new rule for any
+     * fresh localtime() call, but the IDF log subsystem reads TZ once
+     * at boot and caches it, so the operator's main "where do my log
+     * timestamps live" question only resolves after a reboot.
+     * Compare against the persisted value so we only flip the
+     * restart_required flag when the operator actually changed it. */
+    bool tz_changed = false;
     const cJSON *tz_j = cJSON_GetObjectItem(root, "tz");
     if (cJSON_IsString(tz_j)) {
+        char *cur_tz = nvs_param_get_str("tz");
+        const char *cur_str = cur_tz ? cur_tz : "";
+        if (strcmp(cur_str, tz_j->valuestring) != 0) {
+            tz_changed = true;
+        }
+        free(cur_tz);
         nvs_save_str("tz", tz_j->valuestring);
         setenv("TZ", tz_j->valuestring[0] ? tz_j->valuestring : "UTC0", 1);
         tzset();
@@ -3045,6 +3056,7 @@ static esp_err_t system_save_handler(httpd_req_t *req)
      * twin block in tailscale_save_handler. */
     cJSON *resp = cJSON_CreateObject();
     nvs_save_errors_attach(resp);
+    if (tz_changed) cJSON_AddBoolToObject(resp, "restart_required", true);
     char *body = cJSON_PrintUnformatted(resp);
     cJSON_Delete(resp);
     httpd_resp_set_type(req, "application/json");
@@ -3483,19 +3495,12 @@ static esp_err_t system_diag_handler(httpd_req_t *req)
         cJSON_AddStringToObject(s, "reset_reason", reset_reason_str());
         cJSON_AddStringToObject(s, "idf_version",  esp_get_idf_version());
 
-        /* CPU temperature — install on first call, leave it running.
-         * The sensor is ~1-2 °C noisy and reads in ~10 ms. */
-        static temperature_sensor_handle_t s_temp = NULL;
-        if (!s_temp) {
-            temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
-            if (temperature_sensor_install(&cfg, &s_temp) == ESP_OK) {
-                temperature_sensor_enable(s_temp);
-            }
-        }
-        float tc = 0;
-        if (s_temp && temperature_sensor_get_celsius(s_temp, &tc) == ESP_OK) {
-            cJSON_AddNumberToObject(s, "cpu_temp_c", tc);
-        }
+        /* Shared sample_cpu_temp_c() handles install + enable + read;
+         * having a second copy here used to race-fail the second install
+         * with ESP_ERR_INVALID_STATE and silently drop cpu_temp_c from
+         * whichever endpoint lost the race. */
+        float tc = sample_cpu_temp_c();
+        if (tc > -100.0f) cJSON_AddNumberToObject(s, "cpu_temp_c", tc);
         cJSON_AddItemToObject(root, "system", s);
     }
 
