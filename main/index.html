@@ -2458,6 +2458,46 @@
           </div>
         </div>
       </div>
+
+      <!-- ===== Hardware diagnostics ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Hardware diagnostics</span>
+          </div>
+          <div class="card-header-right">
+            <span class="badge badge-neutral" id="diag-temp-badge">—</span>
+            <button class="btn btn-ghost btn-sm" id="diag-refresh">Refresh</button>
+          </div>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">Snapshot of chip, memory, partitions, MAC addresses and live FreeRTOS task list. Read-only; refresh on demand.</p>
+
+          <h4 style="font-size:var(--text-sm); margin:0.5rem 0 0.35rem 0; color:var(--accent-primary); text-transform:uppercase; letter-spacing:0.05em;">Chip &amp; memory</h4>
+          <div id="diag-chipmem" class="mono" style="font-size:var(--text-xs);">—</div>
+
+          <h4 style="font-size:var(--text-sm); margin:1rem 0 0.35rem 0; color:var(--accent-primary); text-transform:uppercase; letter-spacing:0.05em;">Partitions</h4>
+          <div style="overflow-x:auto;">
+            <table class="table mono" id="diag-parts-table" style="width:100%;">
+              <thead><tr><th>Name</th><th>Kind</th><th>Offset</th><th>Size</th><th>State</th></tr></thead>
+              <tbody id="diag-parts-tbody"><tr><td colspan="5" class="form-hint">—</td></tr></tbody>
+            </table>
+          </div>
+          <div id="diag-nvs" class="mono" style="font-size:var(--text-xs); margin-top:0.5rem;">—</div>
+          <div id="diag-coredump" class="mono" style="font-size:var(--text-xs); margin-top:0.25rem;">—</div>
+
+          <h4 style="font-size:var(--text-sm); margin:1rem 0 0.35rem 0; color:var(--accent-primary); text-transform:uppercase; letter-spacing:0.05em;">MAC + system</h4>
+          <div id="diag-macsys" class="mono" style="font-size:var(--text-xs);">—</div>
+
+          <h4 style="font-size:var(--text-sm); margin:1rem 0 0.35rem 0; color:var(--accent-primary); text-transform:uppercase; letter-spacing:0.05em;">FreeRTOS tasks</h4>
+          <div style="overflow-x:auto;">
+            <table class="table mono" id="diag-tasks-table" style="width:100%;">
+              <thead><tr><th>Name</th><th style="text-align:right;">Prio</th><th>State</th><th style="text-align:right;">Stack HWM (words)</th></tr></thead>
+              <tbody id="diag-tasks-tbody"><tr><td colspan="4" class="form-hint">—</td></tr></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- =================================================================
@@ -2963,6 +3003,7 @@
          * auto-loads its status so the operator sees the current mode
          * without clicking Refresh first. */
         if (page === 'tools'     && typeof pcapRefresh   === 'function') pcapRefresh();
+        if (page === 'tools'     && typeof loadDiag      === 'function') loadDiag();
         if (page === 'tools'     && typeof loadPrecrashLog === 'function') loadPrecrashLog();
         return true;
       }
@@ -5922,6 +5963,113 @@
       function pad(n) { n = parseInt(n, 10); return (n < 10 ? '0' : '') + n; }
       return 'V' + yy + '.' + pad(mnum) + pad(m[2]) + '.' + pad(t[1]) + pad(t[2]);
     }
+
+    /* Hardware diagnostics — chip/heap/partitions/MAC/tasks. Fires on
+     * Diagnostics tab entry and from the Refresh button. */
+    function loadDiag() {
+      var c1 = document.getElementById('diag-chipmem');
+      if (c1) c1.textContent = 'Loading…';
+      apiFetch('/api/system/diag').then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      }).then(function (d) {
+        function kb(n)  { return (n/1024).toFixed(1) + ' KB'; }
+        function mb(n)  { return (n/1024/1024).toFixed(1) + ' MB'; }
+        function hex(n) { return '0x' + n.toString(16).padStart(6, '0'); }
+        function esc(s) {
+          return String(s).replace(/[&<>"']/g, function (ch) {
+            return { '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[ch];
+          });
+        }
+
+        /* Chip + memory */
+        var c = d.chip || {}, m = d.memory || {};
+        document.getElementById('diag-chipmem').innerHTML =
+          '<div>Model: <strong>' + esc(c.model || '?') + '</strong> rev ' + (c.revision|0) +
+          ' · ' + (c.cores|0) + ' cores · ' + esc((c.features || []).join(', ') || '—') + '</div>' +
+          '<div>Flash: <strong>' + mb(c.flash_size || 0) + '</strong> · ' +
+          'PSRAM: <strong>' + (c.psram_total ? mb(c.psram_total) : 'none') + '</strong></div>' +
+          '<div>Internal heap: free <strong>' + kb(m.internal_free || 0) + '</strong> / ' +
+          kb(m.internal_total || 0) + ' · min-free ' + kb(m.internal_min_free || 0) +
+          ' · largest block <strong>' + kb(m.internal_largest || 0) + '</strong></div>' +
+          '<div>SPIRAM heap: free <strong>' + kb(m.spiram_free || 0) + '</strong> / ' +
+          mb(m.spiram_total || 0) + ' · min-free ' + kb(m.spiram_min_free || 0) +
+          ' · largest block <strong>' + kb(m.spiram_largest || 0) + '</strong></div>';
+
+        /* Partitions table */
+        var ptbody = document.getElementById('diag-parts-tbody');
+        var parts = d.partitions || [];
+        ptbody.innerHTML = parts.length ? parts.map(function (p) {
+          var badge = p.running
+            ? '<span class="badge badge-success">running</span>'
+            : (p.bootnext ? '<span class="badge badge-warning">boot-next</span>' : '');
+          return '<tr><td>' + esc(p.name) + '</td><td>' + esc(p.kind) + '</td>' +
+                 '<td>' + hex(p.offset) + '</td>' +
+                 '<td style="text-align:right;">' + kb(p.size) + '</td>' +
+                 '<td>' + badge + '</td></tr>';
+        }).join('') : '<tr><td colspan="5" class="form-hint">none</td></tr>';
+
+        /* NVS stats */
+        var n = d.nvs || {};
+        var pct = n.total_entries ? Math.round(100 * (n.used_entries || 0) / n.total_entries) : 0;
+        document.getElementById('diag-nvs').innerHTML =
+          'NVS: <strong>' + (n.used_entries || 0) + '</strong> / ' + (n.total_entries || 0) +
+          ' entries used (' + pct + '%, ' + (n.namespace_count || 0) + ' namespaces, ' +
+          (n.free_entries || 0) + ' free)';
+
+        /* Coredump */
+        var cd = d.coredump || {};
+        document.getElementById('diag-coredump').innerHTML = cd.present
+          ? 'Coredump: <strong style="color:var(--accent-danger);">present</strong> at ' +
+            hex(cd.addr || 0) + ' (' + kb(cd.size || 0) + ')'
+          : '<span style="color:var(--fg-muted);">Coredump: none — clean boot</span>';
+
+        /* MAC + system */
+        var s = d.system || {}, ma = d.mac || {};
+        document.getElementById('diag-macsys').innerHTML =
+          '<div>MAC STA: <strong>' + esc(ma.sta || '—') + '</strong></div>' +
+          '<div>MAC AP&nbsp;: <strong>' + esc(ma.ap  || '—') + '</strong></div>' +
+          '<div>MAC BT&nbsp;: <strong>' + esc(ma.bt  || '—') + '</strong></div>' +
+          '<div>Reset reason: <strong>' + esc(s.reset_reason || '?') + '</strong></div>' +
+          '<div>IDF: ' + esc(s.idf_version || '?') +
+          (typeof s.cpu_temp_c === 'number'
+            ? ' · CPU temp: <strong>' + s.cpu_temp_c.toFixed(1) + ' °C</strong>' : '') +
+          '</div>';
+
+        /* CPU temp badge */
+        var tbadge = document.getElementById('diag-temp-badge');
+        if (tbadge && typeof s.cpu_temp_c === 'number') {
+          tbadge.textContent = s.cpu_temp_c.toFixed(1) + ' °C';
+          tbadge.className = 'badge ' + (s.cpu_temp_c < 60 ? 'badge-success'
+                                       : s.cpu_temp_c < 75 ? 'badge-warning'
+                                       :                     'badge-danger');
+        }
+
+        /* FreeRTOS tasks — sort by stack high-water-mark ascending (most
+         * at-risk first). Words < 256 highlighted red. */
+        var ttbody = document.getElementById('diag-tasks-tbody');
+        var tasks = (d.tasks || []).slice().sort(function (a, b) {
+          return (a.stack_hwm || 0) - (b.stack_hwm || 0);
+        });
+        ttbody.innerHTML = tasks.length ? tasks.map(function (t) {
+          var hwmCss = (t.stack_hwm || 0) < 256 ? ' style="color:var(--accent-danger); font-weight:bold;"' : '';
+          return '<tr><td>' + esc(t.name) + '</td>' +
+                 '<td style="text-align:right;">' + (t.prio | 0) + '</td>' +
+                 '<td>' + esc(t.state) + '</td>' +
+                 '<td style="text-align:right;"' + hwmCss + '>' + (t.stack_hwm | 0) + '</td></tr>';
+        }).join('') : '<tr><td colspan="4" class="form-hint">none</td></tr>';
+      }).catch(function (e) {
+        var el = document.getElementById('diag-chipmem');
+        if (el) el.textContent = 'Diag failed: ' + (e && e.message || e);
+      });
+    }
+
+    /* Bind once after DOM is ready (script lives at the bottom of body
+     * so direct lookup is safe). */
+    (function () {
+      var btn = document.getElementById('diag-refresh');
+      if (btn) btn.addEventListener('click', loadDiag);
+    })();
 
     function loadSystem() {
       apiFetch('/api/system')
