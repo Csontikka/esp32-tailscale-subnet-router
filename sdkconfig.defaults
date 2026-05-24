@@ -32,8 +32,13 @@ CONFIG_LWIP_IP_FORWARD=y
 CONFIG_LWIP_IPV4_NAPT=y
 CONFIG_LWIP_L2_TO_L3_COPY=y
 # 10 (default) gets eaten by http_server + microlink + remote console + DNS
-# + ping; the next consumer's socket() fails with EMFILE. Bump to 16.
-CONFIG_LWIP_MAX_SOCKETS=16
+# + ping; the next consumer's socket() fails with EMFILE. 16 was tight for
+# normal use; once the AP-side DNS forwarder went default-on and the
+# operator started running a 2-minute speedtest cron from a client, peak
+# load (Ookla opens 8-16 parallel TCP streams + DNS forwarder + telemetry
+# + WG + DERP + 2 httpd pools) blew past 16 and httpd logged
+# "httpd_accept_conn: error in accept (23)" — errno 23 = ENFILE. Up to 24.
+CONFIG_LWIP_MAX_SOCKETS=24
 # Bigger TCP window/buffer so a single stream can fill the link before the
 # encryption itself becomes the limit.
 CONFIG_LWIP_TCP_WND_DEFAULT=32768
