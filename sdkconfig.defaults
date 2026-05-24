@@ -169,13 +169,11 @@ CONFIG_FREERTOS_USE_STATS_FORMATTING_FUNCTIONS=y
 # context switch (~0.5 % CPU on the S3 at standard load).
 CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 
-# --- HTTPS server + run-time self-signed cert ------------------------------
-# Browsers gate the WebCrypto SubtleCrypto API behind secure contexts
-# (HTTPS or localhost), so the encrypted-backup feature is unreachable
-# over plain HTTP. ESP_HTTPS_SERVER wraps the existing esp_http_server
-# behind mbedTLS; the X509_CRT_WRITE / X509_CREATE / PK_WRITE flags
-# let main/https_cert.c forge a fresh per-device cert on first boot.
-CONFIG_ESP_HTTPS_SERVER_ENABLE=y
-CONFIG_MBEDTLS_X509_CRT_WRITE_C=y
-CONFIG_MBEDTLS_X509_CREATE_C=y
-CONFIG_MBEDTLS_PK_WRITE_C=y
+# --- HTTPS server removed (2026-05-24) ------------------------------------
+# We moved off esp_https_server because the self-signed mbedTLS handshake
+# was intermittently failing under load (-0x7780, FATAL_ALERT_MESSAGE)
+# and cost ~20 KB heap per active TLS session. The only reason for HTTPS
+# in the first place was the WebCrypto SubtleCrypto secure-context
+# requirement for encrypted-backup; that's now satisfied by SJCL inlined
+# into the SPA (vendor/sjcl.min.js, injected by gen_index_html_gz.py).
+# The mbedTLS X509 cert-write flags are dropped with it.

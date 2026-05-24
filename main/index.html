@@ -6455,10 +6455,19 @@
         if (id === 'sys-tx-power') updateTxPowerDbm(this.value);
       });
     });
-    /* WebCrypto helpers for the encrypted-secrets bundle. PBKDF2-SHA256
+    /* Crypto helpers for the encrypted-secrets bundle. PBKDF2-SHA256
      * (100k iter) derives an AES-GCM-256 key from the operator passphrase;
      * the salt + IV ride along inside the bundle so a fresh install can
-     * decrypt with nothing more than the same passphrase. */
+     * decrypt with nothing more than the same passphrase. The binary
+     * blob format is identical on both branches (concat(ciphertext, 16B
+     * GCM auth tag)) so a backup made on HTTPS via WebCrypto restores
+     * on HTTP via SJCL and vice versa.
+     *
+     * Two backends:
+     *   - WebCrypto when crypto.subtle is available (secure context:
+     *     HTTPS or localhost). Hardware-fast: ~100 ms for 100k PBKDF2.
+     *   - SJCL pure-JS polyfill on plain HTTP. Slower for PBKDF2
+     *     (~3-5 s on a phone) but works without a secure context. */
     function _b64FromBytes(bytes) {
       var s = ''; for (var i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
       return btoa(s);
@@ -6468,7 +6477,21 @@
       for (var i = 0; i < s.length; i++) out[i] = s.charCodeAt(i);
       return out;
     }
-    function _deriveSecretsKey(passphrase, salt) {
+    function _randBytes(n) {
+      var out = new Uint8Array(n);
+      if (window.crypto && window.crypto.getRandomValues) {
+        window.crypto.getRandomValues(out);
+      } else if (typeof sjcl !== 'undefined') {
+        var words = sjcl.random.randomWords(Math.ceil(n / 4), 0);
+        for (var i = 0; i < n; i++) out[i] = (words[i >> 2] >>> ((3 - (i & 3)) * 8)) & 0xff;
+      } else {
+        throw new Error('No CSPRNG available');
+      }
+      return out;
+    }
+    var _hasSubtle = !!(window.crypto && window.crypto.subtle);
+    /* -- WebCrypto branch -- */
+    function _deriveSecretsKey_wc(passphrase, salt) {
       return crypto.subtle.importKey(
         'raw', new TextEncoder().encode(passphrase),
         { name: 'PBKDF2' }, false, ['deriveKey']
@@ -6481,22 +6504,74 @@
         );
       });
     }
+    function _encryptBytes_wc(key, iv, pt) {
+      return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, pt)
+        .then(function (ct) { return new Uint8Array(ct); });
+    }
+    function _decryptBytes_wc(key, iv, ct) {
+      return crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ct)
+        .then(function (pt) { return new Uint8Array(pt); });
+    }
+    /* -- SJCL branch -- bitArray helpers + GCM wrap. SJCL bitLength is
+     *    in bits; uses big-endian word ordering. */
+    function _bytesToBA(bytes) {
+      var ba = []; var i;
+      for (i = 0; i + 4 <= bytes.length; i += 4) {
+        ba.push((bytes[i] << 24) | (bytes[i+1] << 16) | (bytes[i+2] << 8) | bytes[i+3]);
+      }
+      if (i < bytes.length) {
+        var w = 0; var nbits = (bytes.length - i) * 8;
+        for (var j = 0; j < bytes.length - i; j++) w |= bytes[i+j] << ((3 - j) * 8);
+        ba.push(sjcl.bitArray.partial(nbits, w >>> 0));
+      }
+      return ba;
+    }
+    function _baToBytes(ba) {
+      var nbits = sjcl.bitArray.bitLength(ba);
+      var n = nbits >> 3; var out = new Uint8Array(n);
+      for (var i = 0; i < n; i++) out[i] = (ba[i >> 2] >>> ((3 - (i & 3)) * 8)) & 0xff;
+      return out;
+    }
+    function _deriveSecretsKey_sjcl(passphrase, salt) {
+      // 100k iter PBKDF2-SHA256 → 256-bit key
+      var keyBa = sjcl.misc.pbkdf2(passphrase, _bytesToBA(salt), 100000, 256);
+      return Promise.resolve(new sjcl.cipher.aes(keyBa));
+    }
+    function _encryptBytes_sjcl(aes, iv, pt) {
+      var ctBa = sjcl.mode.gcm.encrypt(aes, _bytesToBA(pt), _bytesToBA(iv), [], 128);
+      return Promise.resolve(_baToBytes(ctBa));
+    }
+    function _decryptBytes_sjcl(aes, iv, ct) {
+      var ptBa = sjcl.mode.gcm.decrypt(aes, _bytesToBA(ct), _bytesToBA(iv), [], 128);
+      return Promise.resolve(_baToBytes(ptBa));
+    }
+    function _deriveSecretsKey(passphrase, salt) {
+      return _hasSubtle ? _deriveSecretsKey_wc(passphrase, salt)
+                        : _deriveSecretsKey_sjcl(passphrase, salt);
+    }
+    function _encryptBytes(key, iv, pt) {
+      return _hasSubtle ? _encryptBytes_wc(key, iv, pt)
+                        : _encryptBytes_sjcl(key, iv, pt);
+    }
+    function _decryptBytes(key, iv, ct) {
+      return _hasSubtle ? _decryptBytes_wc(key, iv, ct)
+                        : _decryptBytes_sjcl(key, iv, ct);
+    }
     function encryptSecretsBundle(plaintextObj, passphrase) {
-      var salt = crypto.getRandomValues(new Uint8Array(16));
-      var iv   = crypto.getRandomValues(new Uint8Array(12));
+      var salt = _randBytes(16);
+      var iv   = _randBytes(12);
       return _deriveSecretsKey(passphrase, salt).then(function (key) {
         var pt = new TextEncoder().encode(JSON.stringify(plaintextObj));
-        return crypto.subtle.encrypt({ name: 'AES-GCM', iv: iv }, key, pt)
-          .then(function (ct) {
-            return {
-              alg:    'AES-GCM-256',
-              kdf:    'PBKDF2-SHA256',
-              iter:   100000,
-              salt:   _b64FromBytes(salt),
-              iv:     _b64FromBytes(iv),
-              ciphertext: _b64FromBytes(new Uint8Array(ct))
-            };
-          });
+        return _encryptBytes(key, iv, pt).then(function (ct) {
+          return {
+            alg:    'AES-GCM-256',
+            kdf:    'PBKDF2-SHA256',
+            iter:   100000,
+            salt:   _b64FromBytes(salt),
+            iv:     _b64FromBytes(iv),
+            ciphertext: _b64FromBytes(ct)
+          };
+        });
       });
     }
     function decryptSecretsBundle(blob, passphrase) {
@@ -6504,8 +6579,9 @@
       var iv   = _bytesFromB64(blob.iv);
       var ct   = _bytesFromB64(blob.ciphertext);
       return _deriveSecretsKey(passphrase, salt).then(function (key) {
-        return crypto.subtle.decrypt({ name: 'AES-GCM', iv: iv }, key, ct)
-          .then(function (pt) { return JSON.parse(new TextDecoder().decode(pt)); });
+        return _decryptBytes(key, iv, ct).then(function (pt) {
+          return JSON.parse(new TextDecoder().decode(pt));
+        });
       });
     }
 

@@ -6,7 +6,6 @@
 #include <stdio.h>
 #include <string.h>
 #include "esp_http_server.h"
-#include "esp_https_server.h"
 #include "esp_log.h"
 #include "esp_wifi.h"
 #include "esp_netif.h"
@@ -33,7 +32,6 @@
 #include "portmap.h"
 #include "mac_deny.h"
 #include "reset_history.h"
-#include "https_cert.h"
 #include "ota.h"
 #include <stdlib.h>
 #include <time.h>
@@ -3961,46 +3959,6 @@ static const httpd_uri_t uri_auth_clear_password = {
  * redirect can be both a wildcard URI handler AND a 404 fallback.
  * Wildcard match avoids the "httpd_uri: URI ... not found" WARN
  * spam the 404-only path used to emit. */
-static esp_err_t http_to_https_redirect(httpd_req_t *req, httpd_err_code_t err);
-static esp_err_t http_to_https_redirect_uri(httpd_req_t *req)
-{
-    return http_to_https_redirect(req, HTTPD_404_NOT_FOUND);
-}
-
-/* Catch-all handler bound to BOTH a slash-star wildcard URI and
- * the 404 error hook on the port-80 listener. The wildcard URI
- * silences the "URI not found" WARN; the 404 hook stays wired up
- * as a safety net for methods we don't register (HEAD, OPTIONS, ...). */
-static esp_err_t http_to_https_redirect(httpd_req_t *req, httpd_err_code_t err)
-{
-    (void)err;
-    char host_hdr[80];
-    if (httpd_req_get_hdr_value_str(req, "Host", host_hdr, sizeof host_hdr) != ESP_OK) {
-        /* Compliant clients always send Host; pick a stable fallback for
-         * the handful that don't (raw curl --resolve, embedded probes). */
-        char *hn = nvs_param_get_str("hostname");
-        strlcpy(host_hdr, (hn && hn[0]) ? hn : "esp32-router", sizeof host_hdr);
-        free(hn);
-    }
-    /* Drop ":80" if the client included it — we want the canonical
-     * https://host/path, not https://host:80/path which most browsers
-     * resolve fine but some certificate-pinning libs don't. */
-    char *colon = strchr(host_hdr, ':');
-    if (colon) *colon = '\0';
-
-    /* host_hdr is 80 B, req->uri is bounded by CONFIG_HTTPD_MAX_URI_LEN
-     * (512 here), and the literal "https://" is 8 B + NUL. 640 covers
-     * the worst case with headroom and keeps the compiler's
-     * format-truncation analyser happy. */
-    char location[640];
-    snprintf(location, sizeof location, "https://%s%s", host_hdr, req->uri);
-
-    httpd_resp_set_status(req, "308 Permanent Redirect");
-    httpd_resp_set_hdr(req, "Location", location);
-    httpd_resp_set_type(req, "text/plain");
-    return httpd_resp_sendstr(req, "Redirecting to HTTPS\n");
-}
-
 void web_ui_init(void)
 {
     static httpd_handle_t server = NULL;
@@ -4011,45 +3969,33 @@ void web_ui_init(void)
      * persisted Max-Age instead of the compile-time default. */
     session_timeout_load();
 
-    /* PEM buffers handed to esp_https_server must stay valid for the
-     * lifetime of the server, so they live in static module storage
-     * rather than the start-server stack. */
-    static unsigned char *s_https_crt = NULL;
-    static unsigned char *s_https_key = NULL;
-    size_t crt_len = 0, key_len = 0;
-    if (https_cert_get_or_create(&s_https_crt, &crt_len,
-                                  &s_https_key, &key_len) != ESP_OK) {
-        ESP_LOGE(TAG, "no HTTPS cert — refusing to start web UI");
-        return;
-    }
+    /* HTTPS→HTTP swap (2026-05-24): the self-signed esp_https_server
+     * + mbedTLS combo cost ~20 KB heap per active TLS session and was
+     * intermittently failing the handshake (mbedtls_ssl_handshake -0x7780
+     * = MBEDTLS_ERR_SSL_FATAL_ALERT_MESSAGE) under load, which the
+     * operator saw as "the web UI keeps logging me out". The original
+     * reason we moved to HTTPS was that the encrypted-secrets backup
+     * needs browser WebCrypto SubtleCrypto, and SubtleCrypto requires
+     * a secure context. The SPA now ships SJCL as a pure-JS fallback
+     * (vendor/sjcl.min.js, injected by gen_index_html_gz.py) and the
+     * encrypt/decrypt helpers prefer SubtleCrypto when present but
+     * gracefully fall back — so the backup feature still works over
+     * plain HTTP, just with a one-time ~3 s PBKDF2 cost in pure JS
+     * instead of WebCrypto's ~100 ms. */
+    httpd_config_t conf           = HTTPD_DEFAULT_CONFIG();
+    conf.uri_match_fn             = httpd_uri_match_wildcard;
+    conf.max_uri_handlers         = 48;
+    conf.stack_size               = 12288;
+    /* Without the mbedTLS context cost we can afford the bigger pool
+     * the pre-HTTPS web server used. The SPA's first-paint opens 5-7
+     * parallel fetches; 13 leaves slack for the SPA + a sibling
+     * curl/diag client + the operator's other tab. */
+    conf.max_open_sockets         = 13;
+    conf.lru_purge_enable         = true;
+    conf.server_port              = 80;
 
-    httpd_ssl_config_t conf       = HTTPD_SSL_CONFIG_DEFAULT();
-    conf.httpd.uri_match_fn       = httpd_uri_match_wildcard;
-    conf.httpd.max_uri_handlers   = 48;    /* we have 38 today + room to grow */
-    conf.httpd.stack_size         = 12288; /* +50 % over default — multi-net POST
-                                            * pushes cJSON parse + handler
-                                            * locals past the 8 KB ceiling. */
-    /* TLS handshake holds ~16-32 KB of mbedTLS state per connection,
-     * so the 13-socket pool the plain-HTTP server got away with would
-     * starve heap during a parallel SPA fetch storm. 6 leaves plenty
-     * of room for first-paint (5-7 parallel) without blowing 200 KB
-     * of heap on mbedTLS contexts alone. LRU-purge so a half-dropped
-     * connection still rotates out instead of pinning a slot. */
-    conf.httpd.max_open_sockets   = 6;
-    conf.httpd.lru_purge_enable   = true;
-    conf.transport_mode           = HTTPD_SSL_TRANSPORT_SECURE;
-    conf.port_secure              = 443;
-    /* The *_len fields take the buffer size INCLUDING the NUL terminator
-     * for PEM-encoded material — see esp_https_server.h. */
-    conf.servercert               = s_https_crt;
-    conf.servercert_len           = crt_len + 1;
-    conf.prvtkey_pem              = s_https_key;
-    conf.prvtkey_len              = key_len + 1;
-
-    if (httpd_ssl_start(&server, &conf) != ESP_OK) {
-        ESP_LOGE(TAG, "httpd_ssl_start failed");
-        free(s_https_crt); s_https_crt = NULL;
-        free(s_https_key); s_https_key = NULL;
+    if (httpd_start(&server, &conf) != ESP_OK) {
+        ESP_LOGE(TAG, "httpd_start failed");
         return;
     }
     httpd_register_uri_handler(server, &uri_index);
@@ -4099,47 +4045,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_auth_setup);
     httpd_register_uri_handler(server, &uri_auth_change_password);
     httpd_register_uri_handler(server, &uri_auth_clear_password);
-    ESP_LOGI(TAG, "web UI listening on :%d (HTTPS)", conf.port_secure);
-
-    /* ---- Plain-HTTP → HTTPS redirector on port 80 -----------------------
-     * Old bookmarks and curl calls aimed at http://<host>/ used to fail
-     * with "connection refused" after Phase B closed port 80. Spin up a
-     * tiny no-handler esp_http_server here whose only job is to 308
-     * every request over to the matching https://<host>/<path> URL.
-     * Adds ~1-2 KB to flash and lets the operator stop manually retyping
-     * the scheme. */
-    static httpd_handle_t redirect_server = NULL;
-    httpd_config_t rconf      = HTTPD_DEFAULT_CONFIG();
-    rconf.server_port         = 80;
-    rconf.ctrl_port           = conf.httpd.ctrl_port + 1; /* avoid port clash with HTTPS handle */
-    /* The original 4 KB stack ran the task to a 388 B high-water mark
-     * (90.5 % consumed) under nothing more than the operator's bookmark
-     * traffic, and the lone PANIC of 2026-05-24 right after Phase C
-     * flash matched the classic stack-overflow signature
-     * (vTaskSwitchContext, A11=0xa5a5a5a5). The httpd internals + URI
-     * matcher + the 640 B Location buffer in http_to_https_redirect
-     * just don't fit comfortably in 4 KB — bumped to 8 KB so the
-     * peak use sits in 50 % of the slot instead of 90 %. Heap cost
-     * is 4 KB DRAM, easily absorbed by the SPIRAM body-buffer move. */
-    rconf.stack_size          = 8192;
-    rconf.max_uri_handlers    = 4;   /* GET + POST wildcards + headroom */
-    rconf.uri_match_fn        = httpd_uri_match_wildcard;
-    rconf.max_open_sockets    = 3;     /* throwaway connections */
-    rconf.lru_purge_enable    = true;
-    if (httpd_start(&redirect_server, &rconf) == ESP_OK) {
-        static const httpd_uri_t uri_redirect_get = {
-            .uri = "/*", .method = HTTP_GET,  .handler = http_to_https_redirect_uri,
-        };
-        static const httpd_uri_t uri_redirect_post = {
-            .uri = "/*", .method = HTTP_POST, .handler = http_to_https_redirect_uri,
-        };
-        httpd_register_uri_handler(redirect_server, &uri_redirect_get);
-        httpd_register_uri_handler(redirect_server, &uri_redirect_post);
-        httpd_register_err_handler(redirect_server, HTTPD_404_NOT_FOUND,
-                                     http_to_https_redirect);
-        ESP_LOGI(TAG, "HTTP→HTTPS redirect listening on :80");
-    } else {
-        ESP_LOGW(TAG, "HTTP redirect server failed to start "
-                       "(non-fatal — HTTPS panel still works)");
-    }
+    ESP_LOGI(TAG, "web UI listening on :%d (HTTP)", conf.server_port);
+    /* HTTPS redirect server gone with HTTPS itself — direct HTTP-on-80
+     * is now the only listener, so nothing to redirect anywhere. */
 }
