@@ -456,6 +456,17 @@ static const httpd_uri_t uri_network = {
 /* Read up to (buf_size - 1) bytes of the POST body into buf and NUL-
  * terminate. Returns ESP_OK on success or after sending the appropriate
  * error response on failure. */
+/* SPIRAM-first body-buffer allocator for the save-handlers' 2-4 KB
+ * scratch space. The IDF default CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=
+ * 16384 would otherwise route every sub-16K malloc() to the much
+ * smaller internal DRAM heap (~346 KB total, ~41 KB free under load).
+ * Explicit MALLOC_CAP_SPIRAM keeps the buffers on the 8 MB SPIRAM
+ * heap where there's effectively unlimited room. Returns NULL when
+ * SPIRAM is exhausted — caller already has the NULL-check path. */
+static inline char *malloc_body_buf(size_t n) {
+    return heap_caps_malloc(n, MALLOC_CAP_SPIRAM);
+}
+
 static esp_err_t recv_body(httpd_req_t *req, char *buf, size_t buf_size, int *out_len)
 {
     if (req->content_len <= 0 || (size_t)req->content_len >= buf_size) {
@@ -770,7 +781,7 @@ static esp_err_t network_save_handler(httpd_req_t *req)
     /* Heap-allocate the body buffer — a 4 KB stack-local on the httpd
      * worker overflows the task stack once cJSON parsing piles on. */
     size_t buf_size = 4096;
-    char *buf = malloc(buf_size);
+    char *buf = malloc_body_buf(buf_size);
     if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
     if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
 
@@ -1240,7 +1251,7 @@ static esp_err_t tools_ping_handler(httpd_req_t *req)
     /* net_diag writes plain text into the buffer; we expose it as text/plain
      * so the SPA can render it in a <pre>. */
     size_t buf_size = 2048;
-    char *buf = malloc(buf_size);
+    char *buf = malloc_body_buf(buf_size);
     if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
     buf[0] = '\0';
 
@@ -1270,7 +1281,7 @@ static esp_err_t tools_trace_handler(httpd_req_t *req)
     }
 
     size_t buf_size = 2048;
-    char *buf = malloc(buf_size);
+    char *buf = malloc_body_buf(buf_size);
     if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
     buf[0] = '\0';
 
@@ -1612,7 +1623,7 @@ static esp_err_t dhcp_reservations_save_handler(httpd_req_t *req)
     /* Heap buffer — the table can grow up to 16 entries and cJSON
      * parsing piles on top of the httpd worker stack. */
     size_t buf_size = 4096;
-    char *buf = malloc(buf_size);
+    char *buf = malloc_body_buf(buf_size);
     if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
     if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
 
@@ -1934,7 +1945,7 @@ static esp_err_t portmap_save_handler(httpd_req_t *req)
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
 
     size_t buf_size = 4096;
-    char *buf = malloc(buf_size);
+    char *buf = malloc_body_buf(buf_size);
     if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
     if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
 
@@ -2055,7 +2066,7 @@ static esp_err_t mac_deny_save_handler(httpd_req_t *req)
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
 
     size_t buf_size = 2048;
-    char *buf = malloc(buf_size);
+    char *buf = malloc_body_buf(buf_size);
     if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
     if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
 
@@ -2512,7 +2523,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
 
     /* Heap-allocate the body buffer — see network_save_handler comment. */
     size_t buf_size = 2048;
-    char *buf = malloc(buf_size);
+    char *buf = malloc_body_buf(buf_size);
     if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
     if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
 
@@ -3153,7 +3164,7 @@ static esp_err_t system_secrets_post_handler(httpd_req_t *req)
      * top-level strings. 4 KB leaves plenty of slack while still fitting
      * comfortably on the stack via malloc. */
     size_t buf_size = 4096;
-    char *buf = malloc(buf_size);
+    char *buf = malloc_body_buf(buf_size);
     if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
     if (recv_body(req, buf, buf_size, NULL) != ESP_OK) { free(buf); return ESP_FAIL; }
 
