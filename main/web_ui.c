@@ -3940,7 +3940,16 @@ void web_ui_init(void)
     httpd_config_t rconf      = HTTPD_DEFAULT_CONFIG();
     rconf.server_port         = 80;
     rconf.ctrl_port           = conf.httpd.ctrl_port + 1; /* avoid port clash with HTTPS handle */
-    rconf.stack_size          = 4096;  /* one handler, tiny scratch */
+    /* The original 4 KB stack ran the task to a 388 B high-water mark
+     * (90.5 % consumed) under nothing more than the operator's bookmark
+     * traffic, and the lone PANIC of 2026-05-24 right after Phase C
+     * flash matched the classic stack-overflow signature
+     * (vTaskSwitchContext, A11=0xa5a5a5a5). The httpd internals + URI
+     * matcher + the 640 B Location buffer in http_to_https_redirect
+     * just don't fit comfortably in 4 KB — bumped to 8 KB so the
+     * peak use sits in 50 % of the slot instead of 90 %. Heap cost
+     * is 4 KB DRAM, easily absorbed by the SPIRAM body-buffer move. */
+    rconf.stack_size          = 8192;
     rconf.max_uri_handlers    = 1;
     rconf.max_open_sockets    = 3;     /* throwaway connections */
     rconf.lru_purge_enable    = true;
