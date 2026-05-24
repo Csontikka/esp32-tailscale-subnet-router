@@ -491,6 +491,12 @@ static void nvs_save_record_err(const char *nvs_key, esp_err_t err) {
     }
 }
 
+/* Shorthand for the handlers that don't carry extra fields in the
+ * response: build {ok, [nvs_save_error]} from the accumulated error
+ * state and send it. Returns the httpd send-result so the handler
+ * can pass it straight through. */
+static esp_err_t send_save_response(httpd_req_t *req);
+
 /* Attach `ok` + optional `nvs_save_error` block to a response body
  * cJSON object based on the accumulated per-request error state. The
  * SPA renders nvs_save_error as a red toast — operator sees the
@@ -505,6 +511,18 @@ static void nvs_save_errors_attach(cJSON *root) {
         cJSON_AddStringToObject(e, "first_err", esp_err_to_name(s_save_err.first_err));
         cJSON_AddItemToObject(root, "nvs_save_error", e);
     }
+}
+
+static esp_err_t send_save_response(httpd_req_t *req)
+{
+    cJSON *resp = cJSON_CreateObject();
+    nvs_save_errors_attach(resp);
+    char *body = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t e = httpd_resp_sendstr(req, body ? body : "{\"ok\":true}");
+    free(body);
+    return e;
 }
 
 /* Thin wrappers that route every NVS write through the per-request
@@ -1444,10 +1462,10 @@ static esp_err_t firewall_add_handler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "list full");
         return ESP_FAIL;
     }
-    save_acl_rules();
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":true}");
+    nvs_save_errors_reset();
+    esp_err_t serr = save_acl_rules();
+    if (serr != ESP_OK) nvs_save_record_err("acl", serr);
+    return send_save_response(req);
 }
 
 static esp_err_t firewall_delete_handler(httpd_req_t *req)
@@ -1473,10 +1491,10 @@ static esp_err_t firewall_delete_handler(httpd_req_t *req)
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid index");
         return ESP_FAIL;
     }
-    save_acl_rules();
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":true}");
+    nvs_save_errors_reset();
+    esp_err_t serr = save_acl_rules();
+    if (serr != ESP_OK) nvs_save_record_err("acl", serr);
+    return send_save_response(req);
 }
 
 static esp_err_t firewall_clear_handler(httpd_req_t *req)
@@ -1495,10 +1513,10 @@ static esp_err_t firewall_clear_handler(httpd_req_t *req)
     }
 
     acl_clear((uint8_t)acl_no);
-    save_acl_rules();
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":true}");
+    nvs_save_errors_reset();
+    esp_err_t serr = save_acl_rules();
+    if (serr != ESP_OK) nvs_save_record_err("acl", serr);
+    return send_save_response(req);
 }
 
 static const httpd_uri_t uri_firewall_add = {
@@ -1634,16 +1652,12 @@ static esp_err_t dhcp_reservations_save_handler(httpd_req_t *req)
 
     esp_err_t err = dhcp_reservations_set_all(out, n_out);
 
-    httpd_resp_set_type(req, "application/json");
     /* Reservations apply on the next DHCP REQUEST — the table is hot-
      * reloaded into the lookup cache, so no reboot is required. Clients
      * already holding a non-matching lease keep it until expiry. */
-    if (err == ESP_OK) {
-        char resp[64];
-        snprintf(resp, sizeof resp, "{\"ok\":true,\"count\":%d}", n_out);
-        return httpd_resp_sendstr(req, resp);
-    }
-    return httpd_resp_sendstr(req, "{\"ok\":false}");
+    nvs_save_errors_reset();
+    if (err != ESP_OK) nvs_save_record_err("dhcp_res", err);
+    return send_save_response(req);
 }
 
 static const httpd_uri_t uri_dhcp_reservations = {
@@ -1971,13 +1985,9 @@ static esp_err_t portmap_save_handler(httpd_req_t *req)
 
     esp_err_t err = portmap_set_all(out, n_out);
 
-    httpd_resp_set_type(req, "application/json");
-    if (err == ESP_OK) {
-        char resp[64];
-        snprintf(resp, sizeof resp, "{\"ok\":true,\"count\":%d}", n_out);
-        return httpd_resp_sendstr(req, resp);
-    }
-    return httpd_resp_sendstr(req, "{\"ok\":false}");
+    nvs_save_errors_reset();
+    if (err != ESP_OK) nvs_save_record_err("portmap", err);
+    return send_save_response(req);
 }
 
 static const httpd_uri_t uri_portmap = {
@@ -2096,13 +2106,9 @@ static esp_err_t mac_deny_save_handler(httpd_req_t *req)
         }
     }
 
-    httpd_resp_set_type(req, "application/json");
-    if (err == ESP_OK) {
-        char resp[64];
-        snprintf(resp, sizeof resp, "{\"ok\":true,\"count\":%d}", n_out);
-        return httpd_resp_sendstr(req, resp);
-    }
-    return httpd_resp_sendstr(req, "{\"ok\":false}");
+    nvs_save_errors_reset();
+    if (err != ESP_OK) nvs_save_record_err("mac_deny", err);
+    return send_save_response(req);
 }
 
 static const httpd_uri_t uri_mac_deny = {
