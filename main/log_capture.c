@@ -13,6 +13,7 @@
 #include <string.h>
 #include "esp_log.h"
 #include "esp_attr.h"
+#include "esp_heap_caps.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/portmacro.h"
 
@@ -251,7 +252,14 @@ esp_err_t log_capture_init(size_t bytes)
 {
     if (s_buf) return ESP_OK;  /* idempotent */
     size_t cap = bytes ? ROUND_UP_1K(bytes) : DEFAULT_BUFFER_BYTES;
-    s_buf = malloc(cap);
+    /* Ring buffer on SPIRAM — 16 KB default, an internal-DRAM alloc
+     * just to feed the /api/log/raw poller would be wasteful. The
+     * ESP_LOG vprintf hook that writes here runs in task context
+     * (not ISR), and the /api/log/raw read path is httpd-thread,
+     * so SPIRAM placement is safe. Falls back to internal if SPIRAM
+     * is unavailable. */
+    s_buf = heap_caps_malloc(cap, MALLOC_CAP_SPIRAM);
+    if (!s_buf) s_buf = malloc(cap);
     if (!s_buf) return ESP_ERR_NO_MEM;
     s_cap   = cap;
     s_head  = 0;
