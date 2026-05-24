@@ -30,6 +30,29 @@ def main() -> int:
     dst = Path(sys.argv[2])
 
     raw = src.read_bytes()
+
+    # Inject vendor SJCL crypto library so the encrypted-backup feature
+    # works over plain HTTP (browser WebCrypto SubtleCrypto is only
+    # available in secure contexts — HTTPS or localhost). The JS layer
+    # prefers crypto.subtle when present and only falls back to SJCL on
+    # the HTTP path, so HTTPS deployments pay no runtime cost.
+    sjcl_path = src.parent / "vendor" / "sjcl.min.js"
+    if sjcl_path.exists():
+        sjcl_js = sjcl_path.read_bytes()
+        tag = b'<script id="vendor-sjcl">\n' + sjcl_js + b'\n</script>\n'
+        head_close = b"</head>"
+        idx = raw.find(head_close)
+        if idx >= 0:
+            raw = raw[:idx] + tag + raw[idx:]
+            print("gen_index_html_gz: injected SJCL (%d bytes) into <head>" %
+                  len(sjcl_js))
+        else:
+            print("gen_index_html_gz: WARNING — no </head> in source, "
+                  "SJCL not injected", file=sys.stderr)
+    else:
+        print("gen_index_html_gz: WARNING — vendor/sjcl.min.js missing, "
+              "encrypted-backup will only work over HTTPS", file=sys.stderr)
+
     buf = io.BytesIO()
     with gzip.GzipFile(fileobj=buf, mode="wb",
                         compresslevel=9, mtime=0) as gz:
