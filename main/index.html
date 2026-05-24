@@ -1931,6 +1931,18 @@
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
             <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="net-ap-dns-relay-enabled"> Enable on-board DNS forwarder
+              <span class="badge badge-neutral" id="net-ap-dns-relay-badge" style="margin-left:auto;">—</span>
+            </label>
+            <span class="form-hint">When AP clients use this device as their resolver (the DHCP default when the field above is empty), forward their queries upstream. Without this enabled, DNS lookups from AP clients time out.</span>
+          </div>
+          <div class="form-group" style="margin-top:0.25rem;">
+            <label class="form-label" for="net-ap-dns-relay-upstream">Forwarder upstream</label>
+            <input class="input mono" type="text" id="net-ap-dns-relay-upstream" placeholder="empty = use whatever STA learned, falling back to 1.1.1.1">
+            <span class="form-hint">Where the forwarder sends queries it cannot answer locally. Common picks: <code class="mono">1.1.1.1</code>, <code class="mono">8.8.8.8</code>, or a Pi-hole on your LAN.</span>
+          </div>
+          <div class="form-group" style="margin-top:0.25rem;">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
               <input type="checkbox" id="net-ap-hidden"> Hide SSID (do not broadcast in beacons)
             </label>
             <span class="form-hint">Clients still need the SSID typed in to connect — this only stops casual scanners from listing it.</span>
@@ -4383,6 +4395,17 @@
           document.getElementById('net-ap-ip').value        = ap.ip   || '';
           document.getElementById('net-ap-mask').value      = ap.mask || '';
           document.getElementById('net-ap-dns').value       = ap.dns  || '';
+          var dr = ap.dns_relay || {};
+          document.getElementById('net-ap-dns-relay-enabled').checked = !!dr.enabled;
+          document.getElementById('net-ap-dns-relay-upstream').value  = dr.upstream || '';
+          var drb = document.getElementById('net-ap-dns-relay-badge');
+          if (!dr.enabled) {
+            drb.textContent = 'off'; drb.className = 'badge badge-neutral';
+          } else if (dr.healthy) {
+            drb.textContent = 'healthy'; drb.className = 'badge badge-success';
+          } else {
+            drb.textContent = 'unhealthy'; drb.className = 'badge badge-warning';
+          }
           document.getElementById('net-ap-hidden').checked  = !!ap.hidden;
           document.getElementById('net-ap-save').disabled   = true;
         }).catch(function () {});
@@ -4680,7 +4703,7 @@
     });
 
     /* AP — same dirty-track + save pattern. */
-    ['net-ap-ssid', 'net-ap-pw', 'net-ap-channel', 'net-ap-ip', 'net-ap-mask', 'net-ap-dns'].forEach(function (id) {
+    ['net-ap-ssid', 'net-ap-pw', 'net-ap-channel', 'net-ap-ip', 'net-ap-mask', 'net-ap-dns', 'net-ap-dns-relay-enabled', 'net-ap-dns-relay-upstream'].forEach(function (id) {
       var el = document.getElementById(id);
       var ev = (el.tagName === 'SELECT') ? 'change' : 'input';
       el.addEventListener(ev, function () {
@@ -4706,7 +4729,11 @@
       var body = {
         ap: {
           ssid: ssid, channel: channel, ip: ip, mask: mask, dns: dns,
-          hidden: document.getElementById('net-ap-hidden').checked
+          hidden: document.getElementById('net-ap-hidden').checked,
+          dns_relay: {
+            enabled:  document.getElementById('net-ap-dns-relay-enabled').checked,
+            upstream: document.getElementById('net-ap-dns-relay-upstream').value.trim()
+          }
         }
       };
       if (pw) body.ap.password = pw;
