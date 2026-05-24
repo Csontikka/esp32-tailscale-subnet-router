@@ -1931,10 +1931,10 @@
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
             <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="net-ap-dns-relay-enabled"> Enable on-board DNS forwarder
+              <input type="checkbox" id="net-ap-dns-relay-enabled"> On-board DNS forwarder
               <span class="badge badge-neutral" id="net-ap-dns-relay-badge" style="margin-left:auto;">—</span>
             </label>
-            <span class="form-hint">When AP clients use this device as their resolver (the DHCP default when the field above is empty), forward their queries upstream. Without this enabled, DNS lookups from AP clients time out.</span>
+            <span class="form-hint">On by default — forwards queries from AP clients to the upstream resolver below. Turn off only if a separate resolver (Pi-hole, external DNS server) is reachable on the AP subnet.</span>
           </div>
           <div class="form-group" style="margin-top:0.25rem;">
             <label class="form-label" for="net-ap-dns-relay-upstream">Forwarder upstream</label>
