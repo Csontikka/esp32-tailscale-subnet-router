@@ -6824,9 +6824,13 @@
         body:    JSON.stringify({ device_name: name, tz: tz, tx_power: tx_power })
       })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function () {
+        .then(function (resp) {
           updateBrandName(name);
           showToast('success', 'Saved', 'Name "' + (name || 'ESP32 Router') + '"' + (tz ? ' · TZ ' + tz : '') + '.', 3500);
+          /* Backend flips restart_required when the TZ actually changed —
+           * the IDF log subsystem caches TZ at boot, so the new rule
+           * only governs log timestamps after a reboot. */
+          if (resp && resp.restart_required) setPendingReboot(true);
         })
         .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
     });
