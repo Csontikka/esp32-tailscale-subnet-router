@@ -111,27 +111,54 @@ static int open_listen_sock(void)
     return s;
 }
 
-/* Forward a single query+response cycle synchronously. The ephemeral
- * outgoing socket is per-query so we never confuse responses from
- * different upstreams across config changes. */
-static void forward_one(int listen_sock,
-                        uint8_t *qbuf, int qlen,
-                        const struct sockaddr_in *client,
-                        socklen_t client_len)
-{
-    uint32_t upstream = pick_upstream();
+/* Persistent upstream socket. The previous ephemeral-per-query pattern
+ * hammered MEMP_NUM_UDP_PCB / MEMP_NUM_NETBUF + ran a full
+ * socket()+close() roundtrip on each query, producing intermittent
+ * ENOMEM on sendto() during phone-AP-side bursts and breaking
+ * speedtest server-name resolution. One persistent socket lives for
+ * the lifetime of the relay task; the upstream peer can still change
+ * (NVS override, STA DNS roll) — we just sendto() the current pick
+ * each time, and only re-open the socket if a send error suggests the
+ * underlying PCB is wedged. Stale responses from a previous upstream
+ * are filtered out by the DNS transaction-ID mismatch on the client. */
+static int s_upstream_sock = -1;
 
+static int ensure_upstream_sock(void)
+{
+    if (s_upstream_sock >= 0) return s_upstream_sock;
     int up = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
     if (up < 0) {
         ESP_LOGW(TAG, "upstream socket() failed: errno=%d", errno);
-        return;
+        return -1;
     }
     struct timeval to = {
         .tv_sec  = DNS_RELAY_UP_TIMEOUT_MS / 1000,
         .tv_usec = (DNS_RELAY_UP_TIMEOUT_MS % 1000) * 1000,
     };
     setsockopt(up, SOL_SOCKET, SO_RCVTIMEO, &to, sizeof(to));
+    s_upstream_sock = up;
+    return up;
+}
 
+static void reset_upstream_sock(void)
+{
+    if (s_upstream_sock >= 0) {
+        close(s_upstream_sock);
+        s_upstream_sock = -1;
+    }
+}
+
+/* Forward a single query+response cycle synchronously, reusing the
+ * persistent upstream socket. */
+static void forward_one(int listen_sock,
+                        uint8_t *qbuf, int qlen,
+                        const struct sockaddr_in *client,
+                        socklen_t client_len)
+{
+    int up = ensure_upstream_sock();
+    if (up < 0) return;
+
+    uint32_t upstream = pick_upstream();
     struct sockaddr_in up_addr = {
         .sin_family = AF_INET,
         .sin_port   = htons(DNS_RELAY_PORT),
@@ -141,15 +168,18 @@ static void forward_one(int listen_sock,
                       (struct sockaddr *)&up_addr, sizeof(up_addr));
     if (sent < 0) {
         ESP_LOGW(TAG, "upstream sendto() failed: errno=%d", errno);
-        close(up);
+        /* Socket may be wedged — drop it so the next query rebuilds. */
+        reset_upstream_sock();
         return;
     }
 
     uint8_t rbuf[DNS_RELAY_BUF_SIZE];
     int rlen = recvfrom(up, rbuf, sizeof(rbuf), 0, NULL, NULL);
-    close(up);
     if (rlen <= 0) {
         ESP_LOGW(TAG, "upstream recv timeout/error (errno=%d)", errno);
+        /* Timeout (EAGAIN/EWOULDBLOCK) is the normal "upstream slow"
+         * path — keep the socket. Other errors imply it's wedged. */
+        if (errno != EAGAIN && errno != EWOULDBLOCK) reset_upstream_sock();
         return;
     }
 
