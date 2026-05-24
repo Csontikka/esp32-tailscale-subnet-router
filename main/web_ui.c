@@ -3796,9 +3796,20 @@ static const httpd_uri_t uri_auth_clear_password = {
     .uri = "/api/auth/clear_password", .method = HTTP_POST, .handler = auth_clear_password_handler,
 };
 
-/* Catch-all handler bound to HTTPD_404_NOT_FOUND on the port-80 listener.
- * Because that listener has no URI handlers registered, every incoming
- * request lands here and gets bounced over to https://<same-host>/<same-path>. */
+/* Wrapper with the URI-handler signature (no err code) so the same
+ * redirect can be both a wildcard URI handler AND a 404 fallback.
+ * Wildcard match avoids the "httpd_uri: URI ... not found" WARN
+ * spam the 404-only path used to emit. */
+static esp_err_t http_to_https_redirect(httpd_req_t *req, httpd_err_code_t err);
+static esp_err_t http_to_https_redirect_uri(httpd_req_t *req)
+{
+    return http_to_https_redirect(req, HTTPD_404_NOT_FOUND);
+}
+
+/* Catch-all handler bound to BOTH a slash-star wildcard URI and
+ * the 404 error hook on the port-80 listener. The wildcard URI
+ * silences the "URI not found" WARN; the 404 hook stays wired up
+ * as a safety net for methods we don't register (HEAD, OPTIONS, ...). */
 static esp_err_t http_to_https_redirect(httpd_req_t *req, httpd_err_code_t err)
 {
     (void)err;
@@ -3950,10 +3961,19 @@ void web_ui_init(void)
      * peak use sits in 50 % of the slot instead of 90 %. Heap cost
      * is 4 KB DRAM, easily absorbed by the SPIRAM body-buffer move. */
     rconf.stack_size          = 8192;
-    rconf.max_uri_handlers    = 1;
+    rconf.max_uri_handlers    = 4;   /* GET + POST wildcards + headroom */
+    rconf.uri_match_fn        = httpd_uri_match_wildcard;
     rconf.max_open_sockets    = 3;     /* throwaway connections */
     rconf.lru_purge_enable    = true;
     if (httpd_start(&redirect_server, &rconf) == ESP_OK) {
+        static const httpd_uri_t uri_redirect_get = {
+            .uri = "/*", .method = HTTP_GET,  .handler = http_to_https_redirect_uri,
+        };
+        static const httpd_uri_t uri_redirect_post = {
+            .uri = "/*", .method = HTTP_POST, .handler = http_to_https_redirect_uri,
+        };
+        httpd_register_uri_handler(redirect_server, &uri_redirect_get);
+        httpd_register_uri_handler(redirect_server, &uri_redirect_post);
         httpd_register_err_handler(redirect_server, HTTPD_404_NOT_FOUND,
                                      http_to_https_redirect);
         ESP_LOGI(TAG, "HTTP→HTTPS redirect listening on :80");
