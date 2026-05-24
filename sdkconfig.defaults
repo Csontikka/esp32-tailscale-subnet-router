@@ -77,8 +77,19 @@ CONFIG_LWIP_MAX_SOCKETS=24
 # re-trying one at a time WITH instrumentation:
 #   CONFIG_LWIP_TCP_WND_DEFAULT=32768      (default ~5760)
 #   CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768  (default ~5760)
-#   CONFIG_ESP_WIFI_RX_BA_WIN=32           (default 6)
-#   CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16 (default 10)
+#
+# 2026-05-24 bisect step 1: now that the channel-mismatch masking bug
+# is fixed (ap_chan_learned in main.c) and WiFi/lwIP buffers can spill
+# to SPIRAM (SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y), re-enable RX-side AMPDU
+# aggregation. Default RX_BA_WIN=6 leaves the radio unable to coalesce
+# more than 6 frames per BlockAck, while TX_BA_WIN was already 32;
+# mismatched windows can stall AMPDU re-orders. ESP-IDF builds in a
+# hard constraint RX_BA_WIN <= 2 * STATIC_RX_BUFFER_NUM (see
+# components/esp_wifi/src/wifi_init.c:56), so the two knobs MUST be
+# raised as a pair — 32 needs 16, not separable. Heap impact is bounded
+# by SPIRAM spill. TCP_WND / TCP_SND_BUF stay default for now.
+CONFIG_ESP_WIFI_RX_BA_WIN=32
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16
 
 # --- Flash mode — back to DIO after a QIO regression on this board ---------
 # Tried CONFIG_ESPTOOLPY_FLASHMODE_QIO=y for the 2× code-fetch win, the
