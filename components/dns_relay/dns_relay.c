@@ -232,8 +232,12 @@ void dns_relay_init(void)
 
     nvs_handle_t h;
     if (nvs_open(DNS_RELAY_NVS_NS, NVS_READONLY, &h) == ESP_OK) {
-        uint8_t en = 0;
-        if (nvs_get_u8(h, KEY_ENABLED, &en) != ESP_OK) en = 0; /* default OFF — operator turns it on from the SPA */
+        uint8_t en = 1;
+        /* Default ON — any AP that advertises itself as the DHCP resolver
+         * for its clients needs a DNS forwarder to keep them functional.
+         * Operator can opt out from the Network → AP card if they have
+         * a Pi-hole / external resolver in the AP subnet instead. */
+        if (nvs_get_u8(h, KEY_ENABLED, &en) != ESP_OK) en = 1;
         s_enabled = en != 0;
 
         char up_str[20] = {0};
@@ -246,7 +250,7 @@ void dns_relay_init(void)
         }
         nvs_close(h);
     } else {
-        s_enabled = false;  /* first boot — relay OFF, opt-in only */
+        s_enabled = true;   /* first boot / no NVS — opt-out, not opt-in */
     }
 
     xTaskCreate(dns_relay_task, "dns_relay", DNS_RELAY_TASK_STACK,
