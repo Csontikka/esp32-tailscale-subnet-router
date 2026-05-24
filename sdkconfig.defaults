@@ -27,6 +27,22 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=7168
 CONFIG_BOOTLOADER_LOG_LEVEL_WARN=y
 CONFIG_BOOTLOADER_LOG_LEVEL=2
 
+# --- Runtime log verbosity (2026-05-24 throughput hunt) -------------------
+# Compile out every ESP_LOGI per-packet log on the WG TX/RX hot path. The
+# microlink stack prints multiple INFO lines per packet (WG UDP TX, WG RX,
+# DISCO PING/PONG, ml_net_io UDP RX); at 50 pps that's ~200 log lines/s ~=
+# 40 KB/s on a 115200-baud UART (~12 KB/s) and ml_wg_mgr blocks while
+# pushing them. WARN+ still surfaces every problem we care about (errors,
+# session events, my own [WG_SNAP]/[WG_REKEY]/[WG_DESTROY] instrumentation
+# are LOGW so they survive). Restore to INFO if you need per-packet trace.
+# CONFIG_LOG_DEFAULT_LEVEL_INFO is not set
+CONFIG_LOG_DEFAULT_LEVEL_WARN=y
+CONFIG_LOG_DEFAULT_LEVEL=2
+
+# Push the UART out of the way: 8x faster console = 8x less time the
+# logging task blocks on the UART driver. CH343 USB-serial supports it.
+CONFIG_ESP_CONSOLE_UART_BAUDRATE=921600
+
 # --- LWIP: NAPT, IP forwarding, socket budget -------------------------------
 CONFIG_LWIP_IP_FORWARD=y
 CONFIG_LWIP_IPV4_NAPT=y
@@ -39,31 +55,34 @@ CONFIG_LWIP_L2_TO_L3_COPY=y
 # + WG + DERP + 2 httpd pools) blew past 16 and httpd logged
 # "httpd_accept_conn: error in accept (23)" — errno 23 = ENFILE. Up to 24.
 CONFIG_LWIP_MAX_SOCKETS=24
-# Bigger TCP window/buffer so a single stream can fill the link before the
-# encryption itself becomes the limit. The 32K value above used to be the
-# threshold under CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384; ESP-IDF
-# routes any TCP buffer alloc > 16K straight to SPIRAM, so bumping to 64K
-# costs nothing on the internal heap.
-CONFIG_LWIP_TCP_WND_DEFAULT=65535
-CONFIG_LWIP_TCP_SND_BUF_DEFAULT=65535
+# 2026-05-24 throughput-regression bisect: comparing the migration target
+# sdkconfig against the pre-migration OLD repo (which delivered the
+# expected 1 Mbps WG-tunnel throughput) showed the NEW config aggressively
+# tuned several lwIP/WiFi knobs that, in isolation, look like
+# performance wins — but together they push the internal heap into a
+# pressure regime where mem_malloc(PBUF_RAM) starts returning NULL on
+# the WG TX hot path. Each failed alloc drops a packet; even a handful
+# of drops over a 30 s Ookla run cause cascading TCP back-off and the
+# user-visible throughput collapses to ~10-20 KB/s.
+#
+# Reverted to IDF defaults (matching the OLD repo) — see those tuning
+# values in commit history if a future measurement says they're worth
+# re-trying one at a time WITH instrumentation:
+#   CONFIG_LWIP_TCP_WND_DEFAULT=32768      (default ~5760)
+#   CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768  (default ~5760)
+#   CONFIG_ESP_WIFI_RX_BA_WIN=32           (default 6)
+#   CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16 (default 10)
 
-# WiFi block-ACK RX window — default is 6, max is 64. Higher window lets
-# the peer aggregate more frames into a single A-MPDU burst before
-# blocking on an ACK, which is the right knob when the radio is the
-# bottleneck (AP+STA time-share on a single 2.4 GHz chain). Bumped to
-# the standard 32; further to 64 if a real measurement shows headroom.
-CONFIG_ESP_WIFI_RX_BA_WIN=32
-# IDF requires BA_WIN <= 2 * STATIC_RX_BUFFER_NUM; default STATIC is 10
-# (caps BA_WIN at 20), bumped to 16 to allow the full 32-window.
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16
-
-# --- Flash mode QIO (4-line) — board-confirmed N16R8 octal/80 MHz -----------
-# DIO (2-line) was the IDF safe default; the N16R8 module on this dev
-# board supports QIO, which roughly doubles code-fetch and any flash-
-# bound rodata read. If a future board variant turns out to lack QIO
-# wiring it'll boot-fail loudly — revert to DIO in the env override.
-CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
-CONFIG_ESPTOOLPY_FLASHMODE="qio"
+# --- Flash mode — back to DIO after a QIO regression on this board ---------
+# Tried CONFIG_ESPTOOLPY_FLASHMODE_QIO=y for the 2× code-fetch win, the
+# build booted fine on the dev module, but a real phone STA started
+# losing connectivity to the AP under live use. No PANIC, no syslog
+# marker — symptom was speedtest-fail + occasional deauth. Could be
+# the QIO timing margin on this exact board variant. DIO is the boring
+# safe default; revisit when there's a way to A/B without disrupting
+# the operator.
+CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
+CONFIG_ESPTOOLPY_FLASHMODE="dio"
 
 # --- TCP window scaling (RFC 1323) ------------------------------------------
 # Lets receive windows grow past 64 KB on long-RTT paths (DERP relays
