@@ -48,8 +48,17 @@
 #include "web_password.h"
 #include "esp_random.h"
 #include "esp_system.h"
+#include "esp_chip_info.h"
+#include "esp_flash.h"
+#include "esp_partition.h"
+#include "esp_ota_ops.h"
+#include "esp_mac.h"
+#include "esp_psram.h"
+#include "esp_core_dump.h"
+#include "nvs.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "driver/temperature_sensor.h"
 
 /* Globals owned by main.c — link status flags rendered in /api/status. */
 extern int ap_connect;
@@ -3211,6 +3220,239 @@ static const httpd_uri_t uri_system_secrets_post = {
     .handler = system_secrets_post_handler,
 };
 
+/* ---- Hardware diagnostics endpoint --------------------------------------
+ * Wide-band snapshot of chip / heap / flash / partitions / coredump /
+ * MAC / tasks. Pulls everything the Diagnostics tab shows in one
+ * request so the SPA stays single-fetch. Read-only — no NVS writes,
+ * no state mutation. Roughly 4-8 KB of JSON. */
+static const char *part_type_str(esp_partition_type_t t, uint8_t subtype)
+{
+    if (t == ESP_PARTITION_TYPE_APP) {
+        if (subtype == ESP_PARTITION_SUBTYPE_APP_FACTORY) return "app/factory";
+        if (subtype >= ESP_PARTITION_SUBTYPE_APP_OTA_MIN
+            && subtype <= ESP_PARTITION_SUBTYPE_APP_OTA_MAX) {
+            static char buf[16];
+            snprintf(buf, sizeof buf, "app/ota_%u",
+                     (unsigned)(subtype - ESP_PARTITION_SUBTYPE_APP_OTA_MIN));
+            return buf;
+        }
+        if (subtype == ESP_PARTITION_SUBTYPE_APP_TEST) return "app/test";
+        return "app/?";
+    }
+    if (t == ESP_PARTITION_TYPE_DATA) {
+        switch (subtype) {
+            case ESP_PARTITION_SUBTYPE_DATA_OTA:      return "data/ota";
+            case ESP_PARTITION_SUBTYPE_DATA_PHY:      return "data/phy";
+            case ESP_PARTITION_SUBTYPE_DATA_NVS:      return "data/nvs";
+            case ESP_PARTITION_SUBTYPE_DATA_COREDUMP: return "data/coredump";
+            case ESP_PARTITION_SUBTYPE_DATA_NVS_KEYS: return "data/nvs_keys";
+            case ESP_PARTITION_SUBTYPE_DATA_EFUSE_EM: return "data/efuse";
+            case ESP_PARTITION_SUBTYPE_DATA_UNDEFINED:return "data/undef";
+            case ESP_PARTITION_SUBTYPE_DATA_ESPHTTPD: return "data/esphttpd";
+            case ESP_PARTITION_SUBTYPE_DATA_FAT:      return "data/fat";
+            case ESP_PARTITION_SUBTYPE_DATA_SPIFFS:   return "data/spiffs";
+            default:                                  return "data/?";
+        }
+    }
+    return "?";
+}
+
+static esp_err_t system_diag_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root) { httpd_resp_send_500(req); return ESP_FAIL; }
+
+    /* --- A) Chip + memory ------------------------------------------------ */
+    {
+        cJSON *c = cJSON_CreateObject();
+        esp_chip_info_t ci;
+        esp_chip_info(&ci);
+        const char *model = "?";
+        switch (ci.model) {
+            case CHIP_ESP32:    model = "ESP32";    break;
+            case CHIP_ESP32S2:  model = "ESP32-S2"; break;
+            case CHIP_ESP32S3:  model = "ESP32-S3"; break;
+            case CHIP_ESP32C3:  model = "ESP32-C3"; break;
+            case CHIP_ESP32H2:  model = "ESP32-H2"; break;
+            case CHIP_ESP32C6:  model = "ESP32-C6"; break;
+            default: break;
+        }
+        cJSON_AddStringToObject(c, "model",    model);
+        cJSON_AddNumberToObject(c, "revision", ci.revision);
+        cJSON_AddNumberToObject(c, "cores",    ci.cores);
+        /* features bitmask: wifi / bt / ble / 802.15.4 / embedded flash / psram */
+        cJSON *feat = cJSON_CreateArray();
+        if (ci.features & CHIP_FEATURE_WIFI_BGN)         cJSON_AddItemToArray(feat, cJSON_CreateString("wifi"));
+        if (ci.features & CHIP_FEATURE_BT)               cJSON_AddItemToArray(feat, cJSON_CreateString("bt"));
+        if (ci.features & CHIP_FEATURE_BLE)              cJSON_AddItemToArray(feat, cJSON_CreateString("ble"));
+        if (ci.features & CHIP_FEATURE_IEEE802154)       cJSON_AddItemToArray(feat, cJSON_CreateString("802.15.4"));
+        if (ci.features & CHIP_FEATURE_EMB_FLASH)        cJSON_AddItemToArray(feat, cJSON_CreateString("emb_flash"));
+        if (ci.features & CHIP_FEATURE_EMB_PSRAM)        cJSON_AddItemToArray(feat, cJSON_CreateString("emb_psram"));
+        cJSON_AddItemToObject(c, "features", feat);
+
+        uint32_t flash_size = 0;
+        if (esp_flash_get_size(NULL, &flash_size) == ESP_OK) {
+            cJSON_AddNumberToObject(c, "flash_size", flash_size);
+        }
+        uint32_t flash_id = 0;
+        if (esp_flash_read_id(NULL, &flash_id) == ESP_OK) {
+            cJSON_AddNumberToObject(c, "flash_jedec_id", flash_id);
+        }
+
+        size_t psram_total = esp_psram_get_size();
+        cJSON_AddNumberToObject(c, "psram_total", psram_total);
+
+        cJSON_AddItemToObject(root, "chip", c);
+    }
+
+    {
+        cJSON *m = cJSON_CreateObject();
+        cJSON_AddNumberToObject(m, "internal_total",    heap_caps_get_total_size(MALLOC_CAP_INTERNAL));
+        cJSON_AddNumberToObject(m, "internal_free",     heap_caps_get_free_size(MALLOC_CAP_INTERNAL));
+        cJSON_AddNumberToObject(m, "internal_min_free", heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL));
+        cJSON_AddNumberToObject(m, "internal_largest",  heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+        cJSON_AddNumberToObject(m, "spiram_total",      heap_caps_get_total_size(MALLOC_CAP_SPIRAM));
+        cJSON_AddNumberToObject(m, "spiram_free",       heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
+        cJSON_AddNumberToObject(m, "spiram_min_free",   heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
+        cJSON_AddNumberToObject(m, "spiram_largest",    heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+        cJSON_AddItemToObject(root, "memory", m);
+    }
+
+    /* --- B) Partitions --------------------------------------------------- */
+    {
+        const esp_partition_t *running = esp_ota_get_running_partition();
+        const esp_partition_t *boot    = esp_ota_get_boot_partition();
+
+        cJSON *parts = cJSON_CreateArray();
+        esp_partition_iterator_t it = esp_partition_find(
+            ESP_PARTITION_TYPE_ANY, ESP_PARTITION_SUBTYPE_ANY, NULL);
+        while (it) {
+            const esp_partition_t *p = esp_partition_get(it);
+            cJSON *e = cJSON_CreateObject();
+            cJSON_AddStringToObject(e, "name",   p->label);
+            cJSON_AddStringToObject(e, "kind",   part_type_str(p->type, p->subtype));
+            cJSON_AddNumberToObject(e, "offset", p->address);
+            cJSON_AddNumberToObject(e, "size",   p->size);
+            cJSON_AddBoolToObject  (e, "running", running && p->address == running->address);
+            cJSON_AddBoolToObject  (e, "bootnext", boot && p->address == boot->address);
+            cJSON_AddItemToArray(parts, e);
+            it = esp_partition_next(it);
+        }
+        esp_partition_iterator_release(it);
+        cJSON_AddItemToObject(root, "partitions", parts);
+    }
+
+    /* NVS namespace stats — uses the default "nvs" partition. */
+    {
+        cJSON *n = cJSON_CreateObject();
+        nvs_stats_t st;
+        if (nvs_get_stats(NULL, &st) == ESP_OK) {
+            cJSON_AddNumberToObject(n, "used_entries",       st.used_entries);
+            cJSON_AddNumberToObject(n, "free_entries",       st.free_entries);
+            cJSON_AddNumberToObject(n, "total_entries",      st.total_entries);
+            cJSON_AddNumberToObject(n, "namespace_count",    st.namespace_count);
+        }
+        cJSON_AddItemToObject(root, "nvs", n);
+    }
+
+    /* Coredump partition state. */
+    {
+        cJSON *cd = cJSON_CreateObject();
+        size_t cd_addr = 0, cd_size = 0;
+        esp_err_t cd_err = esp_core_dump_image_get(&cd_addr, &cd_size);
+        cJSON_AddBoolToObject  (cd, "present", cd_err == ESP_OK);
+        if (cd_err == ESP_OK) {
+            cJSON_AddNumberToObject(cd, "addr", cd_addr);
+            cJSON_AddNumberToObject(cd, "size", cd_size);
+        }
+        cJSON_AddItemToObject(root, "coredump", cd);
+    }
+
+    /* --- C) MAC addresses ------------------------------------------------ */
+    {
+        cJSON *macs = cJSON_CreateObject();
+        uint8_t m[6]; char s[18];
+        if (esp_wifi_get_mac(WIFI_IF_STA, m) == ESP_OK) {
+            snprintf(s, sizeof s, "%02x:%02x:%02x:%02x:%02x:%02x", m[0],m[1],m[2],m[3],m[4],m[5]);
+            cJSON_AddStringToObject(macs, "sta", s);
+        }
+        if (esp_wifi_get_mac(WIFI_IF_AP, m) == ESP_OK) {
+            snprintf(s, sizeof s, "%02x:%02x:%02x:%02x:%02x:%02x", m[0],m[1],m[2],m[3],m[4],m[5]);
+            cJSON_AddStringToObject(macs, "ap", s);
+        }
+        if (esp_read_mac(m, ESP_MAC_BT) == ESP_OK) {
+            snprintf(s, sizeof s, "%02x:%02x:%02x:%02x:%02x:%02x", m[0],m[1],m[2],m[3],m[4],m[5]);
+            cJSON_AddStringToObject(macs, "bt", s);
+        }
+        cJSON_AddItemToObject(root, "mac", macs);
+    }
+
+    /* --- D) System ------------------------------------------------------- */
+    {
+        cJSON *s = cJSON_CreateObject();
+        cJSON_AddStringToObject(s, "reset_reason", reset_reason_str());
+        cJSON_AddStringToObject(s, "idf_version",  esp_get_idf_version());
+
+        /* CPU temperature — install on first call, leave it running.
+         * The sensor is ~1-2 °C noisy and reads in ~10 ms. */
+        static temperature_sensor_handle_t s_temp = NULL;
+        if (!s_temp) {
+            temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
+            if (temperature_sensor_install(&cfg, &s_temp) == ESP_OK) {
+                temperature_sensor_enable(s_temp);
+            }
+        }
+        float tc = 0;
+        if (s_temp && temperature_sensor_get_celsius(s_temp, &tc) == ESP_OK) {
+            cJSON_AddNumberToObject(s, "cpu_temp_c", tc);
+        }
+        cJSON_AddItemToObject(root, "system", s);
+    }
+
+    /* --- E) FreeRTOS task list ------------------------------------------- */
+    {
+        UBaseType_t n = uxTaskGetNumberOfTasks();
+        TaskStatus_t *arr = malloc(sizeof(TaskStatus_t) * n);
+        cJSON *tasks = cJSON_CreateArray();
+        if (arr) {
+            UBaseType_t got = uxTaskGetSystemState(arr, n, NULL);
+            for (UBaseType_t i = 0; i < got; i++) {
+                cJSON *t = cJSON_CreateObject();
+                cJSON_AddStringToObject(t, "name",     arr[i].pcTaskName ? arr[i].pcTaskName : "?");
+                cJSON_AddNumberToObject(t, "prio",     arr[i].uxCurrentPriority);
+                cJSON_AddNumberToObject(t, "stack_hwm", arr[i].usStackHighWaterMark);
+                const char *st = "?";
+                switch (arr[i].eCurrentState) {
+                    case eRunning:   st = "running";   break;
+                    case eReady:     st = "ready";     break;
+                    case eBlocked:   st = "blocked";   break;
+                    case eSuspended: st = "suspended"; break;
+                    case eDeleted:   st = "deleted";   break;
+                    case eInvalid:   st = "invalid";   break;
+                }
+                cJSON_AddStringToObject(t, "state", st);
+                cJSON_AddItemToArray(tasks, t);
+            }
+            free(arr);
+        }
+        cJSON_AddItemToObject(root, "tasks", tasks);
+    }
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t e = httpd_resp_sendstr(req, body);
+    free(body);
+    return e;
+}
+static const httpd_uri_t uri_system_diag = {
+    .uri = "/api/system/diag", .method = HTTP_GET,
+    .handler = system_diag_handler,
+};
+
 /* ---- Session management -------------------------------------------------
  * Single in-memory session, like the OLD repo. 32-byte random token hex-
  * encoded into a cookie. The token never touches NVS — reboot logs
@@ -3666,6 +3908,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_system_ota_install);
     httpd_register_uri_handler(server, &uri_system_secrets_get);
     httpd_register_uri_handler(server, &uri_system_secrets_post);
+    httpd_register_uri_handler(server, &uri_system_diag);
     httpd_register_uri_handler(server, &uri_system_debug_crash);
     httpd_register_uri_handler(server, &uri_auth_status);
     httpd_register_uri_handler(server, &uri_auth_login);
