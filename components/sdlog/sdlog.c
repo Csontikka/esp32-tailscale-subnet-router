@@ -402,6 +402,13 @@ static void emit_snap(uint64_t now_ms, uint32_t hb_age_s, uint32_t coord_age_s)
     uint32_t heap_int = esp_get_free_heap_size();
     uint32_t heap_min = esp_get_minimum_free_heap_size();
     uint32_t heap_spi = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_SPIRAM);
+    /* Internal DRAM specifically — WiFi TX descriptors + lwIP pbufs live here,
+     * NOT in SPIRAM. This is what actually exhausts under a forwarding load
+     * burst (speedtest + rapid churn): sends then fail with ENOMEM while
+     * SPIRAM still looks plentiful. dram_min is the low-water mark, the real
+     * ENOMEM proximity signal the SPIRAM figures above completely hide. */
+    uint32_t dram_free = (uint32_t)heap_caps_get_free_size(MALLOC_CAP_INTERNAL);
+    uint32_t dram_min  = (uint32_t)heap_caps_get_minimum_free_size(MALLOC_CAP_INTERNAL);
 
     char coord = '-', derp = '-', wg = '-', netio = '-';
     int ml_st = -1, peers = 0, online = 0;
@@ -422,10 +429,11 @@ static void emit_snap(uint64_t now_ms, uint32_t hb_age_s, uint32_t coord_age_s)
 
     char line[256];
     int n = snprintf(line, sizeof line,
-        "SNAP up=%us heap=%u/%uk min=%uk | coord=%c derp=%c wg=%c netio=%c | "
+        "SNAP up=%us heap=%u/%uk min=%uk idram=%uk/min%uk | coord=%c derp=%c wg=%c netio=%c | "
         "derp_hb_age=%us coord_age=%us ml=%s peers=%d/%d | dropped=%u\n",
         (unsigned)up, (unsigned)heap_int, (unsigned)(heap_spi / 1024),
         (unsigned)(heap_min / 1024),
+        (unsigned)(dram_free / 1024), (unsigned)(dram_min / 1024),
         coord, derp, wg, netio,
         (unsigned)hb_age_s, (unsigned)coord_age_s, ml_state_str(ml_st), online, peers,
         (unsigned)atomic_load(&s_dropped));
