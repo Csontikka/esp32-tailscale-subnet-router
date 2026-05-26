@@ -140,6 +140,13 @@ esp_err_t tailscale_connect(void)
 
     if (s_microlink) {
         ESP_LOGW(TAG, "Already initialized; tearing down prior instance first");
+        /* Stop the SD recorder from sampling this instance before we free it:
+         * its writer task calls microlink_get_* accessors on the handle, and
+         * between destroy() and the sdlog_set_microlink() further down it
+         * would read freed memory. Clear the handle first to close that
+         * teardown window (paired with microlink_stop's socket unblocking,
+         * the fix for the 2026-05-26 ml_derp_tx teardown crash). */
+        sdlog_set_microlink(NULL);
         microlink_stop(s_microlink);
         microlink_destroy(s_microlink);
         s_microlink = NULL;
@@ -178,6 +185,7 @@ esp_err_t tailscale_connect(void)
     esp_err_t err = microlink_start(s_microlink);
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "microlink_start failed: %s", esp_err_to_name(err));
+        sdlog_set_microlink(NULL);   /* handle was set above; unset before free */
         microlink_destroy(s_microlink);
         s_microlink = NULL;
         return err;
@@ -197,6 +205,7 @@ void tailscale_disconnect(void)
     tailscale_connected = false;
     tailscale_tunnel_ip = 0;
     if (s_microlink) {
+        sdlog_set_microlink(NULL);   /* detach recorder before freeing the instance */
         microlink_stop(s_microlink);
         microlink_destroy(s_microlink);
         s_microlink = NULL;
