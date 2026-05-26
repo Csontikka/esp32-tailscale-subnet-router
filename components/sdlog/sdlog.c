@@ -111,6 +111,12 @@
 
 static const char *TAG = "sdlog";
 
+/* Sentinel msg.len values posted through the queue (real log lines are
+ * 1..SDLOG_LINE_MAX): 0 = poison pill (writer drains + exits), 0xFFFF =
+ * flush marker (writer fsyncs the active file then signals s_flush_done). */
+#define SDLOG_MSG_POISON  0u
+#define SDLOG_MSG_FLUSH   0xFFFFu
+
 /* One queued log line. */
 typedef struct {
     uint16_t len;                 /* bytes used in data (includes the \n) */
@@ -133,6 +139,9 @@ static SemaphoreHandle_t s_file_mutex = NULL;
 /* Writer task + queue. */
 static QueueHandle_t s_queue = NULL;
 static TaskHandle_t  s_writer_task = NULL;
+/* Signalled by the writer once a flush marker has been fsynced, so
+ * sdlog_flush() can block until the queue tail is durably on the card. */
+static SemaphoreHandle_t s_flush_done = NULL;
 
 /* Active file — writer-owned, but read APIs touch the FS under
  * s_file_mutex too, so guard FILE* access with it. */
@@ -449,8 +458,21 @@ static void writer_task(void *arg)
     for (;;) {
         BaseType_t got = xQueueReceive(s_queue, &msg, pdMS_TO_TICKS(SDLOG_TICK_MS));
 
-        if (got == pdTRUE && msg.len == 0)
+        if (got == pdTRUE && msg.len == SDLOG_MSG_POISON)
             break;                         /* poison pill */
+
+        if (got == pdTRUE && msg.len == SDLOG_MSG_FLUSH) {
+            /* Flush marker: everything enqueued before it has already been
+             * written (the queue is FIFO), so fsync the active file durably
+             * and wake the sdlog_flush() caller. */
+            xSemaphoreTake(s_file_mutex, portMAX_DELAY);
+            tl_in_sdlog = true;
+            if (s_fp) fsync_active();
+            tl_in_sdlog = false;
+            xSemaphoreGive(s_file_mutex);
+            if (s_flush_done) xSemaphoreGive(s_flush_done);
+            continue;
+        }
 
         xSemaphoreTake(s_file_mutex, portMAX_DELAY);
         tl_in_sdlog = true;
@@ -623,9 +645,35 @@ static esp_err_t mount_card(void)
     return ESP_OK;
 }
 
+esp_err_t sdlog_flush(void)
+{
+    /* Drain the queue onto the card and fsync, synchronously. Call before a
+     * deliberate esp_restart() so the flight recorder keeps the last seconds
+     * of log before a controlled reboot — otherwise the queue tail plus the
+     * not-yet-fsynced FATFS buffer (up to the 2 s fsync period) are lost.
+     * Posts a flush marker so FIFO ordering guarantees every line queued
+     * before this call is written first, then waits for the writer's fsync. */
+    /* Hard upper bounds so a stalled card (fsync hung in the driver, full
+     * queue with a wedged writer) can never block the caller's reboot. The
+     * caller treats this as best-effort and reboots regardless of the return.
+     * Worst case added latency ≈ SEND + WAIT below. */
+    const TickType_t kSendTo = pdMS_TO_TICKS(250);    /* queue the marker   */
+    const TickType_t kWaitTo = pdMS_TO_TICKS(1500);   /* writer drains+fsync */
+
+    if (!s_queue || !s_writer_task || !s_flush_done) return ESP_ERR_INVALID_STATE;
+    (void)xSemaphoreTake(s_flush_done, 0);   /* clear any stale completion */
+    sdlog_msg_t marker = { .len = SDLOG_MSG_FLUSH };
+    if (xQueueSend(s_queue, &marker, kSendTo) != pdTRUE)
+        return ESP_FAIL;
+    /* The writer may have a backlog ahead of our marker — bounded wait. */
+    return (xSemaphoreTake(s_flush_done, kWaitTo) == pdTRUE)
+           ? ESP_OK : ESP_ERR_TIMEOUT;
+}
+
 static void start_writer(void)
 {
     if (!s_queue)    s_queue = xQueueCreate(SDLOG_QUEUE_DEPTH, sizeof(sdlog_msg_t));
+    if (!s_flush_done) s_flush_done = xSemaphoreCreateBinary();
     if (!s_fmt_mutex) s_fmt_mutex = xSemaphoreCreateMutex();
     if (!s_rawbuf) { s_rawbuf = malloc(SDLOG_LINE_MAX); s_rawpos = 0; }
     if (!s_pktbuf)   s_pktbuf = malloc(SDLOG_LINE_MAX);

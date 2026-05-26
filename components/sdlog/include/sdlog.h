@@ -82,6 +82,18 @@ esp_err_t sdlog_enable(uint8_t verbosity);
 /** Disable the recorder. Stops the writer task and persists the flag. */
 esp_err_t sdlog_disable(void);
 
+/**
+ * Best-effort synchronous flush: drain the write queue to the card and fsync.
+ * Call right before a deliberate esp_restart() so the last seconds of log
+ * survive a controlled reboot (the periodic 2 s fsync would otherwise lose
+ * the queue tail + unsynced FATFS buffer). Bounded by a short internal
+ * timeout — if the card write stalls it returns ESP_ERR_TIMEOUT rather than
+ * blocking, so the caller should reboot regardless of the return value.
+ * Returns ESP_OK once durably written, ESP_ERR_INVALID_STATE if the recorder
+ * isn't running, ESP_FAIL if the marker couldn't be queued, or ESP_ERR_TIMEOUT.
+ */
+esp_err_t sdlog_flush(void);
+
 /** Fill *out with the current recorder status. */
 void sdlog_get_status(sdlog_status_t *out);
 
