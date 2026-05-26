@@ -2694,6 +2694,50 @@
         </div>
       </div>
 
+      <!-- ===== SD flight-recorder ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">SD card logging</span>
+          </div>
+          <span class="badge badge-neutral" id="sys-sdlog-badge">—</span>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">Persists every ESP_LOG line to the onboard microSD card. Survives reboots — the place to look after a silent control-plane wedge. A fresh boot-marker file is written on every boot.</p>
+          <p class="form-hint mono" id="sys-sdlog-cardinfo" style="margin:0 0 0.75rem 0;">No SD card detected.</p>
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="sys-sdlog-enabled" disabled> Enable SD recorder
+            </label>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="sys-sdlog-verb">Verbosity</label>
+            <select class="input" id="sys-sdlog-verb">
+              <option value="0">All (every line)</option>
+              <option value="1">Warnings + errors only</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
+              <span class="form-label" style="margin:0;">Log files (<span id="sys-sdlog-count">0</span>)</span>
+              <span style="display:flex; gap:0.4rem;">
+                <button class="btn btn-secondary btn-sm" id="sys-sdlog-refresh" type="button">Refresh</button>
+                <button class="btn btn-secondary btn-sm" id="sys-sdlog-tail" type="button">Tail latest</button>
+                <button class="btn btn-danger btn-sm" id="sys-sdlog-erase" type="button">Erase all</button>
+              </span>
+            </div>
+            <div id="sys-sdlog-files" class="mono" style="margin-top:0.5rem; font-size:0.85em;"></div>
+          </div>
+          <pre id="sys-sdlog-tailout" class="mono" style="display:none; max-height:280px; overflow:auto; padding:0.6rem; border:1px solid var(--border,#333); border-radius:6px; white-space:pre-wrap;"></pre>
+        </div>
+        <div class="form-footer">
+          <span class="form-footer-hint">Applies immediately on save.</span>
+          <div class="form-footer-actions">
+            <button class="btn btn-primary btn-md" id="sys-sdlog-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
+
       <!-- ===== Firmware update (OTA) ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -6211,6 +6255,9 @@
           slBadge.textContent = sl.enabled ? 'On' : 'Off';
           document.getElementById('sys-syslog-save').disabled = true;
 
+          /* SD flight-recorder card refreshes on every System-tab load. */
+          if (typeof loadSdlog === 'function') loadSdlog();
+
           /* Idle session timeout — snap the select to whichever option
            * matches the persisted value, falling back to 30 min if the
            * server returned something we don't render as a choice. */
@@ -6957,6 +7004,120 @@
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function () { showToast('success', 'Syslog saved', '', 3000); loadSystem(); })
         .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
+    });
+
+    /* ===== SD flight-recorder ===== */
+    var sdlogState = { present: false, enabled: false };
+
+    function sdlogRenderFiles(list) {
+      var box = document.getElementById('sys-sdlog-files');
+      document.getElementById('sys-sdlog-count').textContent = list.length;
+      if (!list.length) { box.textContent = '(no files)'; return; }
+      box.innerHTML = '';
+      list.forEach(function (f) {
+        var row = document.createElement('div');
+        row.style.display = 'flex';
+        row.style.justifyContent = 'space-between';
+        row.style.gap = '0.5rem';
+        var a = document.createElement('a');
+        a.href = '/sdlog/download?file=' + encodeURIComponent(f.name);
+        a.textContent = f.name;
+        a.setAttribute('download', f.name);
+        var sz = document.createElement('span');
+        sz.textContent = (f.size != null) ? (f.size + ' B') : '';
+        row.appendChild(a);
+        row.appendChild(sz);
+        box.appendChild(row);
+      });
+    }
+
+    function loadSdlog() {
+      apiFetch('/api/sdlog')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          sdlogState.present = !!d.present;
+          sdlogState.enabled = !!d.enabled;
+          var badge = document.getElementById('sys-sdlog-badge');
+          var cb    = document.getElementById('sys-sdlog-enabled');
+          var info  = document.getElementById('sys-sdlog-cardinfo');
+          cb.checked  = !!d.enabled;
+          cb.disabled = !d.present;
+          document.getElementById('sys-sdlog-verb').value = String(d.verbosity || 0);
+          if (d.present) {
+            badge.className   = d.enabled ? 'badge badge-success' : 'badge badge-neutral';
+            badge.textContent = d.enabled ? 'Recording' : 'Idle';
+            info.textContent  = 'Card ' + (d.card_mb || 0) + ' MB, ' + (d.free_mb || 0) +
+              ' MB free · current ' + (d.current_file || '—') +
+              ' · dropped ' + (d.dropped || 0);
+          } else {
+            badge.className   = 'badge badge-neutral';
+            badge.textContent = 'No card';
+            info.textContent  = 'No SD card detected.';
+          }
+          document.getElementById('sys-sdlog-save').disabled = true;
+        })
+        .catch(function () {});
+      apiFetch('/sdlog/list')
+        .then(function (r) { return r.json(); })
+        .then(sdlogRenderFiles)
+        .catch(function () {});
+    }
+
+    ['sys-sdlog-enabled', 'sys-sdlog-verb'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener('change', function () {
+        document.getElementById('sys-sdlog-save').disabled = false;
+      });
+    });
+
+    document.getElementById('sys-sdlog-save').addEventListener('click', function () {
+      if (!sdlogState.present) {
+        showToast('error', 'No SD card', 'Insert a microSD card first.', 5000);
+        return;
+      }
+      var body = {
+        enabled:   document.getElementById('sys-sdlog-enabled').checked,
+        verbosity: parseInt(document.getElementById('sys-sdlog-verb').value, 10) || 0
+      };
+      var btn = this;
+      btn.disabled = true;
+      apiFetch('/api/sdlog', {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body)
+      })
+        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+        .then(function () { showToast('success', 'SD logging saved', '', 3000); loadSdlog(); })
+        .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
+    });
+
+    document.getElementById('sys-sdlog-refresh').addEventListener('click', loadSdlog);
+
+    document.getElementById('sys-sdlog-erase').addEventListener('click', function () {
+      if (!window.confirm('Delete all SD log files? This cannot be undone.')) return;
+      apiFetch('/api/sdlog/erase', { method: 'POST' })
+        .then(function (r) { return r.json(); })
+        .then(function () { showToast('success', 'Logs erased', '', 3000); loadSdlog(); })
+        .catch(function () { showToast('error', 'Erase failed', '', 5000); });
+    });
+
+    document.getElementById('sys-sdlog-tail').addEventListener('click', function () {
+      apiFetch('/sdlog/list')
+        .then(function (r) { return r.json(); })
+        .then(function (list) {
+          if (!list.length) { showToast('error', 'No files', 'Nothing to tail yet.', 4000); return; }
+          var name = list[0].name;   /* newest first */
+          return apiFetch('/sdlog/tail?file=' + encodeURIComponent(name) + '&n=200')
+            .then(function (r) { return r.text(); })
+            .then(function (txt) {
+              var pre = document.getElementById('sys-sdlog-tailout');
+              pre.style.display = 'block';
+              pre.textContent = '# ' + name + '\n' + txt;
+              pre.scrollTop = pre.scrollHeight;
+            });
+        })
+        .catch(function () { showToast('error', 'Tail failed', '', 5000); });
     });
 
     /* Idle-timeout dropdown — dirty-track + save. The new value also

@@ -44,6 +44,7 @@
 #include "acl.h"
 #include "netif_hooks.h"
 #include "syslog_client.h"
+#include "sdlog.h"
 #include "remote_console.h"
 #include "nvs_params.h"
 #include "esp_core_dump.h"
@@ -703,6 +704,12 @@ void app_main(void)
      * vprintf hook if previously enabled. Waits for STA IP via
      * syslog_notify_connected (wired below in the IP event handler). */
     syslog_init();
+
+    /* SD flight-recorder. Mounts the microSD and (if previously enabled
+     * in NVS) starts the writer task. Installed AFTER syslog_init so the
+     * vprintf hook chain stays sdlog -> syslog -> UART. Stays dark with no
+     * crash when no card is present. */
+    sdlog_init();
 
     /* Remote TCP REPL on a configurable port (default 2323). Starts the
      * listener only when previously enabled in NVS — disabled by default

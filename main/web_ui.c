@@ -24,6 +24,7 @@
 #include "lwip_route_hook.h"
 #include "acl.h"
 #include "syslog_client.h"
+#include "sdlog.h"
 #include "net_diag.h"
 #include "pcap_capture.h"
 #include "wifi_networks.h"
@@ -3955,6 +3956,219 @@ static const httpd_uri_t uri_auth_clear_password = {
     .uri = "/api/auth/clear_password", .method = HTTP_POST, .handler = auth_clear_password_handler,
 };
 
+/* ===================== SD flight-recorder ============================ */
+
+/* GET /api/sdlog — recorder status: card presence/size, enable state,
+ * verbosity, active file, file count, drops, bytes written. */
+static esp_err_t sdlog_status_get_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    sdlog_status_t st;
+    sdlog_get_status(&st);
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root) { httpd_resp_send_500(req); return ESP_FAIL; }
+    cJSON_AddBoolToObject  (root, "present",       st.present);
+    cJSON_AddBoolToObject  (root, "enabled",       st.enabled);
+    cJSON_AddNumberToObject(root, "verbosity",     st.verbosity);
+    cJSON_AddNumberToObject(root, "card_mb",       st.card_mb);
+    cJSON_AddNumberToObject(root, "free_mb",       st.free_mb);
+    cJSON_AddStringToObject(root, "current_file",  st.cur_file);
+    cJSON_AddNumberToObject(root, "file_count",    st.file_count);
+    cJSON_AddNumberToObject(root, "dropped",       st.dropped);
+    cJSON_AddNumberToObject(root, "bytes_written", (double)st.bytes_written);
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+/* POST /api/sdlog — { enabled:bool, verbosity:int }. Toggling enabled
+ * starts/stops the writer. No-op (still 200) if no card is present. */
+static esp_err_t sdlog_status_post_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char buf[128];
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+
+    const cJSON *en = cJSON_GetObjectItem(root, "enabled");
+    const cJSON *vb = cJSON_GetObjectItem(root, "verbosity");
+    uint8_t verbosity = (cJSON_IsNumber(vb) && (int)vb->valuedouble == SDLOG_VERB_WARN)
+                        ? SDLOG_VERB_WARN : SDLOG_VERB_ALL;
+    if (cJSON_IsBool(en) && cJSON_IsTrue(en)) {
+        sdlog_enable(verbosity);
+    } else if (cJSON_IsBool(en) && cJSON_IsFalse(en)) {
+        sdlog_disable();
+    }
+    cJSON_Delete(root);
+
+    /* Echo the resulting state so the SPA can re-render without a 2nd GET. */
+    cJSON *resp = cJSON_CreateObject();
+    cJSON_AddBoolToObject(resp, "present", sdlog_card_present());
+    cJSON_AddBoolToObject(resp, "enabled", sdlog_is_enabled());
+    char *body = cJSON_PrintUnformatted(resp);
+    cJSON_Delete(resp);
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t e = httpd_resp_sendstr(req, body ? body : "{\"ok\":false}");
+    free(body);
+    return e;
+}
+
+/* GET /sdlog/list — [{name,size,mtime}], newest first. */
+static esp_err_t sdlog_list_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    const int MAXN = 160;
+    sdlog_file_info_t *files = malloc(sizeof(sdlog_file_info_t) * MAXN);
+    if (!files) { httpd_resp_send_500(req); return ESP_FAIL; }
+    int n = sdlog_list_files(files, MAXN);
+
+    cJSON *arr = cJSON_CreateArray();
+    for (int i = 0; i < n; i++) {
+        cJSON *e = cJSON_CreateObject();
+        cJSON_AddStringToObject(e, "name",  files[i].name);
+        cJSON_AddNumberToObject(e, "size",  files[i].size);
+        cJSON_AddNumberToObject(e, "mtime", files[i].mtime);
+        cJSON_AddItemToArray(arr, e);
+    }
+    free(files);
+
+    char *body = cJSON_PrintUnformatted(arr);
+    cJSON_Delete(arr);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+/* Pull a single query-string value into out (NUL-terminated). Returns
+ * ESP_OK only when the key was present. */
+static esp_err_t sdlog_query_str(httpd_req_t *req, const char *key,
+                                 char *out, size_t out_sz)
+{
+    out[0] = '\0';
+    size_t qlen = httpd_req_get_url_query_len(req) + 1;
+    if (qlen <= 1) return ESP_FAIL;
+    char *q = malloc(qlen);
+    if (!q) return ESP_FAIL;
+    esp_err_t err = ESP_FAIL;
+    if (httpd_req_get_url_query_str(req, q, qlen) == ESP_OK)
+        err = httpd_query_key_value(q, key, out, out_sz);
+    free(q);
+    return err;
+}
+
+/* Forward each file chunk straight into the HTTP response. */
+static esp_err_t sdlog_dl_chunk_cb(void *ctx, const char *buf, size_t len)
+{
+    httpd_req_t *req = ctx;
+    return (httpd_resp_send_chunk(req, buf, len) == ESP_OK) ? ESP_OK : ESP_FAIL;
+}
+
+/* GET /sdlog/download?file=NAME — streams the raw log file. */
+static esp_err_t sdlog_download_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char name[SDLOG_NAME_MAX];
+    if (sdlog_query_str(req, "file", name, sizeof name) != ESP_OK || !name[0]) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "file required");
+        return ESP_FAIL;
+    }
+
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    char disp[64];
+    snprintf(disp, sizeof disp, "attachment; filename=\"%s\"", name);
+    httpd_resp_set_hdr(req, "Content-Disposition", disp);
+
+    esp_err_t err = sdlog_read_file(name, sdlog_dl_chunk_cb, req);
+    if (err != ESP_OK) {
+        /* If nothing was streamed yet, a 404 is still valid; once chunks
+         * are in flight we can only cut the stream. */
+        if (err == ESP_ERR_NOT_FOUND || err == ESP_ERR_INVALID_ARG) {
+            httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "no such log file");
+            return ESP_FAIL;
+        }
+    }
+    httpd_resp_send_chunk(req, NULL, 0);   /* terminate chunked response */
+    return ESP_OK;
+}
+
+/* GET /sdlog/tail?file=NAME&n=N — last N lines as plain text. */
+static esp_err_t sdlog_tail_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    char name[SDLOG_NAME_MAX];
+    if (sdlog_query_str(req, "file", name, sizeof name) != ESP_OK || !name[0]) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "file required");
+        return ESP_FAIL;
+    }
+    char nbuf[8] = {0};
+    int n_lines = 100;
+    if (sdlog_query_str(req, "n", nbuf, sizeof nbuf) == ESP_OK) {
+        int v = atoi(nbuf);
+        if (v > 0 && v <= 1000) n_lines = v;
+    }
+
+    const size_t cap = 16 * 1024;
+    char *buf = malloc(cap);
+    if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
+    size_t out_len = 0;
+    esp_err_t err = sdlog_tail_file(name, n_lines, buf, cap, &out_len);
+    if (err != ESP_OK) {
+        free(buf);
+        httpd_resp_send_err(req, HTTPD_404_NOT_FOUND, "no such log file");
+        return ESP_FAIL;
+    }
+    httpd_resp_set_type(req, "text/plain; charset=utf-8");
+    err = httpd_resp_send(req, buf, out_len);
+    free(buf);
+    return err;
+}
+
+/* POST /api/sdlog/erase — delete every *.LOG file. */
+static esp_err_t sdlog_erase_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    esp_err_t err = sdlog_erase_all();
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, err == ESP_OK ? "{\"ok\":true}"
+                                                 : "{\"ok\":false}");
+}
+
+static const httpd_uri_t uri_sdlog_status_get = {
+    .uri = "/api/sdlog", .method = HTTP_GET, .handler = sdlog_status_get_handler,
+};
+static const httpd_uri_t uri_sdlog_status_post = {
+    .uri = "/api/sdlog", .method = HTTP_POST, .handler = sdlog_status_post_handler,
+};
+static const httpd_uri_t uri_sdlog_list = {
+    .uri = "/sdlog/list", .method = HTTP_GET, .handler = sdlog_list_handler,
+};
+static const httpd_uri_t uri_sdlog_download = {
+    .uri = "/sdlog/download", .method = HTTP_GET, .handler = sdlog_download_handler,
+};
+static const httpd_uri_t uri_sdlog_tail = {
+    .uri = "/sdlog/tail", .method = HTTP_GET, .handler = sdlog_tail_handler,
+};
+static const httpd_uri_t uri_sdlog_erase = {
+    .uri = "/api/sdlog/erase", .method = HTTP_POST, .handler = sdlog_erase_handler,
+};
+
 /* Wrapper with the URI-handler signature (no err code) so the same
  * redirect can be both a wildcard URI handler AND a 404 fallback.
  * Wildcard match avoids the "httpd_uri: URI ... not found" WARN
@@ -3984,7 +4198,7 @@ void web_ui_init(void)
      * instead of WebCrypto's ~100 ms. */
     httpd_config_t conf           = HTTPD_DEFAULT_CONFIG();
     conf.uri_match_fn             = httpd_uri_match_wildcard;
-    conf.max_uri_handlers         = 48;
+    conf.max_uri_handlers         = 56;
     conf.stack_size               = 12288;
     /* Without the mbedTLS context cost we can afford the bigger pool
      * the pre-HTTPS web server used. The SPA's first-paint opens 5-7
@@ -4045,6 +4259,12 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_auth_setup);
     httpd_register_uri_handler(server, &uri_auth_change_password);
     httpd_register_uri_handler(server, &uri_auth_clear_password);
+    httpd_register_uri_handler(server, &uri_sdlog_status_get);
+    httpd_register_uri_handler(server, &uri_sdlog_status_post);
+    httpd_register_uri_handler(server, &uri_sdlog_list);
+    httpd_register_uri_handler(server, &uri_sdlog_download);
+    httpd_register_uri_handler(server, &uri_sdlog_tail);
+    httpd_register_uri_handler(server, &uri_sdlog_erase);
     ESP_LOGI(TAG, "web UI listening on :%d (HTTP)", conf.server_port);
     /* HTTPS redirect server gone with HTTPS itself — direct HTTP-on-80
      * is now the only listener, so nothing to redirect anywhere. */
