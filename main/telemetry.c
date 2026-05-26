@@ -228,6 +228,12 @@ static esp_err_t do_send(const char *event_type)
         read_crash_sig(crash_sig, sizeof(crash_sig));
     }
 
+    /* Reboot cause beyond the coarse rr code (e.g. "ch-realign 11->1"),
+     * set in main.c at boot from NVS reboot_why; "" for untagged resets.
+     * Sent as "rw" so the dashboard can distinguish a deliberate channel
+     * realign from a generic SW reset. */
+    extern char g_reboot_why[];
+
     char body[640];
     int n;
     if (crash_sig[0]) {
@@ -241,6 +247,7 @@ static esp_err_t do_send(const char *event_type)
             "\"fc\":%u,"
             "\"up\":%llu,"
             "\"rr\":%d,"
+            "\"rw\":\"%s\","
             "\"ch\":\"%s\","
             "\"fh\":%u,"
             "\"ac\":%d,"
@@ -249,7 +256,7 @@ static esp_err_t do_send(const char *event_type)
             "}",
             s_state.device_hash, ver, build, event_type,
             (unsigned)s_state.boot_count, (unsigned)s_state.flash_count,
-            (unsigned long long)uptime_s, reset_reason_code(),
+            (unsigned long long)uptime_s, reset_reason_code(), g_reboot_why,
             chip_model_str(), (unsigned)free_heap, connect_count,
             tailscale_status_str(), crash_sig);
     } else {
@@ -263,6 +270,7 @@ static esp_err_t do_send(const char *event_type)
             "\"fc\":%u,"
             "\"up\":%llu,"
             "\"rr\":%d,"
+            "\"rw\":\"%s\","
             "\"ch\":\"%s\","
             "\"fh\":%u,"
             "\"ac\":%d,"
@@ -270,7 +278,7 @@ static esp_err_t do_send(const char *event_type)
             "}",
             s_state.device_hash, ver, build, event_type,
             (unsigned)s_state.boot_count, (unsigned)s_state.flash_count,
-            (unsigned long long)uptime_s, reset_reason_code(),
+            (unsigned long long)uptime_s, reset_reason_code(), g_reboot_why,
             chip_model_str(), (unsigned)free_heap, connect_count,
             tailscale_status_str());
     }
