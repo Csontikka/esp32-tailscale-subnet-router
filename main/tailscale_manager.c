@@ -15,6 +15,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "microlink.h"
+#include "sdlog.h"
 #include "tailscale_config.h"
 #include "nvs_params.h"
 #include "esp_sntp.h"
@@ -169,6 +170,10 @@ esp_err_t tailscale_connect(void)
         ESP_LOGE(TAG, "microlink_init failed");
         return ESP_FAIL;
     }
+
+    /* Hand the SD flight-recorder the handle so its SNAP line can sample
+     * task states + DERP heartbeat age — the wedge-catching signals. */
+    sdlog_set_microlink(s_microlink);
 
     esp_err_t err = microlink_start(s_microlink);
     if (err != ESP_OK) {
