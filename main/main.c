@@ -331,25 +331,62 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         s_net_retries = 0;   /* successful association — clear the rotation counter */
         ap_connect = 1;
 
-        /* Learn the STA's channel and persist it to NVS. wifi_init_softap
-         * on the next boot picks this up and brings the AP up on the same
-         * channel — keeps the single radio from time-sharing between
-         * AP and STA channels, which would tank throughput by 5-10x.
-         * In-place retune at runtime via esp_wifi_set_config(AP) tears
-         * the netif and breaks NAT hooks, so we only LEARN here and
-         * defer the actual channel change to the next reboot. */
+        /* Single radio: the AP must share the STA's channel or the radio
+         * time-shares between the two and throughput collapses 5-10x. The STA
+         * can roam to a different-channel uplink at any time (general-purpose
+         * device), and the AP may also have booted on a now-stale learned
+         * channel. We realign by REBOOTING, not by retuning the AP live:
+         *
+         *   A runtime esp_wifi_set_config(WIFI_IF_AP) DOES change the channel,
+         *   but it tears the AP's NAT/forwarding path — AP clients lose all
+         *   internet while the ESP itself stays online (verified 2026-05-26;
+         *   NAPT/netif state does not survive the async AP restart, and a
+         *   synchronous re-enable races the netif down/up). The boot path is
+         *   the only known-good way to bring the AP up on a given channel
+         *   WITH forwarding cleanly established, so we defer to it.
+         *
+         * A loop guard caps consecutive realign reboots (an uplink that flaps
+         * between channels every boot must not boot-loop) — after the cap we
+         * run degraded (throughput hit) rather than reboot again. The guard
+         * clears on any association where the channels already match. */
         wifi_ap_record_t ap_info;
         if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK
             && ap_info.primary >= 1 && ap_info.primary <= 13) {
+            /* Keep the learned channel current so the next boot aligns. */
             int32_t saved = 0;
             (void)nvs_param_get_int("ap_chan_learned", &saved);
             if (saved != (int32_t)ap_info.primary) {
-                if (nvs_param_set_int("ap_chan_learned", ap_info.primary) == ESP_OK) {
-                    ESP_LOGW(TAG_STA, "Learned STA channel %u — saved to NVS, applies on next boot",
-                             (unsigned)ap_info.primary);
+                (void)nvs_param_set_int("ap_chan_learned", ap_info.primary);
+            }
+            wifi_config_t ap_cfg;
+            bool mismatch = (esp_wifi_get_config(WIFI_IF_AP, &ap_cfg) == ESP_OK
+                             && ap_cfg.ap.channel != ap_info.primary);
+            if (!mismatch) {
+                /* Aligned — clear the realign loop guard. */
+                int32_t rc = 0;
+                if (nvs_param_get_int("ap_realign_cnt", &rc) == ESP_OK && rc != 0) {
+                    (void)nvs_param_set_int("ap_realign_cnt", 0);
+                }
+            } else {
+                int32_t rc = 0;
+                (void)nvs_param_get_int("ap_realign_cnt", &rc);
+                if (rc < 3) {
+                    (void)nvs_param_set_int("ap_realign_cnt", rc + 1);
+                    ESP_LOGW(TAG_AP, "STA ch%u != AP ch%u — realigning via reboot (#%ld, single radio)",
+                             (unsigned)ap_info.primary, (unsigned)ap_cfg.ap.channel, (long)(rc + 1));
+                    /* Persist the cause so the next boot can report WHY it
+                     * rebooted (esp_reset_reason only says "SW"), then flush
+                     * the SD recorder (bounded, best-effort) so the lines
+                     * above survive the restart instead of dying in the queue. */
+                    char why[28];
+                    snprintf(why, sizeof why, "ch-realign %u->%u",
+                             (unsigned)ap_cfg.ap.channel, (unsigned)ap_info.primary);
+                    (void)nvs_param_set_str("reboot_why", why);
+                    (void)sdlog_flush();   /* reboot regardless of the result */
+                    esp_restart();
                 } else {
-                    ESP_LOGW(TAG_STA, "Learned STA channel %u — NVS save failed",
-                             (unsigned)ap_info.primary);
+                    ESP_LOGW(TAG_AP, "STA ch%u != AP ch%u — gave up realign after %ld reboots, running degraded",
+                             (unsigned)ap_info.primary, (unsigned)ap_cfg.ap.channel, (long)rc);
                 }
             }
         }
@@ -602,6 +639,12 @@ void softap_set_dns_addr(esp_netif_t *esp_netif_ap,esp_netif_t *esp_netif_sta)
     }
 }
 
+/* Why the last reboot happened, beyond esp_reset_reason()'s coarse code.
+ * Set in NVS ("reboot_why") just before a deliberate esp_restart(), then read
+ * + cleared once at boot into here so the web status and SD log can report it
+ * (e.g. "ch-realign 11->1"). Empty when the reset wasn't one we tagged. */
+char g_reboot_why[32] = {0};
+
 void app_main(void)
 {
     ESP_ERROR_CHECK(esp_netif_init());
@@ -710,6 +753,20 @@ void app_main(void)
      * vprintf hook chain stays sdlog -> syslog -> UART. Stays dark with no
      * crash when no card is present. */
     sdlog_init();
+
+    /* Report why the previous boot rebooted (set in NVS before our deliberate
+     * esp_restart paths — e.g. channel realign). Read AFTER sdlog_init so the
+     * line lands in the SD flight recorder; cache for the web status; clear so
+     * it's one-shot (a later untagged SW reset then shows a plain reason). */
+    {
+        char *why = nvs_param_get_str("reboot_why");
+        if (why && why[0]) {
+            strlcpy(g_reboot_why, why, sizeof g_reboot_why);
+            ESP_LOGW("boot", "previous reboot cause: %s", g_reboot_why);
+            (void)nvs_param_set_str("reboot_why", "");
+        }
+        free(why);
+    }
 
     /* Remote TCP REPL on a configurable port (default 2323). Starts the
      * listener only when previously enabled in NVS — disabled by default

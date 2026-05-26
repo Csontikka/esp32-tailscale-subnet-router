@@ -123,27 +123,40 @@ static const char *reset_reason_str(void)
      * guards gone, the chip's actual cause shows through. */
     esp_reset_reason_t r = esp_reset_reason();
     static char unk[16];
+    const char *base;
     switch (r) {
-        case ESP_RST_POWERON:    return "POWERON";
-        case ESP_RST_EXT:        return "EXT";
-        case ESP_RST_SW:         return "SW";
-        case ESP_RST_PANIC:      return "PANIC";
-        case ESP_RST_INT_WDT:    return "INT_WDT";
-        case ESP_RST_TASK_WDT:   return "TASK_WDT";
-        case ESP_RST_WDT:        return "WDT";
-        case ESP_RST_DEEPSLEEP:  return "DEEPSLEEP";
-        case ESP_RST_BROWNOUT:   return "BROWNOUT";
-        case ESP_RST_SDIO:       return "SDIO";
-        case ESP_RST_USB:        return "USB";
-        case ESP_RST_JTAG:       return "JTAG";
-        case ESP_RST_EFUSE:      return "EFUSE";
-        case ESP_RST_PWR_GLITCH: return "PWR_GLITCH";
-        case ESP_RST_CPU_LOCKUP: return "CPU_LOCKUP";
+        case ESP_RST_POWERON:    base = "POWERON";    break;
+        case ESP_RST_EXT:        base = "EXT";        break;
+        case ESP_RST_SW:         base = "SW";         break;
+        case ESP_RST_PANIC:      base = "PANIC";      break;
+        case ESP_RST_INT_WDT:    base = "INT_WDT";    break;
+        case ESP_RST_TASK_WDT:   base = "TASK_WDT";   break;
+        case ESP_RST_WDT:        base = "WDT";        break;
+        case ESP_RST_DEEPSLEEP:  base = "DEEPSLEEP";  break;
+        case ESP_RST_BROWNOUT:   base = "BROWNOUT";   break;
+        case ESP_RST_SDIO:       base = "SDIO";       break;
+        case ESP_RST_USB:        base = "USB";        break;
+        case ESP_RST_JTAG:       base = "JTAG";       break;
+        case ESP_RST_EFUSE:      base = "EFUSE";      break;
+        case ESP_RST_PWR_GLITCH: base = "PWR_GLITCH"; break;
+        case ESP_RST_CPU_LOCKUP: base = "CPU_LOCKUP"; break;
         default:
             /* Surface the raw enum code so future IDF additions show up. */
             snprintf(unk, sizeof unk, "RAW_%d", (int)r);
-            return unk;
+            base = unk;
+            break;
     }
+    /* Append the software cause we tagged just before a deliberate
+     * esp_restart() (e.g. "ch-realign 11->1") so the coarse hardware reason
+     * (usually "SW") becomes actionable. g_reboot_why is read+cached once at
+     * boot in main.c and is empty for resets we didn't tag. */
+    extern char g_reboot_why[];
+    if (g_reboot_why[0]) {
+        static char combined[80];
+        snprintf(combined, sizeof combined, "%s (%s)", base, g_reboot_why);
+        return combined;
+    }
+    return base;
 }
 
 /* Live CPU-load percentage from the FreeRTOS runtime-stats counters.
@@ -2936,6 +2949,9 @@ static void delayed_restart_task(void *arg)
     /* Give the HTTP response a moment to flush + the TCP socket to close
      * cleanly before we yank the power. */
     vTaskDelay(pdMS_TO_TICKS(1000));
+    /* Persist the SD flight-recorder tail before the restart (bounded /
+     * best-effort — never blocks the reboot if the card stalls). */
+    sdlog_flush();
     esp_restart();
 }
 
