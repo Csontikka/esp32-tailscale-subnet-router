@@ -104,6 +104,10 @@
 #define SDLOG_SNAP_PERIOD_MS         10000
 #define SDLOG_SNAP_ANOMALY_PERIOD_MS 1000
 #define SDLOG_DERP_HB_ANOMALY_S      15
+/* coord_age anomaly: a healthy long-poll resets ctrl_last_rx every ~5 s
+ * (our PING → server PONG). 30 s of server silence = 6 missed round-trips,
+ * the silent control-plane wedge — tighten SNAP cadence to catch the climb. */
+#define SDLOG_CTRL_RX_ANOMALY_S      30
 
 static const char *TAG = "sdlog";
 
@@ -383,7 +387,7 @@ static const char *ml_state_str(int s)
 
 /* Format + fwrite one SNAP line. Caller holds s_file_mutex, s_fp is valid,
  * and tl_in_sdlog is set. now_ms/hb_age_s are precomputed by the caller. */
-static void emit_snap(uint64_t now_ms, uint32_t hb_age_s)
+static void emit_snap(uint64_t now_ms, uint32_t hb_age_s, uint32_t coord_age_s)
 {
     uint32_t up = (uint32_t)(now_ms / 1000);
     uint32_t heap_int = esp_get_free_heap_size();
@@ -410,11 +414,11 @@ static void emit_snap(uint64_t now_ms, uint32_t hb_age_s)
     char line[256];
     int n = snprintf(line, sizeof line,
         "SNAP up=%us heap=%u/%uk min=%uk | coord=%c derp=%c wg=%c netio=%c | "
-        "derp_hb_age=%us ml=%s peers=%d/%d | dropped=%u\n",
+        "derp_hb_age=%us coord_age=%us ml=%s peers=%d/%d | dropped=%u\n",
         (unsigned)up, (unsigned)heap_int, (unsigned)(heap_spi / 1024),
         (unsigned)(heap_min / 1024),
         coord, derp, wg, netio,
-        (unsigned)hb_age_s, ml_state_str(ml_st), online, peers,
+        (unsigned)hb_age_s, (unsigned)coord_age_s, ml_state_str(ml_st), online, peers,
         (unsigned)atomic_load(&s_dropped));
     if (n > 0) {
         if (n > (int)sizeof line) n = sizeof line;
@@ -479,11 +483,18 @@ static void writer_task(void *arg)
         uint64_t now_ms = (uint64_t)(now / 1000);
         uint64_t hb = s_ml ? microlink_get_last_derp_heartbeat_ms(s_ml) : 0;
         uint32_t hb_age = (hb && now_ms > hb) ? (uint32_t)((now_ms - hb) / 1000) : 0;
-        int64_t snap_iv_us = (hb_age > SDLOG_DERP_HB_ANOMALY_S)
+        /* coord_age: seconds since the control plane last sent us a frame.
+         * Climbs during the silent wedge even though derp_hb_age stays 0 and
+         * microlink still reports CONNECTED — the divergence is the signature. */
+        uint64_t cr = s_ml ? microlink_get_ctrl_last_rx_ms(s_ml) : 0;
+        uint32_t coord_age = (cr && now_ms > cr) ? (uint32_t)((now_ms - cr) / 1000) : 0;
+        bool anomaly = (hb_age > SDLOG_DERP_HB_ANOMALY_S) ||
+                       (coord_age > SDLOG_CTRL_RX_ANOMALY_S);
+        int64_t snap_iv_us = anomaly
                            ? (int64_t)SDLOG_SNAP_ANOMALY_PERIOD_MS * 1000
                            : (int64_t)SDLOG_SNAP_PERIOD_MS * 1000;
         if (s_fp && (now - last_snap_us) >= snap_iv_us) {
-            emit_snap(now_ms, hb_age);
+            emit_snap(now_ms, hb_age, coord_age);
             last_snap_us = now;
             dirty = true;
         }

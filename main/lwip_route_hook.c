@@ -282,14 +282,51 @@ void lwip_route_hook_init(void)
 extern struct netif *__real_ip4_route_src_hook(const ip4_addr_t *src,
                                                  const ip4_addr_t *dest);
 
+/* Diagnostic log throttle for the route hook. The hook is on the hot
+ * forwarding path (every IP packet routed through the ESP), so any
+ * unconditional log would flood the UART. 100 ms cap = max 10 log
+ * lines/sec across all decision branches. Per-branch granularity isn't
+ * needed for the current upload-stall investigation — we only want to
+ * see whether the AP→phone-upload SYN burst lands on the WG netif
+ * (suspected) or STA (expected). */
+static uint32_t s_route_log_last_ms = 0;
+
+/* Per-packet route-hook tracing is OFF by default: on a busy tunnel it was
+ * ~5 lines/s (the dominant share of the WARN volume on the SD recorder) and
+ * it carries no control-plane-wedge signal — it only confirms a packet
+ * routed, which the data plane already proves. Flip it back on at runtime
+ * (no rebuild) with lwip_route_hook_set_verbose(true) for a routing debug
+ * session; nothing is lost, the trace just stays quiet until asked for. */
+static volatile bool s_route_log_enabled = false;
+
+void lwip_route_hook_set_verbose(bool enabled)
+{
+    s_route_log_enabled = enabled;
+}
+
+static inline bool should_log_route_hook(void)
+{
+    if (!s_route_log_enabled) return false;
+    uint32_t now = esp_log_timestamp();
+    if (now - s_route_log_last_ms < 100) return false;
+    s_route_log_last_ms = now;
+    return true;
+}
+
 struct netif *__wrap_ip4_route_src_hook(const ip4_addr_t *src,
                                           const ip4_addr_t *dest)
 {
     if (dest == NULL) return NULL;
     uint32_t dst_hbo = lwip_ntohl(dest->addr);
+    uint32_t src_hbo = (src != NULL) ? lwip_ntohl(src->addr) : 0;
 
     /* 1. Tailnet CGNAT — always WG. */
     if (ip_in_cgnat(dst_hbo)) {
+        if (should_log_route_hook()) {
+            ESP_LOGW(TAG, "[ROUTE_HOOK] CGNAT src=%lu.%lu.%lu.%lu dst=%lu.%lu.%lu.%lu -> wg",
+                     (src_hbo>>24)&0xFF, (src_hbo>>16)&0xFF, (src_hbo>>8)&0xFF, src_hbo&0xFF,
+                     (dst_hbo>>24)&0xFF, (dst_hbo>>16)&0xFF, (dst_hbo>>8)&0xFF, dst_hbo&0xFF);
+        }
         return find_wg_netif();
     }
 
@@ -319,6 +356,14 @@ struct netif *__wrap_ip4_route_src_hook(const ip4_addr_t *src,
                                              : (0xFFFFFFFFUL << (32 - plen));
                 if ((dst_hbo & mask) ==
                     (tailscale_accepted_routes[i].network & mask)) {
+                    if (should_log_route_hook()) {
+                        uint32_t net = tailscale_accepted_routes[i].network;
+                        ESP_LOGW(TAG, "[ROUTE_HOOK] ACCEPT_ROUTE src=%lu.%lu.%lu.%lu "
+                                 "dst=%lu.%lu.%lu.%lu match=%lu.%lu.%lu.%lu/%u -> wg",
+                                 (src_hbo>>24)&0xFF, (src_hbo>>16)&0xFF, (src_hbo>>8)&0xFF, src_hbo&0xFF,
+                                 (dst_hbo>>24)&0xFF, (dst_hbo>>16)&0xFF, (dst_hbo>>8)&0xFF, dst_hbo&0xFF,
+                                 (net>>24)&0xFF, (net>>16)&0xFF, (net>>8)&0xFF, net&0xFF, plen);
+                    }
                     return find_wg_netif();
                 }
             }
@@ -354,6 +399,13 @@ struct netif *__wrap_ip4_route_src_hook(const ip4_addr_t *src,
              * 192.168.4.0/16 and redirect the AP-bound traffic to STA — a
              * silent black-hole. */
             if ((dest->addr & mask->addr) == (addr->addr & mask->addr)) {
+                if (should_log_route_hook()) {
+                    ESP_LOGW(TAG, "[ROUTE_HOOK] LAN_SUBNET src=%lu.%lu.%lu.%lu "
+                             "dst=%lu.%lu.%lu.%lu -> %c%c%u",
+                             (src_hbo>>24)&0xFF, (src_hbo>>16)&0xFF, (src_hbo>>8)&0xFF, src_hbo&0xFF,
+                             (dst_hbo>>24)&0xFF, (dst_hbo>>16)&0xFF, (dst_hbo>>8)&0xFF, dst_hbo&0xFF,
+                             n->name[0], n->name[1], n->num);
+                }
                 return n;
             }
             /* Remember the first non-wg, non-AP netif for the RFC1918
@@ -371,6 +423,13 @@ struct netif *__wrap_ip4_route_src_hook(const ip4_addr_t *src,
                           ((dst_hbo & 0xFFF00000UL) == 0xAC100000UL) ||  /* 172.16.0.0/12 */
                           ((dst_hbo & 0xFFFF0000UL) == 0xC0A80000UL);    /* 192.168.0.0/16 */
         if (is_private && sta_match != NULL) {
+            if (should_log_route_hook()) {
+                ESP_LOGW(TAG, "[ROUTE_HOOK] LAN_RFC1918 src=%lu.%lu.%lu.%lu "
+                         "dst=%lu.%lu.%lu.%lu -> %c%c%u",
+                         (src_hbo>>24)&0xFF, (src_hbo>>16)&0xFF, (src_hbo>>8)&0xFF, src_hbo&0xFF,
+                         (dst_hbo>>24)&0xFF, (dst_hbo>>16)&0xFF, (dst_hbo>>8)&0xFF, dst_hbo&0xFF,
+                         sta_match->name[0], sta_match->name[1], sta_match->num);
+            }
             return sta_match;
         }
     }
@@ -407,6 +466,13 @@ struct netif *__wrap_ip4_route_src_hook(const ip4_addr_t *src,
                 extern struct netif *netif_list;
                 for (struct netif *n = netif_list; n; n = n->next) {
                     if (netif_is_sta(n) && netif_is_up(n) && netif_is_link_up(n)) {
+                        if (should_log_route_hook()) {
+                            ESP_LOGW(TAG, "[ROUTE_HOOK] SELF_PUBLIC src=%lu.%lu.%lu.%lu "
+                                     "dst=%lu.%lu.%lu.%lu -> %c%c%u",
+                                     (src_hbo>>24)&0xFF, (src_hbo>>16)&0xFF, (src_hbo>>8)&0xFF, src_hbo&0xFF,
+                                     (dst_hbo>>24)&0xFF, (dst_hbo>>16)&0xFF, (dst_hbo>>8)&0xFF, dst_hbo&0xFF,
+                                     n->name[0], n->name[1], n->num);
+                        }
                         return n;
                     }
                 }
@@ -417,7 +483,15 @@ struct netif *__wrap_ip4_route_src_hook(const ip4_addr_t *src,
              * which would land on STA (because esp_netif keeps
              * netif_default pinned to STA across DHCP renews). */
             struct netif *wg = find_wg_netif();
-            if (wg && netif_is_up(wg)) return wg;
+            if (wg && netif_is_up(wg)) {
+                if (should_log_route_hook()) {
+                    ESP_LOGW(TAG, "[ROUTE_HOOK] FWD_PUBLIC src=%lu.%lu.%lu.%lu "
+                             "dst=%lu.%lu.%lu.%lu -> wg",
+                             (src_hbo>>24)&0xFF, (src_hbo>>16)&0xFF, (src_hbo>>8)&0xFF, src_hbo&0xFF,
+                             (dst_hbo>>24)&0xFF, (dst_hbo>>16)&0xFF, (dst_hbo>>8)&0xFF, dst_hbo&0xFF);
+                }
+                return wg;
+            }
         }
     }
 

@@ -1,6 +1,8 @@
 /* Phase 1.5e exit-node default-route supervisor. */
 #pragma once
 
+#include <stdbool.h>
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -9,6 +11,11 @@ extern "C" {
  * upstream interface (STA) and the WireGuard netif depending on
  * `tailscale_exit_node_ip`. Idempotent; safe to call more than once. */
 void lwip_route_hook_init(void);
+
+/* Enable/disable the per-packet [ROUTE_HOOK] WARN trace at runtime. OFF at
+ * boot — it's high-volume and carries no wedge signal. Turn it on only for a
+ * routing debug session; throttled to ~10 lines/s when enabled. */
+void lwip_route_hook_set_verbose(bool enabled);
 
 /* Run a destination through the real hook decision tree and write a
  * human-readable explanation into `out`. Same code paths as the live
