@@ -3519,6 +3519,24 @@ static esp_err_t system_diag_handler(httpd_req_t *req)
         cJSON_AddItemToObject(root, "system", s);
     }
 
+    /* --- D2) DNS relay + SPIRAM response cache --------------------------- */
+    {
+        dns_relay_stats_t ds;
+        dns_relay_get_stats(&ds);
+        cJSON *dc = cJSON_CreateObject();
+        cJSON_AddBoolToObject  (dc, "enabled",   ds.enabled);
+        cJSON_AddBoolToObject  (dc, "healthy",   ds.healthy);
+        cJSON_AddNumberToObject(dc, "queries",   ds.queries);
+        cJSON_AddNumberToObject(dc, "hits",      ds.hits);
+        cJSON_AddNumberToObject(dc, "misses",    ds.misses);
+        cJSON_AddNumberToObject(dc, "hit_pct",   ds.hit_pct);
+        cJSON_AddNumberToObject(dc, "entries",   ds.entries);
+        cJSON_AddNumberToObject(dc, "capacity",  ds.capacity);
+        cJSON_AddNumberToObject(dc, "evictions", ds.evictions);
+        cJSON_AddNumberToObject(dc, "cache_bytes", ds.cache_bytes);
+        cJSON_AddItemToObject(root, "dns_cache", dc);
+    }
+
     /* --- E) FreeRTOS task list ------------------------------------------- */
     {
         UBaseType_t n = uxTaskGetNumberOfTasks();
