@@ -45,7 +45,13 @@ CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 # low-water to ~22K; lowering this back to 4096 funds the relay from the 8MB
 # SPIRAM instead of the scarce internal heap. (SPIRAM heap is flash-cache-safe;
 # only PSRAM *task stacks* are not — those we keep internal.)
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+# 2026-05-27: lowered 4096→2048. With TCP_WND/SND_BUF raised to 32768, a phone
+# exit-node speedtest burst drove internal low-water to ~6K (the 32K DMA reserve
+# was being breached by small ≤4096-byte NON-DMA allocations that this threshold
+# forces internal). 2048 pushes the 2-4KB band to PSRAM too, leaving the DMA
+# reserve intact; DMA still bypasses via MALLOC_CAP_DMA. Allocations <2048 stay
+# internal. Watch SNAP idram low-water after flashing.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=2048
 
 # --- Main task: more stack than the default 3584 ----------------------------
 # Several boot-time init paths (microlink_init, http_server start, NAPT
@@ -119,9 +125,24 @@ CONFIG_LWIP_MAX_SOCKETS=24
 # drops, taking the upload SYN(+retx) with it — phone declares the
 # upload phase failed. 24 leaves headroom (+~12KB internal heap) for
 # co-arriving control traffic. BA_WIN=32 constraint still satisfied
-# (≤2*24=48). TCP_WND / TCP_SND_BUF stay default for now.
+# (≤2*24=48).
 CONFIG_ESP_WIFI_RX_BA_WIN=32
 CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=24
+
+# 2026-05-27: TCP window/send-buffer raised 5760→32768. The DERP relay is a
+# SINGLE TLS-over-TCP connection carrying ALL relayed (exit-node) traffic, so
+# its throughput is window/RTT-bound. At 5760 B (4×MSS) the mbedtls_ssl_write
+# buffer filled within ~4 packets and stayed full, the DERP I/O task's WANT_WRITE
+# retry budget (1 s) expired, and it tore down + reconnected the whole TLS link —
+# observed as bursts of "DERP output cb: not connected" drops and exit-node
+# speedtests collapsing to ~0.01-0.08 Mbit. 32768 (≈22×MSS) lifts the single-
+# connection cap to multi-Mbit at the DERP server RTT. SAFE now that
+# SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y spills lwIP pbufs to PSRAM — the earlier
+# attempt at large windows collapsed on PBUF_RAM (internal) exhaustion, which
+# predates the SPIRAM spill. Watch SNAP idram after flashing; raise toward
+# 64800 (16-bit max, no WND_SCALE) only if still window-limited.
+CONFIG_LWIP_TCP_SND_BUF_DEFAULT=32768
+CONFIG_LWIP_TCP_WND_DEFAULT=32768
 
 # --- Flash mode — back to DIO after a QIO regression on this board ---------
 # Tried CONFIG_ESPTOOLPY_FLASHMODE_QIO=y for the 2× code-fetch win, the
