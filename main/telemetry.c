@@ -32,7 +32,9 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"   /* xTaskCreateWithCaps — PSRAM stack */
 #include "freertos/semphr.h"
+#include "esp_heap_caps.h"            /* MALLOC_CAP_SPIRAM */
 
 #include "nvs_params.h"
 #include "tailscale_config.h"
@@ -464,7 +466,9 @@ void telemetry_init(void)
     if (!s_sem) s_sem = xSemaphoreCreateBinary();
 
     /* 8 KB stack: mbedtls TLS handshake allocates a few KB transiently. */
-    xTaskCreate(sender_task, "telemetry", 8192, NULL, 3, &s_task);
+    /* Stack in PSRAM (TCB stays internal) — sender_task only does HTTPS/NVS-read,
+     * never SPI-flash writes; XIP keeps the cache live during flash ops. ~8K. */
+    xTaskCreateWithCaps(sender_task, "telemetry", 8192, NULL, 3, &s_task, MALLOC_CAP_SPIRAM);
 }
 
 telemetry_state_t telemetry_get_state(void)
