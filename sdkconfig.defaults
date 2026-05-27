@@ -18,6 +18,16 @@ CONFIG_SPIRAM_MODE_OCT=y
 CONFIG_SPIRAM_SPEED_80M=y
 CONFIG_SPIRAM_BOOT_HW_INIT=y
 
+# Execute-in-place from PSRAM: copy .text/.rodata to PSRAM at boot. Frees IRAM,
+# and — critically — keeps the cache LIVE during SPI1 flash ops (OTA/NVS), which
+# removes the flash-cache-disable crash hazard for code/data in PSRAM. That is
+# what makes PSRAM task stacks safe (see the dns_relay/telemetry workers, which
+# use xTaskCreateWithCaps(..., MALLOC_CAP_SPIRAM) to move ~21K of stacks off the
+# scarce internal DRAM). Costs ~1.4MB PSRAM (we have 8MB) + slightly longer boot.
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
+CONFIG_SPIRAM_FETCH_INSTRUCTIONS=y
+CONFIG_SPIRAM_RODATA=y
+
 # Let WiFi & lwIP buffers spill to SPIRAM under internal-heap pressure.
 # Without this, the tail end of a WG TX burst hits pbuf_alloc(PBUF_RAM)
 # failures (ERR_MEM, -1) on the magicsock path while there's 8 MB of

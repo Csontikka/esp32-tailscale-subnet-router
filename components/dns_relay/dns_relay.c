@@ -23,6 +23,7 @@
 
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"   /* xTaskCreateWithCaps — PSRAM stacks */
 #include "freertos/queue.h"
 #include "freertos/semphr.h"
 #include "lwip/sockets.h"
@@ -274,7 +275,7 @@ static void worker_task(void *arg)
     int up = -1;
     uint8_t *rbuf = heap_caps_malloc(DNS_RELAY_BUF_SIZE, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!rbuf) rbuf = malloc(DNS_RELAY_BUF_SIZE);   /* SPIRAM preferred; fall back to internal */
-    if (!rbuf) { ESP_LOGE(TAG, "worker rbuf alloc failed"); vTaskDelete(NULL); return; }
+    if (!rbuf) { ESP_LOGE(TAG, "worker rbuf alloc failed"); vTaskDeleteWithCaps(NULL); return; }
 
     for (;;) {
         dns_work_t *w = NULL;
@@ -455,11 +456,14 @@ void dns_relay_init(void)
     s_workq     = xQueueCreate(DNS_WORK_QUEUE_DEPTH, sizeof(dns_work_t *));
     if (!s_workq) { ESP_LOGE(TAG, "work queue alloc failed"); return; }
 
-    xTaskCreate(listener_task, "dns_relay", DNS_LISTENER_STACK, NULL,
-                DNS_RELAY_TASK_PRIO, &s_listener);
+    /* Stacks in PSRAM (TCB stays internal): these tasks never touch SPI flash,
+     * and XIP_FROM_PSRAM keeps the cache live during flash ops, so PSRAM stacks
+     * are safe here. Frees ~13K internal DRAM for the WiFi DMA pools. */
+    xTaskCreateWithCaps(listener_task, "dns_relay", DNS_LISTENER_STACK, NULL,
+                        DNS_RELAY_TASK_PRIO, &s_listener, MALLOC_CAP_SPIRAM);
     for (int i = 0; i < DNS_WORKER_COUNT; i++) {
-        xTaskCreate(worker_task, "dns_worker", DNS_WORKER_STACK, NULL,
-                    DNS_RELAY_TASK_PRIO, NULL);
+        xTaskCreateWithCaps(worker_task, "dns_worker", DNS_WORKER_STACK, NULL,
+                            DNS_RELAY_TASK_PRIO, NULL, MALLOC_CAP_SPIRAM);
     }
 }
 
