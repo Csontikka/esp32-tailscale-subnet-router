@@ -25,14 +25,17 @@ CONFIG_SPIRAM_BOOT_HW_INIT=y
 # in ml_wg_mgr.c the per-packet drop rate dropped from ~5.7/s to ~0/s.
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
-# Generic-malloc internal/SPIRAM threshold. Left at the IDF default 16384
-# (everything <16K stays internal). 2026-05-27: briefly lowered to 4096 to
-# push 4-16K allocations (HTTP/JSON/medium buffers) to SPIRAM and free
-# internal DRAM, but reverted — it was bundled with the CACHE_TX=96 change
-# that caused the phone-forwarding download regression, and the freed DRAM
-# was not needed once CACHE_TX dropped back to 32. RESERVE_INTERNAL=32768
-# keeps the DMA headroom regardless.
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
+# Generic-malloc internal/SPIRAM threshold. 4096 = allocations >4K go to
+# SPIRAM, freeing internal DRAM (idle ~57K->69K). This is SAFE and orthogonal
+# to throughput: it does NOT touch the download path (that was CACHE_TX queue
+# depth, fixed separately) and does NOT affect DMA (DMA/WiFi-TX use
+# MALLOC_CAP_DMA explicitly and bypass this threshold; RESERVE_INTERNAL=32768
+# keeps the DMA pool). 2026-05-27: needed once the DNS relay/forwarder was
+# enabled — the relay's worker tasks + per-query allocations pushed internal
+# low-water to ~22K; lowering this back to 4096 funds the relay from the 8MB
+# SPIRAM instead of the scarce internal heap. (SPIRAM heap is flash-cache-safe;
+# only PSRAM *task stacks* are not — those we keep internal.)
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
 
 # --- Main task: more stack than the default 3584 ----------------------------
 # Several boot-time init paths (microlink_init, http_server start, NAPT
