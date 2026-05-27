@@ -13,6 +13,10 @@
 #include "esp_system.h"
 #include "esp_heap_caps.h"
 #include "esp_app_desc.h"
+#include "esp_http_client.h"
+#include "esp_crt_bundle.h"
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "cJSON.h"
 #include "lwip/ip4_addr.h"
 #include "web_ui.h"
@@ -1387,6 +1391,171 @@ static const httpd_uri_t uri_tools_ping = {
 };
 static const httpd_uri_t uri_tools_trace = {
     .uri = "/api/tools/trace", .method = HTTP_GET, .handler = tools_trace_handler,
+};
+
+/* ─────────────────── On-device throughput test ───────────────────
+ * Rough 1 MB download / upload against Cloudflare's speed endpoints, run
+ * from the ESP itself (its own STA path — the route hook sends self-origin
+ * traffic out via STA, bypassing any exit-node tunnel), so an upstream
+ * slowdown can be confirmed independently of any AP client. One transient
+ * task at a time; the body is streamed/discarded so the RAM cost is one
+ * SPIRAM chunk + the task stack, and only while it runs. Cancellable. */
+#define NETTEST_BYTES    (1024u * 1024u)
+#define NETTEST_CHUNK    4096
+#define NETTEST_DOWN_URL "https://speed.cloudflare.com/__down?bytes=1048576"
+#define NETTEST_UP_URL   "https://speed.cloudflare.com/__up"
+
+typedef enum { NT_IDLE = 0, NT_RUNNING, NT_DONE, NT_CANCELLED, NT_ERROR } nt_state_t;
+static volatile nt_state_t s_nt_state  = NT_IDLE;
+static volatile bool       s_nt_cancel = false;
+static char     s_nt_dir[6]  = "";
+static uint32_t s_nt_bytes   = 0;
+static uint32_t s_nt_ms      = 0;       /* data-phase ms (TLS/headers excluded) */
+static char     s_nt_err[48] = "";
+static TaskHandle_t s_nt_task = NULL;
+
+static const char *nt_state_str(nt_state_t s)
+{
+    switch (s) {
+        case NT_RUNNING:   return "running";
+        case NT_DONE:      return "done";
+        case NT_CANCELLED: return "cancelled";
+        case NT_ERROR:     return "error";
+        default:           return "idle";
+    }
+}
+
+static void nettest_task(void *arg)
+{
+    bool up = ((intptr_t)arg) != 0;
+    char *buf = heap_caps_malloc(NETTEST_CHUNK, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    if (!buf) {
+        strlcpy(s_nt_err, "no memory", sizeof s_nt_err);
+        s_nt_state = NT_ERROR; s_nt_task = NULL; vTaskDelete(NULL); return;
+    }
+
+    esp_http_client_config_t cfg = {
+        .url               = up ? NETTEST_UP_URL : NETTEST_DOWN_URL,
+        .method            = up ? HTTP_METHOD_POST : HTTP_METHOD_GET,
+        .timeout_ms        = 5000,
+        .crt_bundle_attach = esp_crt_bundle_attach,
+    };
+    esp_http_client_handle_t cl = esp_http_client_init(&cfg);
+    if (!cl) {
+        strlcpy(s_nt_err, "client init failed", sizeof s_nt_err);
+        s_nt_state = NT_ERROR;
+        heap_caps_free(buf); s_nt_task = NULL; vTaskDelete(NULL); return;
+    }
+
+    uint32_t total = 0;
+    bool opened = false;
+    if (up) {
+        memset(buf, 'x', NETTEST_CHUNK);
+        if (esp_http_client_open(cl, NETTEST_BYTES) == ESP_OK) {
+            opened = true;
+            int64_t t0 = esp_timer_get_time();
+            while (total < NETTEST_BYTES && !s_nt_cancel) {
+                int n = (NETTEST_BYTES - total) < (uint32_t)NETTEST_CHUNK
+                        ? (int)(NETTEST_BYTES - total) : NETTEST_CHUNK;
+                int w = esp_http_client_write(cl, buf, n);
+                if (w <= 0) break;
+                total += w;
+            }
+            (void)esp_http_client_fetch_headers(cl);   /* complete the request */
+            s_nt_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
+        }
+    } else {
+        if (esp_http_client_open(cl, 0) == ESP_OK) {
+            opened = true;
+            (void)esp_http_client_fetch_headers(cl);   /* TLS + headers BEFORE timing */
+            int64_t t0 = esp_timer_get_time();
+            for (;;) {
+                if (s_nt_cancel) break;
+                int r = esp_http_client_read(cl, buf, NETTEST_CHUNK);
+                if (r <= 0) break;
+                total += r;
+            }
+            s_nt_ms = (uint32_t)((esp_timer_get_time() - t0) / 1000);
+        }
+    }
+
+    s_nt_bytes = total;
+    if (!opened) {
+        if (!s_nt_err[0]) strlcpy(s_nt_err, "connect failed", sizeof s_nt_err);
+        s_nt_state = NT_ERROR;
+    } else if (s_nt_cancel) {
+        s_nt_state = NT_CANCELLED;
+    } else if (total >= NETTEST_BYTES) {
+        s_nt_state = NT_DONE;
+    } else {
+        strlcpy(s_nt_err, "transfer incomplete", sizeof s_nt_err);
+        s_nt_state = NT_ERROR;
+    }
+
+    esp_http_client_close(cl);
+    esp_http_client_cleanup(cl);
+    heap_caps_free(buf);
+    s_nt_task = NULL;
+    vTaskDelete(NULL);
+}
+
+static esp_err_t tools_nettest_get_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    uint32_t bytes = s_nt_bytes, ms = s_nt_ms;
+    uint32_t kbps  = (ms > 0) ? (uint32_t)(((uint64_t)bytes * 8) / ms) : 0;  /* bytes*8/ms = kbit/s */
+    cJSON *r = cJSON_CreateObject();
+    cJSON_AddStringToObject(r, "state", nt_state_str(s_nt_state));
+    cJSON_AddStringToObject(r, "dir",   s_nt_dir);
+    cJSON_AddNumberToObject(r, "bytes", bytes);
+    cJSON_AddNumberToObject(r, "ms",    ms);
+    cJSON_AddNumberToObject(r, "kbps",  kbps);
+    if (s_nt_err[0]) cJSON_AddStringToObject(r, "err", s_nt_err);
+    char *body = cJSON_PrintUnformatted(r);
+    cJSON_Delete(r);
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t e = httpd_resp_sendstr(req, body ? body : "{}");
+    free(body);
+    return e;
+}
+
+static esp_err_t tools_nettest_post_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    char q[40], v[8];
+    bool cancel = false, up = false;
+    if (httpd_req_get_url_query_str(req, q, sizeof q) == ESP_OK) {
+        if (httpd_query_key_value(q, "cancel", v, sizeof v) == ESP_OK) cancel = true;
+        if (httpd_query_key_value(q, "dir", v, sizeof v) == ESP_OK && strcmp(v, "up") == 0) up = true;
+    }
+    httpd_resp_set_type(req, "application/json");
+    if (cancel) {
+        if (s_nt_state == NT_RUNNING) s_nt_cancel = true;
+        return httpd_resp_sendstr(req, "{\"ok\":true,\"cancelling\":true}");
+    }
+    if (s_nt_state == NT_RUNNING) {
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"err\":\"busy\"}");
+    }
+    s_nt_cancel = false;
+    s_nt_bytes  = 0;
+    s_nt_ms     = 0;
+    s_nt_err[0] = '\0';
+    strlcpy(s_nt_dir, up ? "up" : "down", sizeof s_nt_dir);
+    s_nt_state  = NT_RUNNING;
+    if (xTaskCreate(nettest_task, "nettest", 8192, (void *)(intptr_t)(up ? 1 : 0),
+                    5, &s_nt_task) != pdPASS) {
+        s_nt_state = NT_ERROR;
+        strlcpy(s_nt_err, "task spawn failed", sizeof s_nt_err);
+        return httpd_resp_sendstr(req, "{\"ok\":false,\"err\":\"spawn\"}");
+    }
+    return httpd_resp_sendstr(req, "{\"ok\":true,\"running\":true}");
+}
+
+static const httpd_uri_t uri_tools_nettest_get = {
+    .uri = "/api/tools/nettest", .method = HTTP_GET, .handler = tools_nettest_get_handler,
+};
+static const httpd_uri_t uri_tools_nettest_post = {
+    .uri = "/api/tools/nettest", .method = HTTP_POST, .handler = tools_nettest_post_handler,
 };
 
 static esp_err_t tools_pcap_status_handler(httpd_req_t *req)
@@ -4244,7 +4413,7 @@ void web_ui_init(void)
      * instead of WebCrypto's ~100 ms. */
     httpd_config_t conf           = HTTPD_DEFAULT_CONFIG();
     conf.uri_match_fn             = httpd_uri_match_wildcard;
-    conf.max_uri_handlers         = 56;
+    conf.max_uri_handlers         = 58;
     conf.stack_size               = 12288;
     /* Without the mbedTLS context cost we can afford the bigger pool
      * the pre-HTTPS web server used. The SPA's first-paint opens 5-7
@@ -4267,6 +4436,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_tools_route);
     httpd_register_uri_handler(server, &uri_tools_ping);
     httpd_register_uri_handler(server, &uri_tools_trace);
+    httpd_register_uri_handler(server, &uri_tools_nettest_get);
+    httpd_register_uri_handler(server, &uri_tools_nettest_post);
     httpd_register_uri_handler(server, &uri_tools_pcap_get);
     httpd_register_uri_handler(server, &uri_tools_pcap_set);
     httpd_register_uri_handler(server, &uri_firewall);
