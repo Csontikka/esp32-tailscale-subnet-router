@@ -3537,6 +3537,18 @@ static esp_err_t system_diag_handler(httpd_req_t *req)
         cJSON_AddItemToObject(root, "dns_cache", dc);
     }
 
+    /* --- D3) microSD card (separate from flash; mounted FAT at /sdcard) -- */
+    {
+        sdlog_status_t sl;
+        sdlog_get_status(&sl);
+        cJSON *sdj = cJSON_CreateObject();
+        cJSON_AddBoolToObject  (sdj, "present",    sl.present);
+        cJSON_AddNumberToObject(sdj, "card_mb",    sl.card_mb);
+        cJSON_AddNumberToObject(sdj, "free_mb",    sl.free_mb);
+        cJSON_AddNumberToObject(sdj, "file_count", sl.file_count);
+        cJSON_AddItemToObject(root, "sd", sdj);
+    }
+
     /* --- E) FreeRTOS task list ------------------------------------------- */
     {
         UBaseType_t n = uxTaskGetNumberOfTasks();
