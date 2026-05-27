@@ -25,6 +25,15 @@ CONFIG_SPIRAM_BOOT_HW_INIT=y
 # in ml_wg_mgr.c the per-packet drop rate dropped from ~5.7/s to ~0/s.
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
+# Push medium generic-malloc allocations to SPIRAM to relieve the tight
+# internal DRAM (idle ~57K free, ~35K low-water under load — confirmed via
+# the SD-recorder idram instrument). Default 16384 keeps everything <16K
+# internal; 4096 lets 4–16K allocations (HTTP bodies, JSON, medium buffers)
+# land in the 8 MB SPIRAM instead. DMA / explicitly-internal allocations are
+# unaffected (they use MALLOC_CAP_DMA/INTERNAL); RESERVE_INTERNAL=32768 keeps
+# the DMA headroom. Hot/small allocations still stay internal.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+
 # --- Main task: more stack than the default 3584 ----------------------------
 # Several boot-time init paths (microlink_init, http_server start, NAPT
 # setup) push into the same task. 7 KB keeps the canary intact.
@@ -85,11 +94,21 @@ CONFIG_LWIP_MAX_SOCKETS=24
 # more than 6 frames per BlockAck, while TX_BA_WIN was already 32;
 # mismatched windows can stall AMPDU re-orders. ESP-IDF builds in a
 # hard constraint RX_BA_WIN <= 2 * STATIC_RX_BUFFER_NUM (see
-# components/esp_wifi/src/wifi_init.c:56), so the two knobs MUST be
-# raised as a pair — 32 needs 16, not separable. Heap impact is bounded
-# by SPIRAM spill. TCP_WND / TCP_SND_BUF stay default for now.
+# components/esp_wifi/src/wifi_init.c:56), so the two MUST move
+# together — 32 needs ≥16, not separable.
+#
+# 2026-05-24 bisect step 2: STATIC_RX_BUFFER_NUM raised 16→24 to defeat
+# the download→upload-stall observed in phone Ookla speedtests. After
+# the download phase (AP-TX-heavy), the client opens 8-16 parallel
+# upload sockets at once; that SYN-burst arrives as one large AMPDU
+# (BA_WIN=32) on the AP-RX path. With only 16 static RX buffers we
+# barely fit the burst and any concurrent ARP/DNS/TCP-keepalive frame
+# drops, taking the upload SYN(+retx) with it — phone declares the
+# upload phase failed. 24 leaves headroom (+~12KB internal heap) for
+# co-arriving control traffic. BA_WIN=32 constraint still satisfied
+# (≤2*24=48). TCP_WND / TCP_SND_BUF stay default for now.
 CONFIG_ESP_WIFI_RX_BA_WIN=32
-CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=16
+CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM=24
 
 # --- Flash mode — back to DIO after a QIO regression on this board ---------
 # Tried CONFIG_ESPTOOLPY_FLASHMODE_QIO=y for the 2× code-fetch win, the
@@ -114,7 +133,19 @@ CONFIG_LWIP_DHCPS_MAX_STATION_NUM=16
 
 # --- WiFi tuning ------------------------------------------------------------
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=48
+# 2026-05-26 bisect step 3 (TX analog of step 2): the AP-TX-heavy phone-
+# speedtest download (+ cancel/restart churn) exhausted the WiFi TX buffers,
+# failing sends with ENOMEM (errno 12) while ~35 KB internal heap was STILL
+# free — a count cap, not heap exhaustion (confirmed via the SD-recorder
+# idram instrument). TX cannot go dynamic here: CONFIG_ESP_WIFI_DYNAMIC_TX_
+# BUFFER is Kconfig-forbidden when SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y (with PSRAM
+# the TX path must be static). The SPIRAM-backed spill IS the CACHE TX queue:
+# when the 16 static (DMA) TX buffers are full, the driver caches the packet
+# in SPIRAM instead of dropping it with ENOMEM. Raise that queue 32→96 to
+# absorb the burst in SPIRAM (plentiful) rather than the tight internal DRAM.
+# (DYNAMIC_TX_BUFFER_NUM stays but is inert while TX is static.)
 CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=48
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=96
 CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=y
 CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
 CONFIG_ESP_WIFI_TX_BA_WIN=32
