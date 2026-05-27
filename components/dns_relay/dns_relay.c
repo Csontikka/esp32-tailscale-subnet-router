@@ -38,6 +38,8 @@
 #define DNS_RELAY_BUF_SIZE      1024     /* RFC 1035 §2.3.4: 512 udp, EDNS0 lifts it; 1024 ceiling. */
 #define DNS_RELAY_UP_TIMEOUT_MS 3500
 #define DNS_RELAY_BOOT_DELAY_MS 3000     /* Settle window before the first bind attempt. */
+#define DNS_RELAY_TX_RETRIES    4        /* upstream sendto ENOMEM: retry, don't drop the query */
+#define DNS_RELAY_TX_RETRY_MS   5        /* per-retry backoff; WiFi TX buffers free within a few ms */
 
 #define DNS_LISTENER_STACK      4096
 #define DNS_WORKER_STACK        4608
@@ -295,7 +297,20 @@ static void worker_task(void *arg)
             .sin_port   = htons(DNS_RELAY_PORT),
             .sin_addr.s_addr = pick_upstream(),
         };
-        if (sendto(up, w->q, w->qlen, 0, (struct sockaddr *)&up_addr, sizeof(up_addr)) < 0) {
+        int sent = -1;
+        for (int attempt = 0; attempt < DNS_RELAY_TX_RETRIES; attempt++) {
+            sent = sendto(up, w->q, w->qlen, 0, (struct sockaddr *)&up_addr, sizeof(up_addr));
+            if (sent >= 0) break;
+            /* ENOMEM/EAGAIN here is a transient WiFi TX-buffer shortage (the
+             * DMA/cache TX pool is momentarily full under forwarding load), not
+             * a socket error — the buffers free within a few ms. Back off and
+             * retry rather than dropping the query: a dropped DNS query stalls
+             * the client's "connecting..." for its full 1-5s resolver timeout.
+             * Any other errno is a real socket fault → break and rebuild. */
+            if (errno != ENOMEM && errno != EAGAIN && errno != EWOULDBLOCK) break;
+            vTaskDelay(pdMS_TO_TICKS(DNS_RELAY_TX_RETRY_MS));
+        }
+        if (sent < 0) {
             ESP_LOGW(TAG, "upstream sendto() failed: errno=%d", errno);
             close(up); up = -1;
             heap_caps_free(w);
