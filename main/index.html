@@ -2519,6 +2519,7 @@
           </div>
           <div id="diag-nvs" class="mono" style="font-size:var(--text-xs); margin-top:0.5rem;">—</div>
           <div id="diag-coredump" class="mono" style="font-size:var(--text-xs); margin-top:0.25rem;">—</div>
+          <div id="diag-sd" class="mono" style="font-size:var(--text-xs); margin-top:0.25rem;">—</div>
 
           <h4 style="font-size:var(--text-sm); margin:1rem 0 0.35rem 0; color:var(--accent-primary); text-transform:uppercase; letter-spacing:0.05em;">MAC + system</h4>
           <div id="diag-macsys" class="mono" style="font-size:var(--text-xs);">—</div>
@@ -6139,6 +6140,13 @@
           ? 'Coredump: <strong style="color:var(--accent-danger);">present</strong> at ' +
             hex(cd.addr || 0) + ' (' + kb(cd.size || 0) + ')'
           : '<span style="color:var(--fg-muted);">Coredump: none — clean boot</span>';
+
+        /* microSD — separate storage (FAT @ /sdcard), not a flash partition */
+        var sd = d.sd || {};
+        document.getElementById('diag-sd').innerHTML = sd.present
+          ? 'microSD: <strong>' + (sd.free_mb | 0) + '</strong> / ' + (sd.card_mb | 0) +
+            ' MB free · ' + (sd.file_count | 0) + ' log files · FAT @ /sdcard (separate from flash)'
+          : '<span style="color:var(--fg-muted);">microSD: not present</span>';
 
         /* MAC + system */
         var s = d.system || {}, ma = d.mac || {};
