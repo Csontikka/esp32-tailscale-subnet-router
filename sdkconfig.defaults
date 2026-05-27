@@ -165,8 +165,14 @@ CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=48
 # standing-queue latency). Validated on hardware: download recovered to ~1Mbit
 # and upload completes reliably (no SYN-burst stall), 0 ENOMEM at 35K idram
 # low-water. (DYNAMIC_TX_BUFFER_NUM stays but is inert while TX is static.)
+#
+# 2026-05-27 follow-up: STATIC_TX 24->32. Once the XIP+PSRAM-stack work freed
+# internal DRAM to a ~60K low-water, raising the fast internal-DMA TX count
+# became affordable (~13K) and ELIMINATED the residual errno=12 (TX count cap)
+# that still hit STUN/DNS on microlink-startup and double-load bursts — 0 in
+# the SD recorder afterward, with no download-bufferbloat regression measured.
 CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=48
-CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=24
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=32
 CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=32
 CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=y
 CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
