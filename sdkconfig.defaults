@@ -25,14 +25,14 @@ CONFIG_SPIRAM_BOOT_HW_INIT=y
 # in ml_wg_mgr.c the per-packet drop rate dropped from ~5.7/s to ~0/s.
 CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
 
-# Push medium generic-malloc allocations to SPIRAM to relieve the tight
-# internal DRAM (idle ~57K free, ~35K low-water under load — confirmed via
-# the SD-recorder idram instrument). Default 16384 keeps everything <16K
-# internal; 4096 lets 4–16K allocations (HTTP bodies, JSON, medium buffers)
-# land in the 8 MB SPIRAM instead. DMA / explicitly-internal allocations are
-# unaffected (they use MALLOC_CAP_DMA/INTERNAL); RESERVE_INTERNAL=32768 keeps
-# the DMA headroom. Hot/small allocations still stay internal.
-CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=4096
+# Generic-malloc internal/SPIRAM threshold. Left at the IDF default 16384
+# (everything <16K stays internal). 2026-05-27: briefly lowered to 4096 to
+# push 4-16K allocations (HTTP/JSON/medium buffers) to SPIRAM and free
+# internal DRAM, but reverted — it was bundled with the CACHE_TX=96 change
+# that caused the phone-forwarding download regression, and the freed DRAM
+# was not needed once CACHE_TX dropped back to 32. RESERVE_INTERNAL=32768
+# keeps the DMA headroom regardless.
+CONFIG_SPIRAM_MALLOC_ALWAYSINTERNAL=16384
 
 # --- Main task: more stack than the default 3584 ----------------------------
 # Several boot-time init paths (microlink_init, http_server start, NAPT
@@ -133,19 +133,28 @@ CONFIG_LWIP_DHCPS_MAX_STATION_NUM=16
 
 # --- WiFi tuning ------------------------------------------------------------
 CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM=48
-# 2026-05-26 bisect step 3 (TX analog of step 2): the AP-TX-heavy phone-
-# speedtest download (+ cancel/restart churn) exhausted the WiFi TX buffers,
-# failing sends with ENOMEM (errno 12) while ~35 KB internal heap was STILL
-# free — a count cap, not heap exhaustion (confirmed via the SD-recorder
-# idram instrument). TX cannot go dynamic here: CONFIG_ESP_WIFI_DYNAMIC_TX_
-# BUFFER is Kconfig-forbidden when SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y (with PSRAM
-# the TX path must be static). The SPIRAM-backed spill IS the CACHE TX queue:
-# when the 16 static (DMA) TX buffers are full, the driver caches the packet
-# in SPIRAM instead of dropping it with ENOMEM. Raise that queue 32→96 to
-# absorb the burst in SPIRAM (plentiful) rather than the tight internal DRAM.
-# (DYNAMIC_TX_BUFFER_NUM stays but is inert while TX is static.)
+# WiFi TX buffers. TX cannot go dynamic with SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y
+# (Kconfig-forbidden — with PSRAM the TX path must be static). The two levers
+# are STATIC_TX (internal DMA, fast: drains at line rate) and CACHE_TX (SPIRAM
+# spill for overflow, slow standing queue).
+#
+# 2026-05-27 forwarding-throughput regression + fix: a phone-speedtest
+# cancel/restart burst exhausted the 16 static TX buffers and failed sends
+# with ENOMEM (errno 12) at ~35K internal free — a count cap, not heap. The
+# earlier fix raised CACHE_TX 32->96 to absorb the burst in SPIRAM, but a
+# 96-deep SPIRAM TX queue bufferbloats the single forwarded TCP download:
+# ~144KB standing queue ≈ 1.4s at this ~1Mbit uplink, inflating the client's
+# RTT and collapsing goodput to ~0.2Mbit (measured phone-through-AP vs the
+# ESP's own ~1Mbit — that was the regression). The fix decouples the two
+# needs: keep CACHE_TX shallow (32) so the download isn't bloated, and add
+# burst headroom on the FAST path instead — STATIC_TX 16->24 (internal DMA
+# buffers drain immediately, raising the ENOMEM count cap without adding
+# standing-queue latency). Validated on hardware: download recovered to ~1Mbit
+# and upload completes reliably (no SYN-burst stall), 0 ENOMEM at 35K idram
+# low-water. (DYNAMIC_TX_BUFFER_NUM stays but is inert while TX is static.)
 CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM=48
-CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=96
+CONFIG_ESP_WIFI_STATIC_TX_BUFFER_NUM=24
+CONFIG_ESP_WIFI_CACHE_TX_BUFFER_NUM=32
 CONFIG_ESP_WIFI_AMPDU_TX_ENABLED=y
 CONFIG_ESP_WIFI_AMPDU_RX_ENABLED=y
 CONFIG_ESP_WIFI_TX_BA_WIN=32
