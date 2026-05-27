@@ -28,6 +28,8 @@
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/idf_additions.h"   /* xTaskCreateWithCaps — PSRAM stack */
+#include "esp_heap_caps.h"            /* MALLOC_CAP_SPIRAM */
 
 #include "lwip_route_hook.h"
 #include "microlink.h"
@@ -255,7 +257,9 @@ void lwip_route_hook_init(void)
      * original 3072 B drove a vApplicationStackOverflowHook PANIC on a
      * busier tailnet (~6 peers + accept-routes). 5120 B leaves >1 KB
      * headroom on the observed worst case. */
-    xTaskCreate(route_supervisor_task, "exit_route", 5120, NULL, 5, NULL);
+    /* Stack in PSRAM (TCB stays internal): supervisor task, never deleted,
+     * no SPI-flash writes; XIP keeps the cache live during flash ops. ~5K. */
+    xTaskCreateWithCaps(route_supervisor_task, "exit_route", 5120, NULL, 5, NULL, MALLOC_CAP_SPIRAM);
 }
 
 /* Linker-wrapped: ESP-IDF defines ip4_route_src_hook as a strong symbol
