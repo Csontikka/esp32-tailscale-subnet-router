@@ -55,6 +55,24 @@ uint32_t dns_relay_get_upstream(void);
  * whenever the AP IP changes (rare — operator-driven only). */
 void dns_relay_set_bind_addr(uint32_t ip_nbo);
 
+/* Runtime snapshot of the SPIRAM response cache + forwarder, for the
+ * diagnostics page. Counters are cumulative since boot. */
+typedef struct {
+    uint32_t queries;      /* total client queries seen                     */
+    uint32_t hits;         /* served from cache                             */
+    uint32_t misses;       /* forwarded upstream (incl. uncacheable)        */
+    uint32_t inserts;      /* responses written into the cache              */
+    uint32_t evictions;    /* inserts that overwrote a different live entry */
+    uint32_t entries;      /* currently-valid (unexpired) cache entries     */
+    uint32_t capacity;     /* total cache slots                             */
+    uint32_t cache_bytes;  /* SPIRAM footprint of the cache table           */
+    uint32_t hit_pct;      /* hits*100/(hits+misses), 0 if no traffic yet   */
+    uint8_t  enabled;      /* relay enabled                                 */
+    uint8_t  healthy;      /* listener bound + serving                      */
+} dns_relay_stats_t;
+
+void dns_relay_get_stats(dns_relay_stats_t *out);
+
 #ifdef __cplusplus
 }
 #endif

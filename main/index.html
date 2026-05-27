@@ -2523,6 +2523,9 @@
           <h4 style="font-size:var(--text-sm); margin:1rem 0 0.35rem 0; color:var(--accent-primary); text-transform:uppercase; letter-spacing:0.05em;">MAC + system</h4>
           <div id="diag-macsys" class="mono" style="font-size:var(--text-xs);">—</div>
 
+          <h4 style="font-size:var(--text-sm); margin:1rem 0 0.35rem 0; color:var(--accent-primary); text-transform:uppercase; letter-spacing:0.05em;">DNS cache</h4>
+          <div id="diag-dnscache" class="mono" style="font-size:var(--text-xs);">—</div>
+
           <h4 style="font-size:var(--text-sm); margin:1rem 0 0.35rem 0; color:var(--accent-primary); text-transform:uppercase; letter-spacing:0.05em;">FreeRTOS tasks</h4>
           <div style="overflow-x:auto;">
             <table class="table mono" id="diag-tasks-table" style="width:100%;">
@@ -6148,6 +6151,24 @@
           (typeof s.cpu_temp_c === 'number'
             ? ' · CPU temp: <strong>' + s.cpu_temp_c.toFixed(1) + ' °C</strong>' : '') +
           '</div>';
+
+        /* DNS relay + SPIRAM cache */
+        var dq = d.dns_cache || {};
+        var dqEl = document.getElementById('diag-dnscache');
+        if (dqEl) {
+          var stBadge = dq.enabled
+            ? (dq.healthy ? '<span class="badge badge-success">enabled · healthy</span>'
+                          : '<span class="badge badge-warning">enabled · binding…</span>')
+            : '<span class="badge badge-neutral">disabled</span>';
+          dqEl.innerHTML =
+            '<div>Relay: ' + stBadge + '</div>' +
+            '<div>Hit rate: <strong>' + (dq.hit_pct | 0) + '%</strong> (' +
+            (dq.hits | 0) + ' hits / ' + (dq.misses | 0) + ' miss · ' +
+            (dq.queries | 0) + ' queries)</div>' +
+            '<div>Entries: <strong>' + (dq.entries | 0) + '</strong> / ' + (dq.capacity | 0) +
+            ' · evictions ' + (dq.evictions | 0) +
+            ' · SPIRAM ' + kb(dq.cache_bytes || 0) + '</div>';
+        }
 
         /* CPU temp badge */
         var tbadge = document.getElementById('diag-temp-badge');
