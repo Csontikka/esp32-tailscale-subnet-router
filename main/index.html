@@ -2352,6 +2352,24 @@
         </div>
       </div>
 
+      <!-- ===== Speed test (from device) ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">Speed test (from device)</span>
+          </div>
+        </div>
+        <div class="card-body">
+          <p class="form-hint" style="margin:0 0 0.75rem 0;">Rough 1 MB transfer over the device's own STA uplink (Cloudflare endpoint). Confirms whether a slowdown is upstream of the router vs. an AP-client / forwarding issue — self-origin traffic bypasses any exit-node tunnel. Timing excludes the TLS handshake.</p>
+          <div style="display:flex; gap:0.5rem; flex-wrap:wrap;">
+            <button class="btn btn-primary btn-md" id="tool-net-down">⬇ Download 1 MB</button>
+            <button class="btn btn-primary btn-md" id="tool-net-up">⬆ Upload 1 MB</button>
+            <button class="btn btn-ghost btn-md" id="tool-net-cancel" style="display:none;">Cancel</button>
+          </div>
+          <div id="tool-net-result" class="mono" style="font-size:0.85rem; margin-top:0.75rem;">—</div>
+        </div>
+      </div>
+
       <!-- ===== WiFi Scan ===== -->
       <div class="card mt-4">
         <div class="card-header">
@@ -6023,6 +6041,60 @@
     document.getElementById('tool-trace-target').addEventListener('keydown', function (e) {
       if (e.key === 'Enter') document.getElementById('tool-trace-run').click();
     });
+
+    /* On-device 1 MB speed test (download / upload) with live poll + cancel. */
+    (function () {
+      var dBtn = document.getElementById('tool-net-down');
+      var uBtn = document.getElementById('tool-net-up');
+      var cBtn = document.getElementById('tool-net-cancel');
+      var out  = document.getElementById('tool-net-result');
+      if (!dBtn || !uBtn || !cBtn || !out) return;
+      var poll = null;
+      function fmt(kbps) {
+        return kbps >= 1000 ? (kbps / 1000).toFixed(2) + ' Mbit/s' : (kbps | 0) + ' kbit/s';
+      }
+      function setRunning(on) {
+        dBtn.disabled = on; uBtn.disabled = on;
+        cBtn.style.display = on ? '' : 'none';
+      }
+      function stopPoll() { if (poll) { clearInterval(poll); poll = null; } }
+      function render(d) {
+        if (d.state === 'running') {
+          out.textContent = (d.dir === 'up' ? 'Uploading' : 'Downloading') + ' 1 MB…';
+          return;
+        }
+        stopPoll(); setRunning(false);
+        if (d.state === 'done') {
+          out.innerHTML = (d.dir === 'up' ? '⬆ Upload' : '⬇ Download') + ': <strong>' + fmt(d.kbps) +
+            '</strong> (' + (d.bytes / 1048576).toFixed(2) + ' MB / ' + (d.ms / 1000).toFixed(1) + ' s)';
+        } else if (d.state === 'cancelled') {
+          out.textContent = 'Cancelled (' + (d.bytes / 1024).toFixed(0) + ' KB in ' + (d.ms / 1000).toFixed(1) + ' s)';
+        } else {
+          out.textContent = 'Failed: ' + (d.err || d.state);
+        }
+      }
+      function start(dir) {
+        out.textContent = 'Starting…'; setRunning(true);
+        apiFetch('/api/tools/nettest?dir=' + dir, { method: 'POST' })
+          .then(function (r) { return r.json(); })
+          .then(function (j) {
+            if (!j.ok) { setRunning(false); out.textContent = 'Failed: ' + (j.err || 'busy'); return; }
+            poll = setInterval(function () {
+              apiFetch('/api/tools/nettest')
+                .then(function (r) { return r.json(); })
+                .then(render)
+                .catch(function () {});
+            }, 700);
+          })
+          .catch(function (e) { setRunning(false); out.textContent = 'Failed: ' + (e.message || e); });
+      }
+      dBtn.addEventListener('click', function () { start('down'); });
+      uBtn.addEventListener('click', function () { start('up'); });
+      cBtn.addEventListener('click', function () {
+        out.textContent = 'Cancelling…';
+        apiFetch('/api/tools/nettest?cancel=1', { method: 'POST' }).catch(function () {});
+      });
+    })();
 
     document.getElementById('tool-scan-run').addEventListener('click', function () {
       var btn = this;
