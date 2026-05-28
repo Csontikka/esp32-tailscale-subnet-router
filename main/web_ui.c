@@ -4220,7 +4220,8 @@ static esp_err_t sdlog_status_get_handler(httpd_req_t *req)
     if (!root) { httpd_resp_send_500(req); return ESP_FAIL; }
     cJSON_AddBoolToObject  (root, "present",       st.present);
     cJSON_AddBoolToObject  (root, "enabled",       st.enabled);
-    cJSON_AddNumberToObject(root, "verbosity",     st.verbosity);
+    cJSON_AddNumberToObject(root, "sd_level",      st.sd_level);
+    cJSON_AddNumberToObject(root, "console_level", st.console_level);
     cJSON_AddNumberToObject(root, "card_mb",       st.card_mb);
     cJSON_AddNumberToObject(root, "free_mb",       st.free_mb);
     cJSON_AddStringToObject(root, "current_file",  st.cur_file);
@@ -4237,7 +4238,9 @@ static esp_err_t sdlog_status_get_handler(httpd_req_t *req)
     return err;
 }
 
-/* POST /api/sdlog — { enabled:bool, verbosity:int }. Toggling enabled
+/* POST /api/sdlog — { enabled:bool, sd_level:int, console_level:int } (all
+ * optional/independent: SD enable+level, and the live console sink level).
+ * Toggling enabled
  * starts/stops the writer. No-op (still 200) if no card is present. */
 static esp_err_t sdlog_status_post_handler(httpd_req_t *req)
 {
@@ -4252,13 +4255,28 @@ static esp_err_t sdlog_status_post_handler(httpd_req_t *req)
     }
 
     const cJSON *en = cJSON_GetObjectItem(root, "enabled");
-    const cJSON *vb = cJSON_GetObjectItem(root, "verbosity");
-    uint8_t verbosity = (cJSON_IsNumber(vb) && (int)vb->valuedouble == SDLOG_VERB_WARN)
-                        ? SDLOG_VERB_WARN : SDLOG_VERB_ALL;
+    const cJSON *sd = cJSON_GetObjectItem(root, "sd_level");
+    uint8_t sd_level = SDLOG_LVL_WARN;
+    if (cJSON_IsNumber(sd)) {
+        int v = (int)sd->valuedouble;
+        if (v < SDLOG_LVL_ERROR) v = SDLOG_LVL_ERROR;   /* SD: ERROR..INFO (OFF == disable) */
+        if (v > SDLOG_LVL_INFO)  v = SDLOG_LVL_INFO;
+        sd_level = (uint8_t)v;
+    }
     if (cJSON_IsBool(en) && cJSON_IsTrue(en)) {
-        sdlog_enable(verbosity);
+        sdlog_enable(sd_level);
     } else if (cJSON_IsBool(en) && cJSON_IsFalse(en)) {
         sdlog_disable();
+    }
+    /* Console (UART/syslog) output level — independent of the SD recorder,
+     * applied live. Absent → unchanged, so the SD toggle and the console
+     * selector can post separately. */
+    const cJSON *cl = cJSON_GetObjectItem(root, "console_level");
+    if (cJSON_IsNumber(cl)) {
+        int v = (int)cl->valuedouble;
+        if (v < SDLOG_LVL_OFF)  v = SDLOG_LVL_OFF;
+        if (v > SDLOG_LVL_INFO) v = SDLOG_LVL_INFO;
+        sdlog_set_console_level((uint8_t)v);
     }
     cJSON_Delete(root);
 

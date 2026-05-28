@@ -73,6 +73,13 @@ CONFIG_BOOTLOADER_LOG_LEVEL=2
 # CONFIG_LOG_DEFAULT_LEVEL_INFO is not set
 CONFIG_LOG_DEFAULT_LEVEL_WARN=y
 CONFIG_LOG_DEFAULT_LEVEL=2
+# 2026-05-28: compile ceiling raised to INFO (runtime DEFAULT stays WARN, above)
+# so the per-sink log controls (console + SD, see components/sdlog) can capture
+# INFO on demand. sdlog sets the runtime master level = max(active sink levels)
+# live, so INFO is only formatted when a sink actually asks for it — the WARN
+# default keeps the per-packet INFO flood compiled-in-but-suppressed (~0 cost).
+# CONFIG_LOG_MAXIMUM_EQUALS_DEFAULT is not set
+CONFIG_LOG_MAXIMUM_LEVEL_INFO=y
 
 # Push the UART out of the way: 8x faster console = 8x less time the
 # logging task blocks on the UART driver. CH343 USB-serial supports it.
@@ -152,6 +159,13 @@ CONFIG_LWIP_TCP_WND_DEFAULT=32768
 # the QIO timing margin on this exact board variant. DIO is the boring
 # safe default; revisit when there's a way to A/B without disrupting
 # the operator.
+# 2026-05-28: re-checked empirically (not trusting the note). QIO is in fact
+# UNREACHABLE here: PlatformIO's espressif32 builder hardcodes qio/qout -> dio
+# in _get_board_flash_mode() (builder/main.py), so --flash_mode is forced to
+# dio regardless of this sdkconfig. Root cause: the PSRAM is OCTAL
+# (CONFIG_SPIRAM_MODE_OCT=y, N16R8) and QIO flash conflicts with OPI PSRAM on
+# the S3 — that conflict (not a vague "timing margin") was the original
+# regression. Tooling AND hardware both dictate DIO. Closed: staying DIO.
 CONFIG_ESPTOOLPY_FLASHMODE_DIO=y
 CONFIG_ESPTOOLPY_FLASHMODE="dio"
 
