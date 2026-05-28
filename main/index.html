@@ -2744,11 +2744,22 @@
             </label>
           </div>
           <div class="form-group">
-            <label class="form-label" for="sys-sdlog-verb">Verbosity</label>
+            <label class="form-label" for="sys-sdlog-verb">SD recorder level</label>
             <select class="input" id="sys-sdlog-verb">
-              <option value="0">All (every line)</option>
-              <option value="1">Warnings + errors only</option>
+              <option value="3">All (info + warnings + errors)</option>
+              <option value="2">Warnings + errors</option>
+              <option value="1">Errors only</option>
             </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label" for="sys-sdlog-conlvl">Console (UART) log level</label>
+            <select class="input" id="sys-sdlog-conlvl">
+              <option value="3">All (info + warnings + errors)</option>
+              <option value="2">Warnings + errors (default)</option>
+              <option value="1">Errors only</option>
+              <option value="0">Off — silent UART</option>
+            </select>
+            <span class="form-hint">Independent of the SD recorder, applied live (no reboot). Base compile level is INFO, so <strong>All</strong> captures everything; the runtime master = max(console, SD) so INFO only costs when a sink asks for it. <strong>Off</strong> silences the serial console for max performance / no UART jitter on the data path — the SD black-box can still record. Raw panic/boot output is always kept unless Off.</span>
           </div>
           <div class="form-group">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
@@ -7180,7 +7191,9 @@
           var info  = document.getElementById('sys-sdlog-cardinfo');
           cb.checked  = !!d.enabled;
           cb.disabled = !d.present;
-          document.getElementById('sys-sdlog-verb').value = String(d.verbosity || 0);
+          document.getElementById('sys-sdlog-verb').value = String(d.sd_level != null ? d.sd_level : 2);
+          var _cl = document.getElementById('sys-sdlog-conlvl');
+          if (_cl) _cl.value = String(d.console_level != null ? d.console_level : 2);
           if (d.present) {
             badge.className   = d.enabled ? 'badge badge-success' : 'badge badge-neutral';
             badge.textContent = d.enabled ? 'Recording' : 'Idle';
@@ -7209,14 +7222,36 @@
       });
     });
 
+    /* Console (UART) log level is independent of the SD recorder and the
+     * firmware applies it live, so it posts immediately on change — and works
+     * even with no SD card inserted (it gates the UART sink, not the card). */
+    (function () {
+      var cl = document.getElementById('sys-sdlog-conlvl');
+      if (!cl) return;
+      cl.addEventListener('change', function () {
+        var lvl = parseInt(cl.value, 10) || 0;
+        apiFetch('/api/sdlog', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ console_level: lvl })
+        })
+          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function () {
+            var names = ['Off — silent UART', 'Errors only', 'Warnings + errors'];
+            showToast('success', 'Console log level set', names[lvl] || '', 3000);
+          })
+          .catch(function () { showToast('error', 'Failed to set console level', '', 4000); });
+      });
+    })();
+
     document.getElementById('sys-sdlog-save').addEventListener('click', function () {
       if (!sdlogState.present) {
         showToast('error', 'No SD card', 'Insert a microSD card first.', 5000);
         return;
       }
       var body = {
-        enabled:   document.getElementById('sys-sdlog-enabled').checked,
-        verbosity: parseInt(document.getElementById('sys-sdlog-verb').value, 10) || 0
+        enabled:  document.getElementById('sys-sdlog-enabled').checked,
+        sd_level: parseInt(document.getElementById('sys-sdlog-verb').value, 10) || 2
       };
       var btn = this;
       btn.disabled = true;

@@ -66,6 +66,8 @@
 #define NVS_KEY_SEQ      "sdlog_seq"    /* u32: next file sequence number */
 #define NVS_KEY_BOOT     "sdlog_boot"   /* u32: monotonic boot counter    */
 #define NVS_KEY_MAXMB    "sdlog_maxmb"  /* u16: ~max files (≈1 MB each)   */
+#define NVS_KEY_CONLVL   "sdlog_con"    /* u8: console output level (SDLOG_LVL_*) */
+#define NVS_KEY_SDLVL    "sdlog_sdl"    /* u8: SD recorder level    (SDLOG_LVL_*) */
 
 /* Card pins — onboard microSD wired as SDMMC 1-bit on custom GPIOs that
  * dodge the octal-PSRAM pads (35/36/37). 39/40 double as JTAG MTCK/MTDO
@@ -127,7 +129,8 @@ typedef struct {
 
 static atomic_bool s_present = false;   /* card mounted              */
 static atomic_bool s_enabled = false;   /* recorder active           */
-static uint8_t     s_verbosity = SDLOG_VERB_ALL;
+static _Atomic uint8_t s_sd_level      = SDLOG_LVL_WARN;  /* SD recorder sink level (read live) */
+static _Atomic uint8_t s_console_level = SDLOG_LVL_WARN;  /* console sink level (read live by the hook) */
 static uint16_t    s_max_files = SDLOG_DEFAULT_MAXFILES;
 static sdmmc_card_t *s_card = NULL;
 
@@ -177,17 +180,34 @@ static void load_config(void)
     nvs_handle_t nvs;
     if (nvs_open(SDLOG_NVS_NAMESPACE, NVS_READONLY, &nvs) != ESP_OK)
         return;
-    uint8_t en = 0, vb = 0;
+    uint8_t en = 0, cl = SDLOG_LVL_WARN, sl = SDLOG_LVL_WARN;
     nvs_get_u8(nvs, NVS_KEY_ENABLED, &en);
-    nvs_get_u8(nvs, NVS_KEY_VERB, &vb);
+    nvs_get_u8(nvs, NVS_KEY_CONLVL, &cl);   /* absent → stays WARN (default) */
+    nvs_get_u8(nvs, NVS_KEY_SDLVL,  &sl);   /* absent → stays WARN (default) */
     nvs_get_u32(nvs, NVS_KEY_SEQ, &s_next_seq);
     uint16_t mm = 0;
     if (nvs_get_u16(nvs, NVS_KEY_MAXMB, &mm) == ESP_OK && mm > 0)
         s_max_files = mm;
     nvs_close(nvs);
     atomic_store(&s_enabled, en != 0);
-    s_verbosity = (vb == SDLOG_VERB_WARN) ? SDLOG_VERB_WARN : SDLOG_VERB_ALL;
+    atomic_store(&s_console_level, (cl <= SDLOG_LVL_INFO) ? cl : SDLOG_LVL_WARN);
+    atomic_store(&s_sd_level,
+                 (sl >= SDLOG_LVL_ERROR && sl <= SDLOG_LVL_INFO) ? sl : SDLOG_LVL_WARN);
     if (s_next_seq == 0) s_next_seq = 1;
+}
+
+/* Set the runtime master log level = max(active sink levels), via
+ * esp_log_level_set("*", ...). A line is only formatted + handed to the
+ * vprintf hook when at least one sink wants it, so INFO stays
+ * compiled-in-but-suppressed (~0 cost) while both sinks are at WARN, yet a
+ * sink can pull INFO on demand. SDLOG_LVL_* is esp_log_level_t-aligned
+ * (NONE/ERROR/WARN/INFO = 0/1/2/3). Called at init and on any sink change. */
+static void apply_master_level(void)
+{
+    uint8_t con = atomic_load(&s_console_level);
+    uint8_t sd  = atomic_load(&s_enabled) ? atomic_load(&s_sd_level) : SDLOG_LVL_OFF;
+    uint8_t m   = (con > sd) ? con : sd;
+    esp_log_level_set("*", (esp_log_level_t)m);
 }
 
 static void save_u8(const char *key, uint8_t v)
@@ -227,7 +247,7 @@ static uint32_t bump_boot_counter(void)
 static char extract_level(const char *msg, const char **clean_start)
 {
     const char *p = msg;
-    char level = 'I';
+    char level = '\0';   /* '\0' = no recognised level → raw/un-leveled output */
     if (p[0] == '\033' && p[1] == '[') {
         p += 2;
         while (*p && *p != 'm') p++;
@@ -237,6 +257,22 @@ static char extract_level(const char *msg, const char **clean_start)
         level = *p;
     *clean_start = p;
     return level;
+}
+
+/* True if a line whose level letter is `lv` ('E'/'W'/'I'/'D'/'V', or '\0' for
+ * raw/un-leveled output) should be emitted at a sink threshold `thr`
+ * (SDLOG_LVL_*). Raw output is kept at every threshold except OFF, so panic /
+ * boot / bare-printf lines are never hidden unless the sink is fully off. */
+static inline bool level_passes(char lv, uint8_t thr)
+{
+    if (thr == SDLOG_LVL_OFF) return false;
+    switch (lv) {
+        case 'E': return thr >= SDLOG_LVL_ERROR;
+        case 'W': return thr >= SDLOG_LVL_WARN;
+        case 'I': return thr >= SDLOG_LVL_INFO;
+        case 'D': case 'V': return false;   /* compiled out (ceiling = INFO) */
+        default:  return true;              /* raw / un-leveled: keep unless OFF */
+    }
 }
 
 static int strip_ansi(const char *src, char *dst, int max_len)
@@ -561,8 +597,32 @@ static int sdlog_vprintf(const char *fmt, va_list args)
 {
     va_list args_copy;
     va_copy(args_copy, args);
-    int ret = s_original_vprintf ? s_original_vprintf(fmt, args)
+
+    /* Console (UART/syslog) gate — INDEPENDENT of the SD recorder below. The
+     * level letter ('W'/'E') is a literal at the start of fmt (ESP-IDF embeds
+     * it in LOG_FORMAT). Raw printf()/panic/boot lines parse as non-W/E and
+     * are ALWAYS kept unless the console is fully OFF, so critical un-leveled
+     * output is never hidden. Fragment-aware: the WiFi driver splits a line
+     * across vprintf calls, so we only (re)decide at a line start and the
+     * continuation fragments inherit it. esp_log serialises hook calls, so
+     * the static line state is safe. */
+    static bool s_con_emit = true;
+    static bool s_con_at_line_start = true;
+    uint8_t clvl = atomic_load(&s_console_level);
+    if (s_con_at_line_start) {
+        const char *cs;
+        s_con_emit = level_passes(extract_level(fmt, &cs), clvl);
+    }
+    {
+        size_t fl = strlen(fmt);
+        s_con_at_line_start = (fl > 0 && fmt[fl - 1] == '\n');
+    }
+
+    int ret = 0;
+    if (s_con_emit) {
+        ret = s_original_vprintf ? s_original_vprintf(fmt, args)
                                  : vprintf(fmt, args);
+    }
 
     if (!atomic_load(&s_enabled) || tl_in_sdlog || !s_queue) {
         va_end(args_copy);
@@ -592,8 +652,7 @@ static int sdlog_vprintf(const char *fmt, va_list args)
                 int clean_len = strip_ansi(clean_start, s_pktbuf, SDLOG_LINE_MAX);
                 s_rawpos = 0;
 
-                bool pass = (s_verbosity == SDLOG_VERB_ALL) ||
-                            (level == 'E' || level == 'W');
+                bool pass = level_passes(level, atomic_load(&s_sd_level));
 
                 if (clean_len > 0 && pass) {
                     sdlog_msg_t m;
@@ -729,33 +788,36 @@ esp_err_t sdlog_init(void)
 
     if (atomic_load(&s_present) && atomic_load(&s_enabled)) {
         s_boot_count = bump_boot_counter();
-        ESP_LOGI(TAG, "recorder enabled at boot — verbosity %u", s_verbosity);
+        ESP_LOGW(TAG, "recorder enabled at boot — sd_level %u", atomic_load(&s_sd_level));
         start_writer();
     } else {
         /* Persisted-enabled but no card: keep the flag off at runtime so
          * the hook fast-exits and the UI shows "no card". */
         if (!atomic_load(&s_present)) atomic_store(&s_enabled, false);
     }
+    apply_master_level();   /* runtime master = max(console, active SD) */
     return ESP_OK;
 }
 
 bool sdlog_card_present(void) { return atomic_load(&s_present); }
 bool sdlog_is_enabled(void)   { return atomic_load(&s_enabled); }
 
-esp_err_t sdlog_enable(uint8_t verbosity)
+esp_err_t sdlog_enable(uint8_t sd_level)
 {
     if (!atomic_load(&s_present)) return ESP_ERR_INVALID_STATE;
+    if (sd_level < SDLOG_LVL_ERROR) sd_level = SDLOG_LVL_ERROR;  /* OFF == disable() */
+    if (sd_level > SDLOG_LVL_INFO)  sd_level = SDLOG_LVL_INFO;
 
     xSemaphoreTake(s_state_mutex, portMAX_DELAY);
-    s_verbosity = (verbosity == SDLOG_VERB_WARN) ? SDLOG_VERB_WARN
-                                                 : SDLOG_VERB_ALL;
+    atomic_store(&s_sd_level, sd_level);
     bool was = atomic_exchange(&s_enabled, true);
     if (!was) { s_boot_count = bump_boot_counter(); start_writer(); }
     xSemaphoreGive(s_state_mutex);
 
-    save_u8(NVS_KEY_VERB, s_verbosity);
+    save_u8(NVS_KEY_SDLVL, sd_level);
     save_u8(NVS_KEY_ENABLED, 1);
-    ESP_LOGI(TAG, "recorder enabled (verbosity %u)", s_verbosity);
+    apply_master_level();
+    ESP_LOGW(TAG, "recorder enabled (sd_level %u)", sd_level);
     return ESP_OK;
 }
 
@@ -767,7 +829,18 @@ esp_err_t sdlog_disable(void)
     xSemaphoreGive(s_state_mutex);
 
     save_u8(NVS_KEY_ENABLED, 0);
-    ESP_LOGI(TAG, "recorder disabled");
+    apply_master_level();   /* SD off → master drops to the console level */
+    ESP_LOGW(TAG, "recorder disabled");
+    return ESP_OK;
+}
+
+esp_err_t sdlog_set_console_level(uint8_t level)
+{
+    if (level > SDLOG_LVL_INFO) level = SDLOG_LVL_INFO;
+    ESP_LOGW(TAG, "console level -> %u (0=off 1=err 2=warn 3=info)", level);  /* logged at the OLD level so it's visible */
+    atomic_store(&s_console_level, level);   /* live: the hook reads it per line */
+    save_u8(NVS_KEY_CONLVL, level);
+    apply_master_level();
     return ESP_OK;
 }
 
@@ -775,10 +848,11 @@ void sdlog_get_status(sdlog_status_t *out)
 {
     if (!out) return;
     memset(out, 0, sizeof *out);
-    out->present   = atomic_load(&s_present);
-    out->enabled   = atomic_load(&s_enabled);
-    out->verbosity = s_verbosity;
-    out->dropped   = atomic_load(&s_dropped);
+    out->present       = atomic_load(&s_present);
+    out->enabled       = atomic_load(&s_enabled);
+    out->sd_level      = atomic_load(&s_sd_level);
+    out->console_level = atomic_load(&s_console_level);
+    out->dropped       = atomic_load(&s_dropped);
 
     if (out->present) {
         uint64_t total = 0, freeb = 0;
