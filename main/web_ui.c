@@ -2685,6 +2685,31 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
                                         diag.identity_persistent);
                 cJSON_AddStringToObject(runtime, "identity_pubkey_prefix",
                                         diag.identity_pubkey_prefix);
+                /* DERP region diagnostics (ported from the old http_server UI,
+                 * 2026-05-28). derp_home_region = the region the ESP actually
+                 * connects to (netcheck may override the default); derp_rtts =
+                 * the per-region STUN latencies netcheck measured. Surfacing
+                 * these lets the operator SEE why a DERP home was chosen and
+                 * pick a better region. */
+                cJSON_AddNumberToObject(runtime, "derp_home_region",    diag.derp_home_region);
+                cJSON_AddNumberToObject(runtime, "derp_region_default", diag.derp_region_default);
+                /* Human-readable city for OUR active home region, so the
+                 * Status page can show "DERP: #4 Frankfurt" rather than a
+                 * bare number. NULL (region 0 / not in DERPMap yet) → omit. */
+                const char *_hrn = microlink_get_derp_region_name(mlh, diag.derp_home_region);
+                if (_hrn) cJSON_AddStringToObject(runtime, "derp_home_region_name", _hrn);
+                microlink_derp_rtt_t _rtts[16];
+                int _nr = microlink_get_derp_rtts(mlh, _rtts, 16);
+                cJSON *derp_rtts = cJSON_CreateArray();
+                for (int _i = 0; _i < _nr; _i++) {
+                    cJSON *e = cJSON_CreateObject();
+                    const char *nm = microlink_get_derp_region_name(mlh, _rtts[_i].region_id);
+                    cJSON_AddNumberToObject(e, "region_id", _rtts[_i].region_id);
+                    cJSON_AddStringToObject(e, "name", nm ? nm : "?");
+                    cJSON_AddNumberToObject(e, "rtt_ms", _rtts[_i].rtt_ms);
+                    cJSON_AddItemToArray(derp_rtts, e);
+                }
+                cJSON_AddItemToObject(runtime, "derp_rtts", derp_rtts);
             }
         }
     }
@@ -2725,6 +2750,15 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
             cJSON_AddBoolToObject  (p, "online",       ts_runtime_connected && pi.online);
             cJSON_AddBoolToObject  (p, "direct_path",  ts_runtime_connected && pi.direct_path);
             cJSON_AddBoolToObject  (p, "is_exit_node", pi.is_exit_node);
+            /* Peer's home DERP region — relevant when direct_path is false
+             * (the region this peer is relayed through). Surface the id +
+             * the human-readable city so the peers table can show
+             * "DERP · Frankfurt" instead of a bare "DERP". 0 = unknown. */
+            cJSON_AddNumberToObject(p, "derp_region", pi.derp_region);
+            if (pi.derp_region) {
+                const char *_prn = microlink_get_derp_region_name(ml, pi.derp_region);
+                if (_prn) cJSON_AddStringToObject(p, "derp_region_name", _prn);
+            }
             /* microlink_peer_info_t.vpn_ip is host byte order. */
             char buf[16];
             ip4_hbo_to_str(pi.vpn_ip, buf, sizeof buf);
