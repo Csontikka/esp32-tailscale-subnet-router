@@ -1099,6 +1099,13 @@
     .peer-row:hover { background: var(--bg-hover); }
 
     .peer-online-dot {
+      /* inline-block so the dot keeps its 7x7 size in BOTH contexts:
+       * the Status-page .peer-row (flex item) AND the Tailscale-page
+       * peers <table> cell (where a bare inline <span> would ignore
+       * width/height and collapse to 0x0 — that was the "disappeared
+       * dots" bug). vertical-align centres it against the row text. */
+      display: inline-block;
+      vertical-align: middle;
       width: 7px;
       height: 7px;
       border-radius: 50%;
@@ -1700,6 +1707,10 @@
               <span class="stat-value mono text-muted" id="ts-exit">—</span>
             </div>
             <div class="stat-row">
+              <span class="stat-label">DERP home</span>
+              <span class="stat-value mono" id="ts-derp-home" title="The DERP relay region this node is homed to (used for control-plane + relayed peer traffic).">—</span>
+            </div>
+            <div class="stat-row">
               <span class="stat-label">Identity</span>
               <span class="stat-value mono" id="ts-identity">—</span>
             </div>
@@ -2215,7 +2226,7 @@
         </div>
         <div class="card-body">
           <p class="form-hint" style="margin:0 0 0.75rem 0;">
-            <strong>AUTO</strong> picks <code class="mono">1420</code> when at least one peer is on a direct UDP path and <code class="mono">1280</code> when traffic is DERP-relayed (DERP adds ~60 B of HTTP framing on top of WireGuard).
+            <strong>AUTO</strong> keys off the <em>exit node's</em> path: <code class="mono">1420</code> when the exit node has a direct UDP path, <code class="mono">1280</code> when the exit node is DERP-relayed (DERP carries WireGuard over TLS/TCP, so the inner packets need a smaller MTU — an over-large MSS gets dropped/blackholed and collapses throughput). With no exit node, it falls back to any-direct-peer for advertised-subnet traffic.
             <strong>FIXED</strong> pins a user-supplied value in <code class="mono">576..1500</code>.
             The effective MTU drives the WireGuard netif MTU, the AP-side TCP MSS clamp on every SYN, and the next-hop MTU reported in ICMP frag-needed replies.
           </p>
@@ -3646,6 +3657,25 @@
       apiFetch('/api/tailscale')
         .then(function (r) { return r.json(); })
         .then(function (d) {
+          /* OUR own DERP home region — which relay this node is homed to
+           * (control-plane + relayed-peer traffic flows through it). Sourced
+           * from /api/tailscale runtime (derp_home_region[_name]); shown on
+           * the Status Node card. 0 / absent → not connected to a relay yet. */
+          (function () {
+            var el = document.getElementById('ts-derp-home');
+            if (!el) return;
+            var rt = (d && d.runtime) || {};
+            var rid = rt.derp_home_region || 0;
+            if (rid > 0) {
+              el.textContent = (rt.derp_home_region_name
+                                  ? rt.derp_home_region_name + ' (#' + rid + ')'
+                                  : '#' + rid);
+              el.classList.remove('text-muted');
+            } else {
+              el.textContent = '—';
+              el.classList.add('text-muted');
+            }
+          })();
           var peerList = document.getElementById('ts-peer-list');
           var peers = (d && d.peers) || [];
           /* Alphabetic order by short hostname — what the operator
@@ -5542,10 +5572,17 @@
                      + '</tr></thead><tbody>';
             peers.forEach(function (p) {
               var dotCls = p.online ? 'on' : 'off';
+              /* DERP-relayed peers show WHICH region relays them, so the
+               * operator can see e.g. a peer stuck on a far region. Region
+               * name comes from the DERPMap; fall back to "#id", then bare
+               * "DERP" when the id is unknown (0). */
+              var derpLabel = 'DERP';
+              if (p.derp_region_name) derpLabel = 'DERP · ' + escapeHtml(p.derp_region_name);
+              else if (p.derp_region)  derpLabel = 'DERP · #' + p.derp_region;
               var pathHtml = !p.online
                 ? '<span class="text-muted">—</span>'
                 : (p.direct_path ? '<span class="text-success">direct</span>'
-                                 : '<span class="text-warning">DERP</span>');
+                                 : '<span class="text-warning">' + derpLabel + '</span>');
               var routes = (p.subnet_routes || []).map(function (r) {
                 return escapeHtml(r.network) + '/' + r.prefix_len;
               }).join(', ') || '—';

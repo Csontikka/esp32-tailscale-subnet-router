@@ -63,6 +63,32 @@ static bool any_direct_peer(void)
     return false;
 }
 
+/* True if the SELECTED EXIT NODE is reached via DERP (no live direct UDP
+ * path), so its forwarded internet traffic needs the DERP-safe MTU/MSS.
+ *
+ * 2026-05-28 fix: the auto-MTU previously keyed off any_direct_peer() — i.e.
+ * it picked the large "direct" MTU whenever ANY peer (e.g. a LAN homeassistant
+ * or home-server) had a direct path, even when the EXIT NODE itself was DERP-only.
+ * That over-large MSS (1380) made the phone's TCP segments too big for the
+ * WG-over-DERP path → packet loss / PMTU-blackhole → ~0.05 Mbit. The exit
+ * node's path is what the forwarded traffic actually traverses, so key off it.
+ * No exit node selected → fall back to the any-direct-peer heuristic (used for
+ * advertised-subnet traffic, where there is no single egress peer). */
+static bool exit_path_is_derp(void)
+{
+    if (tailscale_exit_node_ip == 0) return false;   /* no exit node */
+    struct microlink_s *ml = tailscale_get_microlink();
+    if (!ml) return true;                            /* can't tell → DERP-safe */
+    int n = microlink_get_peer_count(ml);
+    for (int i = 0; i < n; i++) {
+        microlink_peer_info_t pi;
+        if (microlink_get_peer_info(ml, i, &pi) != ESP_OK) continue;
+        if (pi.vpn_ip == tailscale_exit_node_ip)
+            return !(pi.online && pi.direct_path);   /* DERP unless a live direct path */
+    }
+    return true;   /* exit node not in the peer list yet → DERP-safe */
+}
+
 static void apply(uint16_t mtu, uint16_t mss, uint16_t pmtu, const char *src)
 {
     s_state.eff_mtu  = mtu;
@@ -97,13 +123,19 @@ void tailscale_mtu_update(void)
         if (mtu > TS_MTU_MAX) mtu = TS_MTU_MAX;
         src = "user";
     } else {
-        if (any_direct_peer()) {
-            mtu = TS_MTU_DIRECT_DEFAULT;
-            src = "auto-direct";
+        bool derp;
+        if (tailscale_exit_node_ip != 0) {
+            /* Exit-node mode: key off the exit node's own path (the one the
+             * forwarded internet traffic traverses), not any-direct-peer. */
+            derp = exit_path_is_derp();
+            src  = derp ? "auto-DERP (exit relayed)" : "auto-direct (exit direct)";
         } else {
-            mtu = TS_MTU_DERP_DEFAULT;
-            src = "auto-DERP";
+            /* No exit node: advertised-subnet traffic has no single egress
+             * peer, so keep the any-direct-peer heuristic. */
+            derp = !any_direct_peer();
+            src  = derp ? "auto-DERP" : "auto-direct";
         }
+        mtu = derp ? TS_MTU_DERP_DEFAULT : TS_MTU_DIRECT_DEFAULT;
     }
 
     /* TCP MSS clamp = MTU - 20 (IP header) - 20 (TCP header). PMTU value
