@@ -2767,7 +2767,7 @@
             </div>
             <div id="sys-sdlog-files" class="mono" style="margin-top:0.5rem; font-size:0.85em; max-height:14rem; overflow:auto;"></div>
           </div>
-          <div class="form-group" style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-top:0.25rem;">
+          <div style="display:flex; flex-direction:row; align-items:center; justify-content:flex-start; gap:0.5rem; flex-wrap:wrap; margin:0.5rem 0;">
             <button class="btn btn-secondary btn-sm" id="sys-sdlog-tail" type="button">Tail latest</button>
             <label style="display:flex; align-items:center; gap:0.35rem; font-size:var(--text-xs); color:var(--fg-muted); margin:0;">
               lines
@@ -2777,6 +2777,7 @@
                 <option value="1000">1000</option>
               </select>
             </label>
+            <button class="btn btn-secondary btn-sm" id="sys-sdlog-tail-refresh" type="button">Refresh</button>
           </div>
           <pre id="sys-sdlog-tailout" class="mono" style="display:none; max-height:280px; overflow:auto; padding:0.6rem; border:1px solid var(--border,#333); border-radius:6px; white-space:pre-wrap;"></pre>
         </div>
@@ -7278,7 +7279,7 @@
         .catch(function () { showToast('error', 'Erase failed', '', 5000); });
     });
 
-    document.getElementById('sys-sdlog-tail').addEventListener('click', function () {
+    function sdlogTail() {
       var pre  = document.getElementById('sys-sdlog-tailout');
       var nSel = document.getElementById('sys-sdlog-tail-n');
       var n    = nSel ? (parseInt(nSel.value, 10) || 200) : 200;
@@ -7298,7 +7299,9 @@
             });
         })
         .catch(function () { pre.textContent = '(failed to load tail)'; showToast('error', 'Tail failed', '', 5000); });
-    });
+    }
+    document.getElementById('sys-sdlog-tail').addEventListener('click', sdlogTail);
+    (function () { var b = document.getElementById('sys-sdlog-tail-refresh'); if (b) b.addEventListener('click', sdlogTail); })();
 
     /* Idle-timeout dropdown — dirty-track + save. The new value also
      * resets the SPA-side countdown so the operator sees the new window
