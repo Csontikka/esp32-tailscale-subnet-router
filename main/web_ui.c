@@ -4391,8 +4391,10 @@ static esp_err_t sdlog_tail_handler(httpd_req_t *req)
         if (v > 0 && v <= 1000) n_lines = v;
     }
 
-    const size_t cap = 16 * 1024;
-    char *buf = malloc(cap);
+    /* PSRAM buffer so up to ~1000 lines fit (a 16 KB internal buffer capped
+     * the tail at ~150 lines, making the 500/1000 line choices meaningless). */
+    const size_t cap = 96 * 1024;
+    char *buf = heap_caps_malloc(cap, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     if (!buf) { httpd_resp_send_500(req); return ESP_FAIL; }
     size_t out_len = 0;
     esp_err_t err = sdlog_tail_file(name, n_lines, buf, cap, &out_len);
