@@ -2449,6 +2449,15 @@
             <span class="card-title">Live log</span>
           </div>
           <div style="display:flex; gap:0.5rem; align-items:center;">
+            <label style="display:flex; align-items:center; gap:0.35rem; font-size:var(--text-xs); color:var(--fg-muted); margin:0;" title="Console (UART) log level — gates this live serial stream + the UART output. Applied live, independent of the SD recorder. Off silences the console (max performance / no UART jitter on the data path); raw panic/boot output is always kept unless Off.">
+              UART level
+              <select class="input" id="sys-sdlog-conlvl" style="height:1.9rem; padding:0.1rem 0.4rem; font-size:var(--text-xs); width:auto;">
+                <option value="3">All (info+)</option>
+                <option value="2">Warn + Err</option>
+                <option value="1">Err only</option>
+                <option value="0">Off</option>
+              </select>
+            </label>
             <span class="badge badge-success" id="log-state" title="Click to pause" style="cursor:pointer; user-select:none;">● live</span>
           </div>
         </div>
@@ -2739,27 +2748,14 @@
           <p class="form-hint" style="margin:0 0 0.75rem 0;">Persists every ESP_LOG line to the onboard microSD card. Survives reboots — the place to look after a silent control-plane wedge. A fresh boot-marker file is written on every boot.</p>
           <p class="form-hint mono" id="sys-sdlog-cardinfo" style="margin:0 0 0.75rem 0;">No SD card detected.</p>
           <div class="form-group">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="sys-sdlog-enabled" disabled> Enable SD recorder
-            </label>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="sys-sdlog-verb">SD recorder level</label>
+            <label class="form-label" for="sys-sdlog-verb">SD recorder</label>
             <select class="input" id="sys-sdlog-verb">
               <option value="3">All (info + warnings + errors)</option>
               <option value="2">Warnings + errors</option>
               <option value="1">Errors only</option>
+              <option value="0">Off — not recording</option>
             </select>
-          </div>
-          <div class="form-group">
-            <label class="form-label" for="sys-sdlog-conlvl">Console (UART) log level</label>
-            <select class="input" id="sys-sdlog-conlvl">
-              <option value="3">All (info + warnings + errors)</option>
-              <option value="2">Warnings + errors (default)</option>
-              <option value="1">Errors only</option>
-              <option value="0">Off — silent UART</option>
-            </select>
-            <span class="form-hint">Independent of the SD recorder, applied live (no reboot). Base compile level is INFO, so <strong>All</strong> captures everything; the runtime master = max(console, SD) so INFO only costs when a sink asks for it. <strong>Off</strong> silences the serial console for max performance / no UART jitter on the data path — the SD black-box can still record. Raw panic/boot output is always kept unless Off.</span>
+            <span class="form-hint">Writes the chosen level to the microSD black-box, applied live. <strong>Off</strong> stops the recorder (writer task halts). Independent of the console (UART) log level — that selector lives on the <strong>Diagnostics</strong> page next to the live log.</span>
           </div>
           <div class="form-group">
             <div style="display:flex; align-items:center; justify-content:space-between; gap:0.5rem; flex-wrap:wrap;">
@@ -2773,12 +2769,6 @@
             <div id="sys-sdlog-files" class="mono" style="margin-top:0.5rem; font-size:0.85em;"></div>
           </div>
           <pre id="sys-sdlog-tailout" class="mono" style="display:none; max-height:280px; overflow:auto; padding:0.6rem; border:1px solid var(--border,#333); border-radius:6px; white-space:pre-wrap;"></pre>
-        </div>
-        <div class="form-footer">
-          <span class="form-footer-hint">Applies immediately on save.</span>
-          <div class="form-footer-actions">
-            <button class="btn btn-primary btn-md" id="sys-sdlog-save" disabled>Save</button>
-          </div>
         </div>
       </div>
 
@@ -7187,11 +7177,13 @@
           sdlogState.present = !!d.present;
           sdlogState.enabled = !!d.enabled;
           var badge = document.getElementById('sys-sdlog-badge');
-          var cb    = document.getElementById('sys-sdlog-enabled');
           var info  = document.getElementById('sys-sdlog-cardinfo');
-          cb.checked  = !!d.enabled;
-          cb.disabled = !d.present;
-          document.getElementById('sys-sdlog-verb').value = String(d.sd_level != null ? d.sd_level : 2);
+          /* SD recorder = one dropdown: Off (=disabled) or a level (=enabled). */
+          var verb  = document.getElementById('sys-sdlog-verb');
+          if (verb) {
+            verb.value    = d.enabled ? String(d.sd_level != null ? d.sd_level : 2) : '0';
+            verb.disabled = !d.present;
+          }
           var _cl = document.getElementById('sys-sdlog-conlvl');
           if (_cl) _cl.value = String(d.console_level != null ? d.console_level : 2);
           if (d.present) {
@@ -7205,7 +7197,6 @@
             badge.textContent = 'No card';
             info.textContent  = 'No SD card detected.';
           }
-          document.getElementById('sys-sdlog-save').disabled = true;
         })
         .catch(function () {});
       apiFetch('/sdlog/list')
@@ -7214,13 +7205,33 @@
         .catch(function () {});
     }
 
-    ['sys-sdlog-enabled', 'sys-sdlog-verb'].forEach(function (id) {
-      var el = document.getElementById(id);
-      if (!el) return;
-      el.addEventListener('change', function () {
-        document.getElementById('sys-sdlog-save').disabled = false;
+    /* SD recorder = single dropdown (Off + levels), applied live like the
+     * console: Off -> disable the recorder, a level -> enable at that level. */
+    (function () {
+      var verb = document.getElementById('sys-sdlog-verb');
+      if (!verb) return;
+      verb.addEventListener('change', function () {
+        if (!sdlogState.present) {
+          showToast('error', 'No SD card', 'Insert a microSD card first.', 4000);
+          loadSdlog();
+          return;
+        }
+        var lvl  = parseInt(verb.value, 10);
+        var body = (lvl === 0) ? { enabled: false } : { enabled: true, sd_level: lvl };
+        apiFetch('/api/sdlog', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify(body)
+        })
+          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function () {
+            var names = ['Off — not recording', 'Errors only', 'Warnings + errors', 'All (info + warnings + errors)'];
+            showToast('success', 'SD recorder set', names[lvl] || '', 3000);
+            loadSdlog();
+          })
+          .catch(function () { showToast('error', 'Failed to set SD recorder', '', 4000); loadSdlog(); });
       });
-    });
+    })();
 
     /* Console (UART) log level is independent of the SD recorder and the
      * firmware applies it live, so it posts immediately on change — and works
@@ -7228,6 +7239,12 @@
     (function () {
       var cl = document.getElementById('sys-sdlog-conlvl');
       if (!cl) return;
+      var names = ['Off — silent UART', 'Errors only', 'Warnings + errors', 'All (info + warnings + errors)'];
+      /* Initial value — covers a Diagnostics-first visit before loadSdlog runs. */
+      apiFetch('/api/sdlog')
+        .then(function (r) { return r.json(); })
+        .then(function (d) { if (d && d.console_level != null) cl.value = String(d.console_level); })
+        .catch(function () {});
       cl.addEventListener('change', function () {
         var lvl = parseInt(cl.value, 10) || 0;
         apiFetch('/api/sdlog', {
@@ -7236,34 +7253,10 @@
           body:    JSON.stringify({ console_level: lvl })
         })
           .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-          .then(function () {
-            var names = ['Off — silent UART', 'Errors only', 'Warnings + errors'];
-            showToast('success', 'Console log level set', names[lvl] || '', 3000);
-          })
+          .then(function () { showToast('success', 'Console (UART) level set', names[lvl] || '', 3000); })
           .catch(function () { showToast('error', 'Failed to set console level', '', 4000); });
       });
     })();
-
-    document.getElementById('sys-sdlog-save').addEventListener('click', function () {
-      if (!sdlogState.present) {
-        showToast('error', 'No SD card', 'Insert a microSD card first.', 5000);
-        return;
-      }
-      var body = {
-        enabled:  document.getElementById('sys-sdlog-enabled').checked,
-        sd_level: parseInt(document.getElementById('sys-sdlog-verb').value, 10) || 2
-      };
-      var btn = this;
-      btn.disabled = true;
-      apiFetch('/api/sdlog', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body)
-      })
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function () { showToast('success', 'SD logging saved', '', 3000); loadSdlog(); })
-        .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
-    });
 
     document.getElementById('sys-sdlog-refresh').addEventListener('click', loadSdlog);
 
