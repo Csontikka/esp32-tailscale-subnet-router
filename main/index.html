@@ -2768,7 +2768,7 @@
             <div id="sys-sdlog-files" class="mono" style="margin-top:0.5rem; font-size:0.85em; max-height:14rem; overflow:auto;"></div>
           </div>
           <div style="display:flex; flex-direction:row; align-items:center; justify-content:flex-start; gap:0.5rem; flex-wrap:wrap; margin:0.5rem 0;">
-            <button class="btn btn-secondary btn-sm" id="sys-sdlog-tail" type="button">Tail latest</button>
+            <span class="form-label" style="margin:0;">Tail latest</span>
             <label style="display:flex; align-items:center; gap:0.35rem; font-size:var(--text-xs); color:var(--fg-muted); margin:0;">
               lines
               <select class="input" id="sys-sdlog-tail-n" style="height:1.9rem; padding:0.1rem 0.4rem; font-size:var(--text-xs); width:auto;">
@@ -7197,6 +7197,7 @@
           }
           var _cl = document.getElementById('sys-sdlog-conlvl');
           if (_cl) _cl.value = String(d.console_level != null ? d.console_level : 2);
+          if (window.logBadgeSetUartOff) window.logBadgeSetUartOff(d.console_level === 0);
           if (d.present) {
             badge.className   = d.enabled ? 'badge badge-success' : 'badge badge-neutral';
             badge.textContent = d.enabled ? 'Recording' : 'Idle';
@@ -7254,10 +7255,14 @@
       /* Initial value — covers a Diagnostics-first visit before loadSdlog runs. */
       apiFetch('/api/sdlog')
         .then(function (r) { return r.json(); })
-        .then(function (d) { if (d && d.console_level != null) cl.value = String(d.console_level); })
+        .then(function (d) {
+          if (d && d.console_level != null) cl.value = String(d.console_level);
+          if (window.logBadgeSetUartOff) window.logBadgeSetUartOff(d && d.console_level === 0);
+        })
         .catch(function () {});
       cl.addEventListener('change', function () {
         var lvl = parseInt(cl.value, 10) || 0;
+        if (window.logBadgeSetUartOff) window.logBadgeSetUartOff(lvl === 0);   /* reflect into the live badge at once */
         apiFetch('/api/sdlog', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -7300,7 +7305,6 @@
         })
         .catch(function () { pre.textContent = '(failed to load tail)'; showToast('error', 'Tail failed', '', 5000); });
     }
-    document.getElementById('sys-sdlog-tail').addEventListener('click', sdlogTail);
     (function () { var b = document.getElementById('sys-sdlog-tail-refresh'); if (b) b.addEventListener('click', sdlogTail); })();
 
     /* Idle-timeout dropdown — dirty-track + save. The new value also
@@ -7450,8 +7454,22 @@
       var cap   = document.getElementById('log-cap');
       var state = document.getElementById('log-state');
       var paused = false;
+      var uartOff = false;   /* mirrors the UART-level selector: Off = no source */
       var carry  = '';   /* partial line carried between polls */
       var firstTick = true;
+
+      /* Single source of truth for the live/paused/off badge, so the UART-level
+       * selector and the pause toggle never contradict each other. */
+      function renderBadge() {
+        if (uartOff)     { state.textContent = '● off';    state.className = 'badge badge-neutral'; state.title = 'Console (UART) level is Off — pick a level to stream'; }
+        else if (paused) { state.textContent = '● paused'; state.className = 'badge badge-warning'; state.title = 'Click to resume'; }
+        else             { state.textContent = '● live';   state.className = 'badge badge-success'; state.title = 'Click to pause'; }
+        state.style.cursor = 'pointer';
+        state.style.userSelect = 'none';
+      }
+      /* The UART-level selector (in this card's header) reflects into the badge:
+       * Off → "● off" (no source to be live about); a level → live/paused. */
+      window.logBadgeSetUartOff = function (off) { uartOff = !!off; renderBadge(); };
 
       function nearBottom() { return (pre.scrollHeight - pre.scrollTop - pre.clientHeight) < 40; }
 
@@ -7510,10 +7528,7 @@
             pre.dataset.seq = j.seq;
             if (size && typeof j.size === 'number') size.textContent = j.size;
             if (cap  && typeof j.cap  === 'number') cap.textContent  = j.cap;
-            if (!paused) {
-              state.textContent = '● live';
-              state.className   = 'badge badge-success';
-            }
+            renderBadge();
             setTimeout(poll, 500);
           })
           .catch(function () {
@@ -7533,13 +7548,9 @@
        * with the badge already showing the state, a second control
        * was a redundant noun for the same verb. */
       state.addEventListener('click', function () {
+        if (uartOff) return;   /* no source to pause/resume while the UART level is Off */
         paused = !paused;
-        state.textContent = paused ? '● paused' : '● live';
-        state.className   = paused ? 'badge badge-warning' : 'badge badge-success';
-        state.title       = paused ? 'Click to resume' : 'Click to pause';
-        /* re-apply cursor pointer in case className wiped inline styles */
-        state.style.cursor      = 'pointer';
-        state.style.userSelect  = 'none';
+        renderBadge();
       });
 
       document.getElementById('log-copy').addEventListener('click', function () {
