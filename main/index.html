@@ -2762,11 +2762,21 @@
               <span class="form-label" style="margin:0;">Log files (<span id="sys-sdlog-count">0</span>)</span>
               <span style="display:flex; gap:0.4rem;">
                 <button class="btn btn-secondary btn-sm" id="sys-sdlog-refresh" type="button">Refresh</button>
-                <button class="btn btn-secondary btn-sm" id="sys-sdlog-tail" type="button">Tail latest</button>
                 <button class="btn btn-danger btn-sm" id="sys-sdlog-erase" type="button">Erase all</button>
               </span>
             </div>
-            <div id="sys-sdlog-files" class="mono" style="margin-top:0.5rem; font-size:0.85em;"></div>
+            <div id="sys-sdlog-files" class="mono" style="margin-top:0.5rem; font-size:0.85em; max-height:14rem; overflow:auto;"></div>
+          </div>
+          <div class="form-group" style="display:flex; align-items:center; gap:0.5rem; flex-wrap:wrap; margin-top:0.25rem;">
+            <button class="btn btn-secondary btn-sm" id="sys-sdlog-tail" type="button">Tail latest</button>
+            <label style="display:flex; align-items:center; gap:0.35rem; font-size:var(--text-xs); color:var(--fg-muted); margin:0;">
+              lines
+              <select class="input" id="sys-sdlog-tail-n" style="height:1.9rem; padding:0.1rem 0.4rem; font-size:var(--text-xs); width:auto;">
+                <option value="200">200</option>
+                <option value="500">500</option>
+                <option value="1000">1000</option>
+              </select>
+            </label>
           </div>
           <pre id="sys-sdlog-tailout" class="mono" style="display:none; max-height:280px; overflow:auto; padding:0.6rem; border:1px solid var(--border,#333); border-radius:6px; white-space:pre-wrap;"></pre>
         </div>
@@ -7269,21 +7279,25 @@
     });
 
     document.getElementById('sys-sdlog-tail').addEventListener('click', function () {
+      var pre  = document.getElementById('sys-sdlog-tailout');
+      var nSel = document.getElementById('sys-sdlog-tail-n');
+      var n    = nSel ? (parseInt(nSel.value, 10) || 200) : 200;
+      pre.style.display = 'block';
+      pre.textContent = 'Loading last ' + n + ' lines…';
+      pre.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
       apiFetch('/sdlog/list')
         .then(function (r) { return r.json(); })
         .then(function (list) {
-          if (!list.length) { showToast('error', 'No files', 'Nothing to tail yet.', 4000); return; }
+          if (!list.length) { pre.textContent = '(no log files yet)'; return; }
           var name = list[0].name;   /* newest first */
-          return apiFetch('/sdlog/tail?file=' + encodeURIComponent(name) + '&n=200')
+          return apiFetch('/sdlog/tail?file=' + encodeURIComponent(name) + '&n=' + n)
             .then(function (r) { return r.text(); })
             .then(function (txt) {
-              var pre = document.getElementById('sys-sdlog-tailout');
-              pre.style.display = 'block';
-              pre.textContent = '# ' + name + '\n' + txt;
+              pre.textContent = '# ' + name + '  (last ' + n + ' lines)\n' + (txt || '(empty)');
               pre.scrollTop = pre.scrollHeight;
             });
         })
-        .catch(function () { showToast('error', 'Tail failed', '', 5000); });
+        .catch(function () { pre.textContent = '(failed to load tail)'; showToast('error', 'Tail failed', '', 5000); });
     });
 
     /* Idle-timeout dropdown — dirty-track + save. The new value also
