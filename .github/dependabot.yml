@@ -1,0 +1,13 @@
+version: 2
+updates:
+  # GitHub Actions used by the workflows in .github/workflows/
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  # The microlink WireGuard/Tailscale stack is a git submodule (external/microlink).
+  # Keeping it current is a security concern — it carries the crypto/protocol code.
+  - package-ecosystem: "gitsubmodule"
+    directory: "/"
+    schedule:
+      interval: "weekly"
