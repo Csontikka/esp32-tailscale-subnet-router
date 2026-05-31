@@ -5,9 +5,11 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
-  # The microlink WireGuard/Tailscale stack is a git submodule (external/microlink).
-  # Keeping it current is a security concern — it carries the crypto/protocol code.
-  - package-ecosystem: "gitsubmodule"
-    directory: "/"
-    schedule:
-      interval: "weekly"
+
+# NOTE: the external/microlink git submodule is intentionally NOT tracked by
+# Dependabot. Its pointer is hand-managed against feature-branch commits (the
+# active line is derp-readwriter-split), NOT the branch declared in .gitmodules
+# (esp32-router-integration). Dependabot's "reset the pointer to the tracked
+# branch HEAD" model therefore REGRESSES the submodule — it once opened a PR to
+# revert 37 commits of DERP/exit-node/throughput fixes for a stale README
+# commit. Bump external/microlink by hand instead.
