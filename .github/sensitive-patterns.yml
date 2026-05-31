@@ -1,0 +1,92 @@
+# Sensitive Data Scanner Configuration
+# Used by .github/workflows/sensitive-check.yml to flag secrets / sensitive
+# data appearing in commits. Patterns are intentionally GENERIC — the actual
+# secret values (web password, tailnet name, real subnet prefixes) are never
+# written here, so this config itself leaks nothing.
+
+# ─── Blocked file patterns (globs) ───────────────────────────────────
+# Files matching these patterns are flagged if they appear in a commit.
+blocked_files:
+  # Secrets / credentials
+  - "secrets/**"
+  - "secrets.yaml"
+  - "secrets.h"
+  - ".env*"
+  - "ts-devices.json"
+  - ".ts-api-token"
+  # Certificates & private keys
+  - "*.pem"
+  - "*.key"
+  - "*.p12"
+  - "*.pfx"
+  - "*.crt"
+  # ESP-IDF config (carries WiFi PSK / Tailscale auth key when populated)
+  - "sdkconfig"
+  - "sdkconfig.old"
+  - "sdkconfig.esp32*"
+  # Internal handoff/notes (contain real IPs, tailnet name, web password)
+  - "HANDOFF*.md"
+  - "*HANDOFF*.md"
+  - "*HANDOFF*.txt"
+  # Packet captures may contain sensitive traffic
+  - "*.pcap"
+  # Tooling state that may embed local paths / tokens
+  - ".claude/**"
+  - ".omc/**"
+
+# ─── Blocked content patterns (regex) ────────────────────────────────
+# File contents are scanned for these. 'allow' whitelists exact full matches;
+# 'exclude_files' skips scanning in specific globs.
+blocked_content:
+  - name: "Tailscale/Headscale auth key"
+    pattern: '\b(tskey|hskey)-[A-Za-z0-9_-]{12,}'
+    exclude_files:
+      - "examples/**"
+      - "**/*.example"
+      - ".github/sensitive-patterns.yml"
+
+  - name: "Tailnet MagicDNS FQDN (generic)"
+    pattern: '\btail[0-9a-f]{6,}\.ts\.net\b'
+    exclude_files:
+      - ".github/sensitive-patterns.yml"
+
+  - name: "Private key block (PEM)"
+    pattern: '-----BEGIN (RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----'
+
+  - name: "GitHub token"
+    pattern: '\b(gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{40,})\b'
+
+  - name: "Cloudflare API token"
+    pattern: '\bcfat_[A-Za-z0-9_-]{20,}\b'
+
+  - name: "Home Assistant long-lived token (JWT)"
+    pattern: 'eyJ[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}\.[A-Za-z0-9_-]{20,}'
+
+  - name: "Generic API key/token assignment"
+    pattern: '(?i)(api[_-]?key|api[_-]?token|auth[_-]?token|secret[_-]?key)\s*[:=]\s*["\x27][A-Za-z0-9_\-/.]{16,}["\x27]'
+    exclude_files:
+      - "tools/test_lib/**"
+      - "examples/**"
+      - "**/*.example"
+      - ".github/sensitive-patterns.yml"
+
+  # Private IPv4 (RFC1918). The firmware legitimately hardcodes default AP/STA
+  # IPs (192.168.x, etc.) throughout main/ and components/, so those trees are
+  # excluded — this rule only catches private IPs leaking into notes/scripts/
+  # docs where real topology would reveal the operator's network.
+  - name: "Private IPv4 address (RFC1918)"
+    pattern: '\b(10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b'
+    allow:
+      - "192.168.4.1"
+      - "192.168.32.1"
+    exclude_files:
+      - "main/**"
+      - "components/**"
+      - "external/**"
+      - "web/**"
+      - "docs/**"
+      - "examples/**"
+      - "tools/**"
+      - "README.md"
+      - "**/*.example"
+      - ".github/sensitive-patterns.yml"
