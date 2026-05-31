@@ -1,0 +1,17 @@
+name: "esp32-tailscale-subnet-router CodeQL config"
+
+# Focus the analysis on FIRST-PARTY code (the firmware in main/ + components/,
+# and the Python tooling). Exclude vendored / generated / non-source trees:
+#  - external/            the microlink submodule has its own repo + security
+#  - managed_components/  ESP-IDF component-manager downloads (build-time)
+#  - build*/ .pio/        build artifacts
+#  - backup_pre_repartition/  captured config dumps, not source
+#  - secrets/             gitignored credentials, never source to scan
+paths-ignore:
+  - external
+  - managed_components
+  - build
+  - build_eth
+  - .pio
+  - backup_pre_repartition
+  - secrets
