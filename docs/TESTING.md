@@ -89,7 +89,7 @@ Exit-node behaviour lives in `routing`.
 ### `pi` — Pi-side WiFi state + watchdog hardening
 SSHes into the Pi, asserts:
 * `wlan0` is in NetworkManager state `100 (connected)`
-* the `esp32-router` profile has `autoconnect-retries=0`
+* the ESP AP's NetworkManager profile has `autoconnect-retries=0`
   (infinite, the hardening we landed after the 6-day silent
   disconnect)
 * `wlan-watchdog.timer` is enabled+active

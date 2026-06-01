@@ -19,6 +19,10 @@ from __future__ import annotations
 import os, time
 from .common import Context, Result, SpaClient, SshClient, check, skip
 
+# NetworkManager profile name on the Pi for the ESP AP. Kept out of the
+# repo — set ESP_AP_PROFILE to match your AP's NM connection name.
+AP_PROFILE = os.environ.get("ESP_AP_PROFILE", "esp32-router")
+
 MODULE_ID = "dns_relay"
 MODULE_DESC = "DNS relay × routing scenarios (Pi can resolve + reach external)"
 
@@ -87,9 +91,9 @@ def _pi_renew(pi: SshClient) -> None:
     `connection up` runs a full DHCPDISCOVER → DHCPOFFER → DHCPREQUEST
     → DHCPACK cycle that picks up the freshly-published DNS server.
     """
-    pi.run("nmcli connection down esp32-router", sudo=True, timeout=15)
+    pi.run(f"nmcli connection down {AP_PROFILE}", sudo=True, timeout=15)
     time.sleep(4)
-    pi.run("nmcli connection up esp32-router", sudo=True, timeout=15)
+    pi.run(f"nmcli connection up {AP_PROFILE}", sudo=True, timeout=15)
     # Wait for state 100 (connected) before sampling
     for _ in range(25):
         rc, out, _ = pi.run("nmcli -t -f GENERAL.STATE device show wlan0", timeout=10)

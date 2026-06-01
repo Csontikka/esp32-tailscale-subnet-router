@@ -4,7 +4,13 @@ enabled+active. Also cross-checks the Pi's wlan0 IP against the ESP's DHCP
 lease table.
 """
 from __future__ import annotations
+import os
 from .common import Context, Result, SpaClient, SshClient, check, skip
+
+# AP profile / Pi hostname kept out of the repo — override via env to match
+# your own setup (defaults are generic placeholders).
+AP_PROFILE = os.environ.get("ESP_AP_PROFILE", "esp32-router")
+PI_HOSTNAME = os.environ.get("PI_HOSTNAME", "raspberrypi")
 
 MODULE_ID = "pi"
 MODULE_DESC = "Pi WiFi state, NM hardening, wlan-watchdog, ESP DHCP cross-check"
@@ -26,7 +32,7 @@ def run(ctx: Context) -> list[Result]:
                 state = line.split(":", 1)[1].strip()
         check(results, MODULE_ID, "wlan0 connected", state == "100 (connected)", f"state={state!r}")
 
-        rc, out, _ = ssh.run("nmcli -t -f connection.autoconnect-retries connection show esp32-router")
+        rc, out, _ = ssh.run(f"nmcli -t -f connection.autoconnect-retries connection show {AP_PROFILE}")
         retries = ""
         for line in out.splitlines():
             if line.startswith("connection.autoconnect-retries:"):
@@ -62,7 +68,7 @@ def run(ctx: Context) -> list[Result]:
               f"clients={[c.get('ip') for c in clients]}")
         if pi_lease:
             check(results, MODULE_ID, "Pi hostname seen by ESP",
-                  pi_lease.get("hostname") in ("raspberrypi", "pi-tailscale-test"),
+                  pi_lease.get("hostname") in (PI_HOSTNAME, "pi-tailscale-test"),
                   f"hostname={pi_lease.get('hostname')!r}")
             rssi = pi_lease.get("rssi")
             check(results, MODULE_ID, "Pi RSSI plausible",
