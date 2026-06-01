@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/Csontikka/esp32-tailscale-subnet-router/security/advisories/new
+    about: Please report security issues privately, not as a public issue.
+  - name: Question / discussion
+    url: https://github.com/Csontikka/esp32-tailscale-subnet-router/discussions
+    about: Ask a question or share a setup.
