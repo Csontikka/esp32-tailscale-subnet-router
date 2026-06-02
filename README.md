@@ -42,7 +42,7 @@ browser. There is no app and no serial console required after the first
 flash.
 
 <div align="center">
-<img src="docs/images/status.png" alt="Web UI — Status dashboard" width="88%">
+<img src="docs/images/status_v2.png" alt="Web UI — Status dashboard" width="88%">
 <br><em>The Status dashboard: uplink, access point, Tailscale node and peers at a glance.</em>
 </div>
 
