@@ -1903,22 +1903,9 @@
           </div>
           <div class="grid grid-cols-2">
             <div class="form-group">
-              <label class="form-label" for="net-ap-channel">Channel</label>
-              <select class="select" id="net-ap-channel">
-                <option value="1">1</option>
-                <option value="2">2</option>
-                <option value="3">3</option>
-                <option value="4">4</option>
-                <option value="5">5</option>
-                <option value="6" selected>6</option>
-                <option value="7">7</option>
-                <option value="8">8</option>
-                <option value="9">9</option>
-                <option value="10">10</option>
-                <option value="11">11</option>
-                <option value="12">12</option>
-                <option value="13">13</option>
-              </select>
+              <label class="form-label">Channel</label>
+              <input class="input mono" type="text" id="net-ap-channel-info" value="Auto" readonly>
+              <span class="form-hint">Automatic — the AP follows the uplink WiFi channel. The ESP32-S3 has a single 2.4&nbsp;GHz radio, so the access point and the uplink must share a channel.</span>
             </div>
           </div>
           <div class="grid grid-cols-2">
@@ -4312,8 +4299,10 @@
           var ap = (d && d.ap) || {};
           document.getElementById('net-ap-ssid').value      = ap.ssid || '';
           document.getElementById('net-ap-pw').value        = '';
-          if (typeof ap.channel === 'number' && ap.channel >= 1 && ap.channel <= 13) {
-            document.getElementById('net-ap-channel').value = String(ap.channel);
+          var chEl = document.getElementById('net-ap-channel-info');
+          if (chEl) {
+            chEl.value = (typeof ap.channel === 'number' && ap.channel >= 1 && ap.channel <= 13)
+              ? ('Auto (channel ' + ap.channel + ')') : 'Auto';
           }
           document.getElementById('net-ap-ip').value        = ap.ip   || '';
           document.getElementById('net-ap-mask').value      = ap.mask || '';
@@ -4626,7 +4615,7 @@
     });
 
     /* AP — same dirty-track + save pattern. */
-    ['net-ap-ssid', 'net-ap-pw', 'net-ap-channel', 'net-ap-ip', 'net-ap-mask', 'net-ap-dns', 'net-ap-dns-relay-enabled', 'net-ap-dns-relay-upstream'].forEach(function (id) {
+    ['net-ap-ssid', 'net-ap-pw', 'net-ap-ip', 'net-ap-mask', 'net-ap-dns', 'net-ap-dns-relay-enabled', 'net-ap-dns-relay-upstream'].forEach(function (id) {
       var el = document.getElementById(id);
       var ev = (el.tagName === 'SELECT') ? 'change' : 'input';
       el.addEventListener(ev, function () {
@@ -4640,7 +4629,6 @@
     document.getElementById('net-ap-save').addEventListener('click', function () {
       var ssid    = document.getElementById('net-ap-ssid').value.trim();
       var pw      = document.getElementById('net-ap-pw').value;
-      var channel = parseInt(document.getElementById('net-ap-channel').value, 10);
       var ip      = document.getElementById('net-ap-ip')  .value.trim();
       var mask    = document.getElementById('net-ap-mask').value.trim();
       var dns     = document.getElementById('net-ap-dns') .value.trim();
@@ -4651,7 +4639,7 @@
       }
       var body = {
         ap: {
-          ssid: ssid, channel: channel, ip: ip, mask: mask, dns: dns,
+          ssid: ssid, ip: ip, mask: mask, dns: dns,
           hidden: document.getElementById('net-ap-hidden').checked,
           dns_relay: {
             enabled:  document.getElementById('net-ap-dns-relay-enabled').checked,

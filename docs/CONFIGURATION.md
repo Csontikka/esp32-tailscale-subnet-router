@@ -31,7 +31,7 @@ Up to **5** networks, tried in order. Per network:
 |---|---|---|
 | **AP SSID** | — | Network this device broadcasts. |
 | **AP password** | — | WPA2 PSK; leave empty to keep current. |
-| **Channel** | 6 | Shared with the STA radio; auto-realigns to the uplink channel. |
+| **Channel** | *auto* | Read-only. The single 2.4 GHz radio is shared with the STA, so the AP automatically follows (and realigns to) the uplink channel — it is not operator-settable. |
 | **AP IP / Subnet mask** | `192.168.4.1` / `255.255.255.0` | The AP subnet. Changing it offers to update the advertised Tailscale route. |
 | **DNS served to AP clients** | this device | Empty = the on-board forwarder; or push a specific resolver. |
 | **On-board DNS forwarder** | on | Resolver + PSRAM response cache for AP clients. |

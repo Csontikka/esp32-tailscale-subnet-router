@@ -412,9 +412,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
     }
 }
 
-/* Initialize soft AP. NVS-prefer: 'ap_ssid' / 'ap_passwd' / 'ap_channel'
- * from the project namespace, falling back to Kconfig only on first
- * boot before the operator runs the setup wizard. */
+/* Initialize soft AP. NVS-prefer: 'ap_ssid' / 'ap_passwd' from the
+ * project namespace, falling back to Kconfig only on first boot before
+ * the operator runs the setup wizard. The channel is auto-selected to
+ * match the uplink (see below) — it is not operator-settable. */
 esp_netif_t *wifi_init_softap(void)
 {
     esp_netif_t *esp_netif_ap = esp_netif_create_default_wifi_ap();
@@ -455,28 +456,24 @@ esp_netif_t *wifi_init_softap(void)
      * 2.4 GHz radio shared by AP and STA. If the two interfaces sit on
      * different channels the radio has to time-share between them, which
      * collapses throughput by ~5-10x (measured ~1200x in the worst case
-     * during this hunt). Channel selection priority:
+     * during this hunt). The AP channel is therefore NOT operator-settable;
+     * it is auto-selected to match the uplink. Selection priority:
      *
-     *   1. `ap_channel` NVS — operator explicitly pinned a channel
-     *   2. `ap_chan_learned` NVS — last STA channel we saw on
+     *   1. `ap_chan_learned` NVS — last STA channel we saw on
      *      assoc, saved by the IP_EVENT_STA_GOT_IP handler. After
      *      one successful STA assoc + reboot, AP comes up on the
      *      home WiFi channel automatically.
-     *   3. Kconfig default — fresh device, no NVS state yet
+     *   2. Kconfig default — fresh device, no NVS state yet
      *
      * Note: in-place AP retune via esp_wifi_set_config(WIFI_IF_AP) from
      * the IP_EVENT_STA_GOT_IP handler tears the AP netif and drops the
      * byte-counter / NAT hooks, so we deliberately do NOT retune at
      * runtime — only save the learned channel for the next boot. */
     /* Selection: learned STA channel from NVS if we have one, otherwise
-     * the Kconfig default. The legacy `ap_channel` NVS knob is
-     * intentionally NOT consulted here — many test devices have a stale
-     * `ap_channel=6` lingering from an older firmware that pre-dated
-     * the single-radio same-channel requirement, and re-honouring it
-     * after the learned channel is set would just pin us back into the
-     * 5-10x throughput hole we are fixing. Once we trust the learned
-     * pipeline we'll add a Web UI override that writes ap_chan_learned
-     * directly. */
+     * the Kconfig default. The legacy operator-pinned `ap_channel` NVS knob
+     * is gone — re-honouring it would just pin us back into the 5-10x
+     * throughput hole on the single radio. The Web UI now shows the channel
+     * read-only (it follows the uplink). */
     int32_t channel = EXAMPLE_ESP_WIFI_CHANNEL;
     int32_t learned = 0;
     if (nvs_param_get_int("ap_chan_learned", &learned) == ESP_OK

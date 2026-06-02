@@ -492,9 +492,15 @@ static esp_err_t network_handler(httpd_req_t *req)
     /* AP — same omit-rule on the password. */
     cJSON *ap = cJSON_CreateObject();
     add_nvs_string(ap, "ssid", "ap_ssid");
-    int32_t channel = 0;
-    if (nvs_param_get_int("ap_channel", &channel) == ESP_OK && channel > 0) {
-        cJSON_AddNumberToObject(ap, "channel", channel);
+    /* Report the LIVE AP channel (read-only in the UI). On the single-radio
+     * ESP32-S3 the AP follows the uplink channel automatically, so there is
+     * no operator-settable channel — the old `ap_channel` NVS knob is dead
+     * and the boot path deliberately ignores it (see wifi_init_softap). */
+    {
+        wifi_config_t ap_cfg;
+        if (esp_wifi_get_config(WIFI_IF_AP, &ap_cfg) == ESP_OK && ap_cfg.ap.channel > 0) {
+            cJSON_AddNumberToObject(ap, "channel", ap_cfg.ap.channel);
+        }
     }
     /* AP-side IP override — empty / unset means the default 192.168.4.1/24. */
     add_nvs_string(ap, "ip",   "ap_ip");
@@ -1007,7 +1013,8 @@ static esp_err_t network_save_handler(httpd_req_t *req)
 
         save_str_if_present(ap, "ssid",     "ap_ssid");
         save_str_if_present(ap, "password", "ap_passwd");
-        save_int_if_present(ap, "channel",  "ap_channel");
+        /* AP channel is auto-managed (follows the uplink on the single radio);
+         * the UI exposes it read-only, so there is nothing to persist here. */
         save_str_if_present(ap, "ip",       "ap_ip");
         save_str_if_present(ap, "mask",     "ap_mask");
         save_str_if_present(ap, "dns",      "ap_dns");
