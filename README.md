@@ -124,8 +124,14 @@ traffic you route through it.)*
 | **Storage (optional)** | microSD for the log flight-recorder + PCAP |
 | **Power** | USB-C; ~real-world draw of a small dev board |
 
-Other ESP-IDF targets (`esp32`, `esp32-c3`, `wt32-eth01`) are kept in
-the PlatformIO matrix but only the S3 sees regular testing.
+**Only the ESP32-S3 is supported.** It's the board this firmware is
+written for and tested on, and it's the only one I have. The PlatformIO
+config still lists a few other targets (`esp32`, `esp32-c3`,
+`wt32-eth01`) left over from earlier scaffolding, but I don't build or
+test against them and have no idea whether they work — so I can't support
+them. This is a free hobby project and I'm not planning to buy extra
+boards just to validate other hardware. If you get it running elsewhere,
+great — but you're on your own there, and PRs are welcome.
 
 ## Quick start
 
