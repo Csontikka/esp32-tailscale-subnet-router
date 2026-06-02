@@ -91,7 +91,7 @@ DESKTOP + MOBILE (same structure, form grids collapse on mobile)
 │  │ REMOTE CONSOLE                                                   │   │
 │  │ ─────────────────────────────────────────────────────────────── │   │
 │  │  Service   ◉ Enabled   ○ Disabled                                │   │
-│  │  Status    [Connected: 192.168.7.10:50241]  [Kick]                  │   │
+│  │  Status    [Connected: 10.0.0.42:50241]  [Kick]                  │   │
 │  │  Port       2323                                                  │   │
 │  │  Bind       ☑ AP   ☑ STA   ☐ Tailscale                          │   │
 │  │  ⚠ Tailscale binding = plain TCP inside encrypted tunnel.        │   │

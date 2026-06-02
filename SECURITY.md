@@ -44,6 +44,27 @@ This project is under **heavy development**. Only the current `main` branch is
 supported for security fixes. Older commits and unreleased snapshots are not
 maintained.
 
+## History rewrite — 2026-06-01
+
+The git history of this repository was rewritten on 2026-06-01 to remove
+development-environment data that had been committed in earlier code comments,
+a deleted helper script, and test utilities:
+
+- the maintainer's real Tailscale **tailnet name** and a development **WiFi
+  SSID** (replaced with generic placeholders);
+- development-network **IP ranges** (replaced with generic RFC1918 examples);
+- a development **admin password** that appeared in a since-deleted helper
+  script (`tools/verify_routes.py`) — replaced with `REDACTED`.
+
+That password protected only a local development board, but since it was once
+public it must be considered **burned** and should be **rotated** on any
+affected device. No Tailscale auth keys, WireGuard keys, API tokens, or private
+keys were ever committed (those have always been git-ignored).
+
+Because history was rewritten, commit hashes prior to this date differ from any
+older clone or fork. Re-clone rather than pull if you have an old copy. The
+rewrite is marked by the annotated tag `history-scrub-2026-06-01`.
+
 ## Non-affiliation notice
 
 This project is **not** affiliated with, sponsored by, or endorsed by Tailscale

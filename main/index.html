@@ -3299,53 +3299,6 @@
     // API FETCH — /api/status
     // =====================================================================
 
-    // Hardcoded fallback sample data (used when served standalone from filesystem)
-    var SAMPLE_STATUS = {
-      uplink: {
-        connected: true,
-        ssid: 'HomeNetwork_5G',
-        ip: '192.168.1.47',
-        rssi: -62,
-        channel: 6,
-        band: '2.4 GHz'
-      },
-      ap: {
-        ssid: 'ESP32_IoT_AP',
-        ip: '192.168.4.1',
-        mac: '7C:DF:A1:5E:3B:02',
-        channel: 6,
-        clients: 3
-      },
-      heap_free: 187 * 1024,
-      heap_total: 253 * 1024,
-      uptime_sec: 188820,
-      last_reboot: '2026-05-18T09:41:00',
-      reset_reason: 'POWER_ON',
-      tailscale: {
-        enabled: true,
-        connected: true,
-        ip: '100.64.0.12',
-        hostname: 'esp32-router',
-        routes: ['192.168.4.0/24'],
-        exit_node: null,
-        peers_online: 4,
-        peers_total: 6,
-        peers: [
-          {name:'laptop-work',  ip:'100.64.0.1',  online:true,  path:'direct'},
-          {name:'pi-homelab',   ip:'100.64.0.3',  online:true,  path:'DERP'},
-          {name:'phone-pixel',  ip:'100.64.0.7',  online:true,  path:'direct'},
-          {name:'desktop-linux',ip:'100.64.0.9',  online:true,  path:'direct'},
-          {name:'tablet-old',   ip:'100.64.0.11', online:false, path:null},
-          {name:'vpn-exit-de',  ip:'100.64.0.14', online:false, path:null}
-        ]
-      },
-      telemetry: {
-        status: 'ok',
-        boot_count: 47,
-        flash_count: 12
-      }
-    };
-
     /* RSSI → bars count (1..4) and quality class.
      * Single source of truth — used by the Status-tab Uplink card,
      * the Network-tab scan modal, and the Diagnostics-tab scan list.
@@ -3798,14 +3751,8 @@
         })
         .catch(function (err) {
           if (err && err.message === '401') return; // already handled
-          /* file:// preview-mode fallback: when the SPA is opened
-           * straight from disk for design work there is no API, so we
-           * paint sample data. On the real device a fetch failure is
-           * an honest error — surface it. */
-          if (location.protocol === 'file:') {
-            applyStatus(SAMPLE_STATUS);
-            return;
-          }
+          /* A fetch failure on the device is an honest error — surface
+           * it rather than masking it with stale sample data. */
           ob.className = 'badge badge-danger';
           ob.innerHTML = '<span class="badge-dot"></span> Unreachable';
         })

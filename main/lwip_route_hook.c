@@ -377,7 +377,7 @@ struct netif *__wrap_ip4_route_src_hook(const ip4_addr_t *src,
     /* 2. Exit-node + lan_bypass: send LAN-class traffic to STA, not the
      * tunnel. Two passes, mirroring tailscale Go but extended:
      *   2a. Netif-prefix match — the upstream behaviour. Catches the
-     *       STA's DHCP-assigned subnet directly (e.g. 192.168.1.10/24).
+     *       STA's DHCP-assigned subnet directly (e.g. 192.168.1.0/24).
      *   2b. RFC 1918 private fallback — sends non-netif-prefix private
      *       addresses (e.g. 192.168.1.1 on the home router behind the
      *       STA's gateway) to the STA. This is *broader* than upstream
