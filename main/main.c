@@ -56,6 +56,7 @@
 #include "reset_history.h"
 #include "ota.h"
 #include "cli.h"
+#include "esp_ota_ops.h"
 
 /* The examples use WiFi configuration that you can set via project configuration menu.
 
@@ -892,4 +893,25 @@ void app_main(void)
      * subsystem the commands can poke is ready by the time the prompt
      * appears. Type `help` over `pio device monitor` / `idf.py monitor`. */
     cli_init();
+
+    /* Confirm this image is healthy so the bootloader rollback (enabled via
+     * CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE) doesn't revert a fresh OTA on the
+     * next reboot. Reaching the end of app_main means every subsystem came up
+     * without an ESP_ERROR_CHECK abort or early panic, and the web server + AP
+     * are live — a strong "boot succeeded" signal. We validate EARLY on
+     * purpose: a channel-realign reboot can fire within seconds of the STA
+     * acquiring an IP, and must not be allowed to roll back a good image. */
+    {
+        const esp_partition_t *running = esp_ota_get_running_partition();
+        esp_ota_img_states_t ota_state;
+        if (running
+            && esp_ota_get_state_partition(running, &ota_state) == ESP_OK
+            && ota_state == ESP_OTA_IMG_PENDING_VERIFY) {
+            if (esp_ota_mark_app_valid_cancel_rollback() == ESP_OK) {
+                ESP_LOGI("ota", "OTA image confirmed valid — rollback cancelled");
+            } else {
+                ESP_LOGW("ota", "failed to mark OTA image valid");
+            }
+        }
+    }
 }
