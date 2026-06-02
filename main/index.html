@@ -2850,13 +2850,6 @@
           </div>
           <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:0.6rem 0; border-bottom:1px solid var(--border);">
             <div>
-              <div style="font-weight:500; color:var(--text-muted);">Disable web interface</div>
-              <div class="text-muted" style="font-size:0.85rem;">Not yet implemented — would require serial console to re-enable.</div>
-            </div>
-            <button class="btn btn-danger btn-sm" disabled>Disable</button>
-          </div>
-          <div style="display:flex; justify-content:space-between; align-items:center; gap:1rem; padding:0.6rem 0; border-bottom:1px solid var(--border);">
-            <div>
               <div style="font-weight:500;">Clear admin password</div>
               <div class="text-muted" style="font-size:0.85rem;">Removes the web password and logs you out. The first-boot wizard will appear on next visit. Anyone on the network can reach the device until a new password is set.</div>
             </div>
@@ -3136,30 +3129,6 @@
         _modalCallback = null;
       }
     });
-
-    // =====================================================================
-    // DANGER ZONE ACTIONS
-    // =====================================================================
-    function confirmFactory() {
-      showConfirm(
-        'Factory Reset',
-        'This will erase all settings from NVS and reboot the device into its default state. This cannot be undone.',
-        function () {
-          showToast('warning', 'Resetting…', 'The device is rebooting.');
-          // Production: fetch('/api/factory-reset', {method:'POST'})
-        }
-      );
-    }
-
-    function confirmDisableUI() {
-      showConfirm(
-        'Disable Web UI',
-        'The web interface will be disabled on the next boot. Re-enable it via the serial console with: web_ui enable',
-        function () {
-          showToast('info', 'Web UI disabled', 'Takes effect after reboot.');
-        }
-      );
-    }
 
     // =====================================================================
     // REFRESH BUTTON
