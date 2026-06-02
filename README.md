@@ -453,9 +453,9 @@ the firmware by `main/CMakeLists.txt` at build time.
 
 Found a bug or have an idea? Open an
 [issue](https://github.com/Csontikka/esp32-tailscale-subnet-router/issues).
-If this project saved you a Raspberry Pi (or an afternoon), consider
-[buying me a coffee](https://buymeacoffee.com/csontikka) ☕ — it's a free
-hobby project, and that's genuinely what keeps the effort going.
+If this firmware saved you a router purchase or an afternoon of
+debugging, you can chip in:
+[buy me a coffee](https://buymeacoffee.com/csontikka) ☕
 
 ## Credits & license
 
