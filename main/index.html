@@ -1801,30 +1801,6 @@
             </div>
           </div>
 
-          <!-- Telemetry card -->
-          <div class="card" id="card-telemetry">
-            <div class="card-header">
-              <div class="card-header-left">
-                <span class="card-header-icon">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
-                  </svg>
-                </span>
-                <span class="card-title">Telemetry</span>
-              </div>
-              <span class="badge badge-neutral" id="telemetry-badge">—</span>
-            </div>
-            <div class="stat-list">
-              <div class="stat-row">
-                <span class="stat-label">Boot count</span>
-                <span class="stat-value" id="tlm-boots">—</span>
-              </div>
-              <div class="stat-row">
-                <span class="stat-label">Flash count</span>
-                <span class="stat-value" id="tlm-flashes">—</span>
-              </div>
-            </div>
-          </div>
 
         </div>
       </div><!-- /grid row 2 -->
@@ -2674,33 +2650,6 @@
         </div>
       </div>
 
-      <!-- ===== Telemetry ===== -->
-      <div class="card mt-4">
-        <div class="card-header">
-          <div class="card-header-left">
-            <span class="card-title">Anonymous telemetry</span>
-          </div>
-          <span class="badge badge-neutral" id="sys-tlm-badge">—</span>
-        </div>
-        <div class="card-body">
-          <p class="form-hint" style="margin:0 0 0.75rem 0;">Sends a SHA-256 device hash + boot/flash counters + firmware version every 24 h. Never sends SSIDs, IP addresses, MAC addresses or peer information.</p>
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="sys-tlm-enabled"> Enable telemetry
-            </label>
-          </div>
-          <!-- Worker URL + X-Tlm-Key intentionally fixed in firmware. -->
-
-          <div class="stat-row"><span class="stat-label">Boot count</span> <span class="stat-value mono" id="sys-tlm-boots">—</span></div>
-          <div class="stat-row"><span class="stat-label">Flash count</span><span class="stat-value mono" id="sys-tlm-flashes">—</span></div>
-        </div>
-        <div class="form-footer">
-          <span class="form-footer-hint">Applies immediately on save.</span>
-          <div class="form-footer-actions">
-            <button class="btn btn-primary btn-md" id="sys-tlm-save" disabled>Save</button>
-          </div>
-        </div>
-      </div>
 
 
       <!-- ===== SD flight-recorder ===== -->
@@ -2900,7 +2849,16 @@
           <div class="stat-row"><span class="stat-label">Issues</span><span class="stat-value mono"><a href="https://github.com/Csontikka/esp32-tailscale-subnet-router/issues" target="_blank" rel="noopener" style="color:var(--accent);">github.com/&hellip;/issues</a></span></div>
           <div class="stat-row"><span class="stat-label">Tailscale stack</span><span class="stat-value mono"><a href="https://github.com/Csontikka/microlink" target="_blank" rel="noopener" style="color:var(--accent);">Csontikka/microlink</a> (userspace WireGuard + DERP + DISCO)</span></div>
           <div class="stat-row"><span class="stat-label">License</span><span class="stat-value mono">MIT — see LICENSE in the repo</span></div>
-          <p class="form-hint" style="margin-top:0.5rem;">No personal data leaves the device unless telemetry is enabled (see the card below — and even then only an anonymous SHA-256 hash + boot/flash counters + firmware version are sent).</p>
+          <div class="stat-row" title="Sends a SHA-256 device hash + boot/flash counters + firmware version every 24 h. Never sends SSIDs, IP addresses, MAC addresses, or peer information.">
+            <span class="stat-label">Anonymous telemetry</span>
+            <span class="stat-value">
+              <label style="display:inline-flex; align-items:center; gap:0.45rem; cursor:pointer;">
+                <input type="checkbox" id="about-tlm-enabled">
+                <span class="mono" id="about-tlm-state">—</span>
+              </label>
+            </span>
+          </div>
+          <p class="form-hint" style="margin-top:0.5rem;">No personal data leaves the device unless telemetry is enabled above — and even then only an anonymous SHA-256 hash + boot/flash counters + firmware version are sent. (Hover the toggle for details.)</p>
         </div>
       </div>
 
@@ -3514,22 +3472,6 @@
 
       /* Surface the OTA banner if a newer release was seen. */
       updateOtaBanner(data.ota || {});
-
-      // Telemetry
-      var tlm = data.telemetry || {};
-      var tlmBadge = document.getElementById('telemetry-badge');
-      if (tlm.status === 'ok') {
-        tlmBadge.className = 'badge badge-success';
-        tlmBadge.textContent = 'On';
-      } else if (tlm.status === 'off') {
-        tlmBadge.className = 'badge badge-neutral';
-        tlmBadge.textContent = 'Off';
-      } else {
-        tlmBadge.className = 'badge badge-warning';
-        tlmBadge.textContent = 'Init…';
-      }
-      document.getElementById('tlm-boots').textContent   = tlm.boot_count  != null ? tlm.boot_count  : '—';
-      document.getElementById('tlm-flashes').textContent = tlm.flash_count != null ? tlm.flash_count : '—';
 
       // Timestamp
       document.getElementById('status-updated').textContent = 'Last updated ' + new Date().toLocaleTimeString();
@@ -6301,14 +6243,11 @@
           if (ab2) { ab2.textContent = buildTag; ab2.title = builtStr; }
 
           var tlm = d.telemetry || {};
-          document.getElementById('sys-dh').textContent       = tlm.device_hash || '—';
-          document.getElementById('sys-tlm-enabled').checked  = !!tlm.enabled;
-          document.getElementById('sys-tlm-boots').textContent   = (tlm.boot_count  != null) ? tlm.boot_count  : '—';
-          document.getElementById('sys-tlm-flashes').textContent = (tlm.flash_count != null) ? tlm.flash_count : '—';
-          var tlmBadge = document.getElementById('sys-tlm-badge');
-          tlmBadge.className   = tlm.enabled ? 'badge badge-success' : 'badge badge-neutral';
-          tlmBadge.textContent = tlm.enabled ? 'On' : 'Off';
-          document.getElementById('sys-tlm-save').disabled = true;
+          document.getElementById('sys-dh').textContent = tlm.device_hash || '—';
+          var atog = document.getElementById('about-tlm-enabled');
+          var ast  = document.getElementById('about-tlm-state');
+          if (atog) { atog.checked = !!tlm.enabled; atog.disabled = false; }
+          if (ast)  ast.textContent = tlm.enabled ? 'On' : 'Off';
 
           /* SD flight-recorder card refreshes on every System-tab load. */
           if (typeof loadSdlog === 'function') loadSdlog();
@@ -7012,24 +6951,31 @@
         .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
     });
 
-    document.getElementById('sys-tlm-enabled').addEventListener('change', function () {
-      document.getElementById('sys-tlm-save').disabled = false;
-    });
-    document.getElementById('sys-tlm-save').addEventListener('click', function () {
-      var body = {
-        telemetry: { enabled: document.getElementById('sys-tlm-enabled').checked }
-      };
-      var btn = this;
-      btn.disabled = true;
-      apiFetch('/api/system', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body)
-      })
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function () { showToast('success', 'Telemetry saved', '', 3000); loadSystem(); })
-        .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
-    });
+    /* Telemetry toggle lives in the About card now — applies immediately. */
+    (function () {
+      var atog = document.getElementById('about-tlm-enabled');
+      if (!atog) return;
+      atog.addEventListener('change', function () {
+        var on = this.checked;
+        var st = document.getElementById('about-tlm-state');
+        this.disabled = true;
+        apiFetch('/api/system', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body:    JSON.stringify({ telemetry: { enabled: on } })
+        })
+          .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+          .then(function () {
+            if (st) st.textContent = on ? 'On' : 'Off';
+            showToast('success', 'Telemetry ' + (on ? 'enabled' : 'disabled'), '', 3000);
+          })
+          .catch(function () {
+            atog.checked = !on;
+            showToast('error', 'Save failed', '', 5000);
+          })
+          .finally(function () { atog.disabled = false; });
+      });
+    })();
 
 
     /* ===== SD flight-recorder ===== */
