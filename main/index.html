@@ -2746,7 +2746,7 @@
         </div>
         <div class="card-body">
           <p class="form-hint" style="margin:0 0 0.75rem 0;">Persists every ESP_LOG line to the onboard microSD card. Survives reboots — the place to look after a silent control-plane wedge. A fresh boot-marker file is written on every boot.</p>
-          <p class="form-hint mono" id="sys-sdlog-cardinfo" style="margin:0 0 0.75rem 0;">No SD card detected.</p>
+          <p class="form-hint mono" id="sys-sdlog-cardinfo" style="margin:0 0 0.75rem 0;">No usable SD card. Insert a FAT32-formatted card and reboot to enable the recorder.</p>
           <div class="form-group">
             <label class="form-label" for="sys-sdlog-verb">SD recorder</label>
             <select class="input" id="sys-sdlog-verb">
@@ -7142,6 +7142,15 @@
             verb.value    = d.enabled ? String(d.sd_level != null ? d.sd_level : 2) : '0';
             verb.disabled = !d.present;
           }
+          /* With no card every SD-specific control is inert — and there's
+           * no hot-plug (a card inserted now isn't seen until reboot), so a
+           * Refresh wouldn't change anything either. Disable them all; the
+           * console-level selector stays live (it works without a card). */
+          ['sys-sdlog-refresh', 'sys-sdlog-erase', 'sys-sdlog-tail-refresh',
+           'sys-sdlog-tail-n'].forEach(function (id) {
+            var el = document.getElementById(id);
+            if (el) el.disabled = !d.present;
+          });
           var _cl = document.getElementById('sys-sdlog-conlvl');
           if (_cl) _cl.value = String(d.console_level != null ? d.console_level : 2);
           if (window.logBadgeSetUartOff) window.logBadgeSetUartOff(d.console_level === 0);
@@ -7154,7 +7163,7 @@
           } else {
             badge.className   = 'badge badge-neutral';
             badge.textContent = 'No card';
-            info.textContent  = 'No SD card detected.';
+            info.textContent  = 'No usable SD card. Insert a FAT32-formatted card and reboot to enable the recorder.';
           }
         })
         .catch(function () {});
