@@ -261,12 +261,12 @@ The single-page UI has six sections:
 
 | Section | What's there |
 |---|---|
-| **Status** | Uplink, AP, Tailscale node + peer list, memory, uptime, telemetry |
+| **Status** | Uplink, AP, Tailscale node + peer list, memory, uptime |
 | **Network** | Uplink networks, AP (SSID/IP/DNS), DHCP reservations & leases, MAC denylist, port forwarding |
 | **Tailscale** | Auth key, hostname, advertised routes, exit node, MTU, peer table |
 | **Firewall** | The four ACL chains, rule editor, hit counters |
 | **Diagnostics** | Route-explain, ping, traceroute, speed test, WiFi scan, PCAP, live + SD logs |
-| **System** | Device name, firmware/OTA, SD-card logging, telemetry, backup, danger zone |
+| **System** | Device name, firmware/OTA, SD-card logging, backup, danger zone, About (telemetry toggle) |
 
 ### Firewall / ACL
 
@@ -365,8 +365,8 @@ key); disable it for the tailnet or pre-authorize the node.
 
 The device reports a tiny, fully anonymous status payload to a Cloudflare
 Worker — a small JSON on boot, then a heartbeat roughly once a day. **It's
-on by default**, and one toggle under **System → Telemetry** turns it off
-for good (the choice is saved in NVS). Anyone can verify exactly what it
+on by default**, and one toggle in the **About** section (System tab)
+turns it off for good (the choice is saved in NVS). Anyone can verify exactly what it
 does — the whole thing is one function in
 [`main/telemetry.c`](main/telemetry.c).
 
@@ -429,8 +429,8 @@ you have a specific reason not to:
   uses it long-term, that's fair feedback that I shouldn't keep pouring
   effort in.
 
-Either way it's your call — flip it off under **System → Telemetry** and
-the device never phones home again.
+Either way it's your call — flip it off in **About → Anonymous telemetry**
+(System tab) and the device never phones home again.
 
 ## Security
 
