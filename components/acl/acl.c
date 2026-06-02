@@ -344,8 +344,7 @@ uint8_t acl_check_packet(uint8_t acl_no, struct pbuf *p)
         matched_rule = i;
 
         uint8_t action = rule->allow & 0x01;
-        uint8_t monitor = rule->allow & ACL_MONITOR;
-        result = action | monitor;
+        result = action;
 
         if (action == ACL_ALLOW) {
             acl_stats[acl_no].packets_allowed++;
@@ -608,14 +607,7 @@ void acl_print(uint8_t acl_no)
         }
 
         /* Format action */
-        const char *action_str;
-        uint8_t action = rule->allow & 0x01;
-        uint8_t monitor = rule->allow & ACL_MONITOR;
-        if (action == ACL_ALLOW) {
-            action_str = monitor ? "allow+M" : "allow";
-        } else {
-            action_str = monitor ? "deny+M" : "deny";
-        }
+        const char *action_str = (rule->allow & 0x01) == ACL_ALLOW ? "allow" : "deny";
 
         printf("%3d  %-6s  %-20s  %-20s  %-6s  %-6s  %-8s  %lu\n",
                i, proto_str, src_str, dest_str, s_port_str, d_port_str,

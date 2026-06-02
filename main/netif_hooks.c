@@ -19,7 +19,6 @@
 
 #include "acl.h"
 #include "netif_hooks.h"
-#include "pcap_capture.h"
 
 /* MTU-management knobs published by tailscale_mtu.c. ap_mss_clamp is
  * the cap we enforce on every TCP SYN crossing the AP interface (so
@@ -216,16 +215,12 @@ static inline void apply_sta_ttl_override(struct pbuf *p)
     iphdr->_chksum = (uint16_t)~sum;
 }
 
-/* ACL check + PCAP feed in one pass. Returns the raw acl_check_packet
- * result so the caller can act on the deny/allow bit; we side-effect
- * pcap_capture_packet here when either the ACL rule asked for it
- * (ACL_MONITOR) or the current pcap mode is promiscuous. */
+/* ACL check. (A PCAP tap used to live here; the capture feature was
+ * removed.) Thin wrapper so the hook call sites stay unchanged. */
 static inline uint8_t acl_check_and_tap(uint8_t list_id, struct pbuf *p, bool is_ap)
 {
-    uint8_t action = acl_check_packet(list_id, p);
-    bool monitored = (action != ACL_NO_MATCH) && (action & ACL_MONITOR);
-    if (pcap_should_capture(monitored, is_ap)) pcap_capture_packet(p);
-    return action;
+    (void)is_ap;
+    return acl_check_packet(list_id, p);
 }
 
 static inline bool acl_drops(uint8_t action)
@@ -243,8 +238,8 @@ static err_t sta_input_hook(struct pbuf *p, struct netif *netif)
 static err_t sta_linkoutput_hook(struct netif *netif, struct pbuf *p)
 {
     if (p) s_sta_bytes_out += p->tot_len;
-    /* TTL rewrite happens BEFORE the ACL tap so the PCAP capture and
-     * ACL rules both see the value that actually goes out the wire. */
+    /* TTL rewrite happens BEFORE the ACL check so the ACL rules see
+     * the value that actually goes out the wire. */
     apply_sta_ttl_override(p);
     if (acl_drops(acl_check_and_tap(ACL_FROM_ESP, p, false))) { return ERR_OK; }
     return original_sta_linkoutput ? original_sta_linkoutput(netif, p) : ERR_VAL;

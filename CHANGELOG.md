@@ -24,12 +24,12 @@ from a built-in web UI.
   survives a direct↔DERP transition.
 - **ACL firewall**: four hook points (Internet↔ESP, Clients↔ESP),
   first-match-wins rules by protocol / CIDR / port / action, per-rule
-  hit counters, optional PCAP mirroring.
+  hit counters.
 - **DNS forwarder** for AP clients with a PSRAM-backed response cache,
   worker pool, and cache stats.
 - **Diagnostics**: on-device ping, traceroute, route-explain, a 1 MB
-  download/upload speed test (cancellable), live WiFi scan, PCAP
-  capture, and a microSD "flight recorder" for control-plane stalls.
+  download/upload speed test (cancellable), live WiFi scan, and a
+  microSD "flight recorder" for control-plane stalls.
 - **DHCP**: reservations, live lease table with per-client signal, MAC
   denylist; **port forwarding**.
 - **Web UI**: responsive single-page admin served from the device —

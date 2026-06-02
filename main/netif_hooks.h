@@ -5,7 +5,7 @@
  * actually drop denied traffic. Idempotent; call once after WiFi has
  * started.
  *
- * Future hooks (byte counters, PCAP tap, TTL override, kill switch)
+ * Future hooks (byte counters, TTL override, kill switch)
  * land here too, sharing the same install/save-original-fn pattern.
  *
  * SPDX-License-Identifier: MIT

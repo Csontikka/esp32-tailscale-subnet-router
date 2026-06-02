@@ -49,7 +49,6 @@
 #include "esp_core_dump.h"
 #include "nvs.h"
 #include "dns_relay.h"
-#include "pcap_capture.h"
 #include "wifi_networks.h"
 #include "dhcp_reservations.h"
 #include "portmap.h"
@@ -882,10 +881,6 @@ void app_main(void)
      * (lock-free) to decide whether to deauth the freshly-associated
      * station before it gets anywhere. */
     mac_deny_init();
-
-    /* PCAP-over-TCP capture (listens on port 19000 for Wireshark).
-     * Mode is OFF on boot; operator enables it from /api/tools/pcap. */
-    pcap_init();
 
     /* OTA — manual web upload handler + (optionally) the GitHub poller.
      * Init must precede web_ui so the handler is ready when the server

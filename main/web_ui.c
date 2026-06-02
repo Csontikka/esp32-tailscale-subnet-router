@@ -29,7 +29,6 @@
 #include "acl.h"
 #include "sdlog.h"
 #include "net_diag.h"
-#include "pcap_capture.h"
 #include "wifi_networks.h"
 #include "dhcp_reservations.h"
 #include "dhcps_ext.h"
@@ -1557,64 +1556,6 @@ static const httpd_uri_t uri_tools_nettest_post = {
     .uri = "/api/tools/nettest", .method = HTTP_POST, .handler = tools_nettest_post_handler,
 };
 
-static esp_err_t tools_pcap_status_handler(httpd_req_t *req)
-{
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
-
-    cJSON *root = cJSON_CreateObject();
-    cJSON_AddStringToObject(root, "mode",            pcap_mode_to_string(pcap_get_mode()));
-    cJSON_AddNumberToObject(root, "mode_value",      pcap_get_mode());
-    cJSON_AddBoolToObject  (root, "client_connected", pcap_client_connected());
-    cJSON_AddNumberToObject(root, "captured",        pcap_get_captured_count());
-    cJSON_AddNumberToObject(root, "dropped",         pcap_get_dropped_count());
-    cJSON_AddNumberToObject(root, "snaplen",         pcap_get_snaplen());
-    size_t used = 0, total = 0;
-    pcap_get_buffer_usage(&used, &total);
-    cJSON_AddNumberToObject(root, "buf_used",  used);
-    cJSON_AddNumberToObject(root, "buf_total", total);
-    cJSON_AddNumberToObject(root, "tcp_port",  19000);   /* hardcoded in pcap_capture.c */
-
-    char *body = cJSON_PrintUnformatted(root);
-    cJSON_Delete(root);
-    httpd_resp_set_type(req, "application/json");
-    esp_err_t err = httpd_resp_sendstr(req, body);
-    free(body);
-    return err;
-}
-
-static esp_err_t tools_pcap_save_handler(httpd_req_t *req)
-{
-    if (require_auth(req) != ESP_OK) return ESP_FAIL;
-
-    char buf[128];
-    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
-
-    cJSON *body = cJSON_Parse(buf);
-    if (!body) {
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
-        return ESP_FAIL;
-    }
-    const cJSON *m = cJSON_GetObjectItem(body, "mode");
-    if (cJSON_IsString(m)) {
-        if      (!strcmp(m->valuestring, "off"))         pcap_set_mode(PCAP_MODE_OFF);
-        else if (!strcmp(m->valuestring, "acl_monitor")) pcap_set_mode(PCAP_MODE_ACL_MONITOR);
-        else if (!strcmp(m->valuestring, "promiscuous")) pcap_set_mode(PCAP_MODE_PROMISCUOUS);
-    }
-    const cJSON *s = cJSON_GetObjectItem(body, "snaplen");
-    if (cJSON_IsNumber(s)) pcap_set_snaplen((uint16_t)s->valuedouble);
-    cJSON_Delete(body);
-
-    httpd_resp_set_type(req, "application/json");
-    return httpd_resp_sendstr(req, "{\"ok\":true}");
-}
-
-static const httpd_uri_t uri_tools_pcap_get = {
-    .uri = "/api/tools/pcap", .method = HTTP_GET,  .handler = tools_pcap_status_handler,
-};
-static const httpd_uri_t uri_tools_pcap_set = {
-    .uri = "/api/tools/pcap", .method = HTTP_POST, .handler = tools_pcap_save_handler,
-};
-
 static esp_err_t firewall_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -1653,7 +1594,6 @@ static esp_err_t firewall_handler(httpd_req_t *req)
                 cJSON_AddNumberToObject(r, "s_port", entries[j].s_port);
                 cJSON_AddNumberToObject(r, "d_port", entries[j].d_port);
                 cJSON_AddNumberToObject(r, "action", entries[j].allow & 0x01);
-                cJSON_AddBoolToObject  (r, "monitor", (entries[j].allow & ACL_MONITOR) != 0);
                 cJSON_AddNumberToObject(r, "hits",   entries[j].hit_count);
                 cJSON_AddItemToArray(rules, r);
             }
@@ -1724,13 +1664,11 @@ static esp_err_t firewall_add_handler(httpd_req_t *req)
     const cJSON *sp = cJSON_GetObjectItem(body, "s_port");
     const cJSON *dp = cJSON_GetObjectItem(body, "d_port");
     const cJSON *ac = cJSON_GetObjectItem(body, "action");
-    const cJSON *mn = cJSON_GetObjectItem(body, "monitor");
 
     uint8_t  proto  = cJSON_IsNumber(pr) ? (uint8_t) pr->valuedouble : 0;
     uint16_t s_port = cJSON_IsNumber(sp) ? (uint16_t)sp->valuedouble : 0;
     uint16_t d_port = cJSON_IsNumber(dp) ? (uint16_t)dp->valuedouble : 0;
     uint8_t  allow  = cJSON_IsNumber(ac) ? (uint8_t) ac->valuedouble : ACL_ALLOW;
-    if (cJSON_IsTrue(mn)) allow |= ACL_MONITOR;
 
     bool ok = acl_add((uint8_t)acl_no, src, s_mask, dest, d_mask,
                       proto, s_port, d_port, allow);
@@ -4464,8 +4402,6 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_tools_trace);
     httpd_register_uri_handler(server, &uri_tools_nettest_get);
     httpd_register_uri_handler(server, &uri_tools_nettest_post);
-    httpd_register_uri_handler(server, &uri_tools_pcap_get);
-    httpd_register_uri_handler(server, &uri_tools_pcap_set);
     httpd_register_uri_handler(server, &uri_firewall);
     httpd_register_uri_handler(server, &uri_firewall_add);
     httpd_register_uri_handler(server, &uri_firewall_delete);

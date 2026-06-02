@@ -2269,7 +2269,7 @@
       <div class="page-header">
         <div class="page-header-left">
           <h1 class="page-title">Diagnostics</h1>
-          <p class="page-subtitle">Route explain, scan, ping / traceroute, PCAP, live log, pre-crash log, reset history</p>
+          <p class="page-subtitle">Route explain, scan, ping / traceroute, live log, pre-crash log, reset history</p>
         </div>
       </div>
 
@@ -2367,54 +2367,6 @@
         </div>
         <div class="card-body-flush" id="tool-scan-body">
           <div style="padding:1rem; color:var(--text-muted);">No scan yet — click <strong>Run scan</strong>.</div>
-        </div>
-      </div>
-
-      <!-- ===== PCAP Capture ===== -->
-      <div class="card mt-4">
-        <div class="card-header">
-          <div class="card-header-left">
-            <span class="card-title">PCAP capture</span>
-          </div>
-          <span class="badge badge-neutral" id="tool-pcap-badge">—</span>
-        </div>
-        <div class="card-body">
-          <p class="form-hint" style="margin:0 0 0.75rem 0;">
-            Streams captured frames over TCP for Wireshark. Connect Wireshark with
-            <code class="mono">tcp://&lt;device-ip&gt;:19000</code> first, then choose a mode below.
-          </p>
-          <div class="form-group">
-            <label class="form-label">Mode</label>
-            <div style="display:flex; gap:1rem; flex-wrap:wrap;">
-              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
-                <input type="radio" name="pcap-mode" value="off" id="pcap-mode-off" checked> Off
-              </label>
-              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
-                <input type="radio" name="pcap-mode" value="acl_monitor" id="pcap-mode-acl"> ACL monitor (only ACL_MONITOR rules)
-              </label>
-              <label style="display:flex; align-items:center; gap:0.4rem; cursor:pointer;">
-                <input type="radio" name="pcap-mode" value="promiscuous" id="pcap-mode-promisc"> Promiscuous (AP interface)
-              </label>
-            </div>
-          </div>
-          <div class="grid grid-cols-2">
-            <div class="form-group">
-              <label class="form-label" for="pcap-snaplen">Snaplen (max bytes/packet)</label>
-              <input class="input" type="number" id="pcap-snaplen" min="64" max="1600" value="1500">
-            </div>
-          </div>
-          <div class="stat-row"><span class="stat-label">Client connected</span><span class="stat-value mono" id="pcap-client">—</span></div>
-          <div class="stat-row"><span class="stat-label">Captured</span>        <span class="stat-value mono" id="pcap-captured">—</span></div>
-          <div class="stat-row"><span class="stat-label">Dropped (buffer full)</span><span class="stat-value mono" id="pcap-dropped">—</span></div>
-          <div class="stat-row"><span class="stat-label">Buffer usage</span>    <span class="stat-value mono" id="pcap-buf">—</span></div>
-          <div class="stat-row"><span class="stat-label">Listening on</span>    <span class="stat-value mono" id="pcap-port">tcp:&lt;ip&gt;:19000</span></div>
-        </div>
-        <div class="form-footer">
-          <span class="form-footer-hint text-warning">Apply currently hangs on the device — backend handler under investigation. Status display works.</span>
-          <div class="form-footer-actions">
-            <button class="btn btn-secondary btn-md" id="pcap-refresh">Refresh</button>
-            <button class="btn btn-primary btn-md" id="pcap-apply" disabled>Apply</button>
-          </div>
         </div>
       </div>
 
@@ -3049,10 +3001,6 @@
         if (page === 'tailscale' && typeof loadTailscale === 'function') loadTailscale();
         if (page === 'firewall'  && typeof loadFirewall  === 'function') loadFirewall();
         if (page === 'system'    && typeof loadSystem    === 'function') loadSystem();
-        /* Tools tab is fully lazy except for the PCAP card, which
-         * auto-loads its status so the operator sees the current mode
-         * without clicking Refresh first. */
-        if (page === 'tools'     && typeof pcapRefresh   === 'function') pcapRefresh();
         if (page === 'tools'     && typeof loadDiag      === 'function') loadDiag();
         if (page === 'tools'     && typeof loadPrecrashLog === 'function') loadPrecrashLog();
         return true;
@@ -5654,7 +5602,6 @@
           var actionBadge = (r.action === 1)
             ? '<span class="badge badge-success">Allow</span>'
             : '<span class="badge badge-danger">Deny</span>';
-          if (r.monitor) actionBadge += ' <span class="badge badge-info" title="Monitor — also feed PCAP">M</span>';
           rowsHtml += '<tr>'
             + '<td class="text-muted">' + r.index + '</td>'
             + '<td>' + protoName(r.proto) + '</td>'
@@ -5720,11 +5667,6 @@
         +       '<div class="form-group"><label class="form-label">Destination port (0 = any)</label>'
         +         '<input class="input" type="number" data-fw="d_port" value="0" min="0" max="65535"></div>'
         +     '</div>'
-        +     '<div class="form-group">'
-        +       '<label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">'
-        +         '<input type="checkbox" data-fw="monitor"> Also mirror matching packets to PCAP (monitor)'
-        +       '</label>'
-        +     '</div>'
         +     '<div style="text-align:right;">'
         +       '<button class="btn btn-secondary btn-md fw-add-cancel" data-acl="' + list.index + '" style="margin-right:0.5rem;">Cancel</button>'
         +       '<button class="btn btn-primary btn-md fw-add-submit" data-acl="' + list.index + '">Add rule</button>'
@@ -5777,8 +5719,7 @@
             proto:   parseInt(get('proto').value, 10),
             s_port:  parseInt(get('s_port').value, 10) || 0,
             d_port:  parseInt(get('d_port').value, 10) || 0,
-            action:  parseInt(get('action').value, 10),
-            monitor: get('monitor').checked
+            action:  parseInt(get('action').value, 10)
           };
           var that = this;
           that.disabled = true;
@@ -6870,8 +6811,7 @@
                         proto:   r.proto  || 0,
                         s_port:  r.s_port || 0,
                         d_port:  r.d_port || 0,
-                        action:  typeof r.action === 'number' ? r.action : 1,
-                        monitor: !!r.monitor
+                        action:  typeof r.action === 'number' ? r.action : 1
                       });
                     });
                   }, Promise.resolve());
@@ -7245,51 +7185,6 @@
                   });
     });
 
-    /* PCAP — fetch status + apply mode. */
-    function pcapApplyStatus(d) {
-      var modeStr = d.mode || 'off';
-      document.getElementById('pcap-mode-off').checked     = (modeStr === 'off');
-      document.getElementById('pcap-mode-acl').checked     = (modeStr === 'acl_monitor');
-      document.getElementById('pcap-mode-promisc').checked = (modeStr === 'promiscuous');
-      var badge = document.getElementById('pcap-pcap-badge') || document.getElementById('tool-pcap-badge');
-      if (badge) {
-        if (modeStr === 'off') {
-          badge.className = 'badge badge-neutral'; badge.textContent = 'Off';
-        } else {
-          badge.className = 'badge badge-success'; badge.textContent = modeStr;
-        }
-      }
-      document.getElementById('pcap-snaplen').value = d.snaplen != null ? d.snaplen : 1500;
-      document.getElementById('pcap-client').textContent   = d.client_connected ? 'yes' : 'no';
-      document.getElementById('pcap-captured').textContent = d.captured;
-      document.getElementById('pcap-dropped').textContent  = d.dropped;
-      document.getElementById('pcap-buf').textContent      = d.buf_used + ' / ' + d.buf_total + ' B';
-      document.getElementById('pcap-port').textContent     = 'tcp://<device-ip>:' + (d.tcp_port || 19000);
-    }
-    function pcapRefresh() {
-      apiFetch('/api/tools/pcap')
-        .then(function (r) { return r.json(); })
-        .then(pcapApplyStatus)
-        .catch(function () {});
-    }
-    document.getElementById('pcap-refresh').addEventListener('click', pcapRefresh);
-    document.getElementById('pcap-apply').addEventListener('click', function () {
-      var mode = document.querySelector('input[name="pcap-mode"]:checked').value;
-      var snap = parseInt(document.getElementById('pcap-snaplen').value, 10) || 1500;
-      var btn = this;
-      btn.disabled = true;
-      apiFetch('/api/tools/pcap', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ mode: mode, snaplen: snap })
-      })
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function () { showToast('success', 'PCAP', 'mode applied', 3000); pcapRefresh(); })
-        .catch(function () { showToast('error', 'Save failed', '', 5000); })
-        .finally(function () { btn.disabled = false; });
-    });
-    /* Auto-load PCAP status on first Tools-tab open — piggy-back on the
-     * tab nav hook below. */
 
     /* Live log tail — polls /api/log/raw?since=<seq> every 500 ms while
      * the Tools tab is open. Each line is wrapped in a <span class="lvl-X">

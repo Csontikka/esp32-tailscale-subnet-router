@@ -38,7 +38,6 @@ extern "C" {
 /* ACL action codes */
 #define ACL_DENY        0x00  /* Drop packet */
 #define ACL_ALLOW       0x01  /* Allow packet */
-#define ACL_MONITOR     0x02  /* Flag: also send to PCAP capture */
 #define ACL_NO_MATCH    0xFF  /* No rule matched (packet allowed by default) */
 
 /* Protocol constants */
@@ -58,7 +57,7 @@ typedef struct {
     uint16_t s_port;     /* Source port (0 = any, TCP/UDP only) */
     uint16_t d_port;     /* Destination port (0 = any, TCP/UDP only) */
     uint8_t proto;       /* Protocol: 0=any, 6=TCP, 17=UDP */
-    uint8_t allow;       /* Action: ACL_DENY, ACL_ALLOW, or with ACL_MONITOR */
+    uint8_t allow;       /* Action: ACL_DENY or ACL_ALLOW */
     uint32_t hit_count;  /* Number of packets matched by this rule */
     uint8_t valid;       /* Entry is valid/active */
 } acl_entry_t;
@@ -128,7 +127,7 @@ void acl_clear_stats(uint8_t acl_no);
  * @param proto Protocol (0=any, 6=TCP, 17=UDP)
  * @param s_port Source port (0=any, host byte order)
  * @param d_port Destination port (0=any, host byte order)
- * @param allow Action (ACL_DENY, ACL_ALLOW, optionally OR'd with ACL_MONITOR)
+ * @param allow Action (ACL_DENY or ACL_ALLOW)
  * @return true on success, false if list is full or invalid parameters
  */
 bool acl_add(uint8_t acl_no, uint32_t src, uint32_t s_mask,
@@ -147,7 +146,7 @@ bool acl_delete(uint8_t acl_no, uint8_t rule_idx);
  * @brief Check a packet against an ACL list
  * @param acl_no ACL list index (0-3)
  * @param p Packet buffer to check
- * @return Action code (ACL_DENY, ACL_ALLOW, ACL_ALLOW|ACL_MONITOR, ACL_DENY|ACL_MONITOR, or ACL_NO_MATCH)
+ * @return Action code (ACL_DENY, ACL_ALLOW, or ACL_NO_MATCH)
  */
 uint8_t acl_check_packet(uint8_t acl_no, struct pbuf *p);
 

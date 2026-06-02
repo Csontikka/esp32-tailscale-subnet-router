@@ -78,8 +78,7 @@ Four chains, **first match wins**; an empty chain allows by default.
 
 Per rule: **source** / **destination** (`any` or CIDR), **protocol**
 (Any / ICMP / TCP / UDP), **source/dest port** (`0` = any, TCP/UDP only),
-**action** (Allow / Deny), and an optional **monitor** flag that mirrors
-matching packets to PCAP.
+**action** (Allow / Deny).
 
 ## System
 

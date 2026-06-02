@@ -103,11 +103,11 @@ traffic you route through it.)*
   silently leaking to the local uplink.
 - **Stateful-ish ACL firewall** — four hook points (Internet↔ESP,
   Clients↔ESP) with first-match-wins rules by protocol / CIDR / port /
-  action, plus per-rule hit counters and optional PCAP mirroring.
+  action, plus per-rule hit counters.
 - **DNS forwarder with cache** — on-board resolver for AP clients with a
   PSRAM-backed response cache and configurable upstream.
 - **Operations toolbox** — on-device ping / traceroute / route-explain,
-  a 1 MB download/upload speed test, live WiFi scan, PCAP capture, and a
+  a 1 MB download/upload speed test, live WiFi scan, and a
   microSD "flight recorder" for catching control-plane stalls.
 - **DHCP niceties** — reservations, live lease table, per-client signal,
   and a MAC denylist.
@@ -126,7 +126,7 @@ traffic you route through it.)*
 | **Target** | ESP32-S3 with PSRAM (8 MB octal, 80 MHz) |
 | **Reference board** | ESP32-S3-DevKitC-1 **N16R8** (16 MB flash / 8 MB PSRAM) |
 | **Radio** | Single 2.4 GHz — STA and AP share one radio (see [limitations](#known-limitations)) |
-| **Storage (optional)** | microSD for the log flight-recorder + PCAP |
+| **Storage (optional)** | microSD for the log flight-recorder |
 | **Power** | USB-C; ~real-world draw of a small dev board |
 
 **Only the ESP32-S3 is supported.** It's the board this firmware is
@@ -265,7 +265,7 @@ The single-page UI has six sections:
 | **Network** | Uplink networks, AP (SSID/IP/DNS), DHCP reservations & leases, MAC denylist, port forwarding |
 | **Tailscale** | Auth key, hostname, advertised routes, exit node, MTU, peer table |
 | **Firewall** | The four ACL chains, rule editor, hit counters |
-| **Diagnostics** | Route-explain, ping, traceroute, speed test, WiFi scan, PCAP, live + SD logs |
+| **Diagnostics** | Route-explain, ping, traceroute, speed test, WiFi scan, live + SD logs |
 | **System** | Device name, firmware/OTA, SD-card logging, backup, danger zone, About (telemetry toggle) |
 
 ### Firewall / ACL
