@@ -317,9 +317,10 @@ exit-node and subnet routing.
   always goes to the tunnel. If the exit node is down, traffic stops —
   it is **not** silently rerouted to the local uplink.
 - **microlink.** The Tailscale-compatible stack lives in its own repo,
-  [Csontikka/microlink](https://github.com/Csontikka/microlink), attached
-  here as a git submodule and pinned to the integration commit. Its
-  `docs/ARCHITECTURE.md` and `docs/TAILSCALE_REFERENCE.md` go deeper.
+  [Csontikka/microlink](https://github.com/Csontikka/microlink) — itself
+  based on the original [CamM2325/microlink](https://github.com/CamM2325/microlink) —
+  attached here as a git submodule and pinned to the integration commit.
+  Its `docs/ARCHITECTURE.md` and `docs/TAILSCALE_REFERENCE.md` go deeper.
 
 See [`docs/CONFIGURATION.md`](docs/CONFIGURATION.md) for a field-by-field
 configuration reference.
@@ -387,7 +388,8 @@ the firmware by `main/CMakeLists.txt` at build time.
 This firmware is [MIT](LICENSE) licensed. It builds on:
 
 - **[microlink](https://github.com/Csontikka/microlink)** — Tailscale
-  `ts2021` client (MIT)
+  `ts2021` client (MIT), based on the original
+  [CamM2325/microlink](https://github.com/CamM2325/microlink)
 - **wireguard_lwip** — userspace WireGuard for lwIP (BSD-3-Clause),
   vendored inside microlink
 - **[ESP-IDF](https://github.com/espressif/esp-idf)** — Espressif RTOS &

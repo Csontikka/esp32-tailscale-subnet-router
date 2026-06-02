@@ -9,6 +9,8 @@ license:
 ## microlink
 
 - **Repository:** https://github.com/Csontikka/microlink
+- **Based on:** https://github.com/CamM2325/microlink (the original
+  microlink project)
 - **License:** MIT
 - **Use:** Tailscale-compatible `ts2021` control-plane + userspace
   WireGuard data-plane stack. Attached as a git submodule under
