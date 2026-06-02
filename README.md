@@ -218,6 +218,12 @@ next connect.
 <img src="docs/images/tailscale.png" alt="Tailscale configuration and peers" width="88%">
 </div>
 
+> **Approve the route.** A newly advertised subnet shows up in the Tailscale
+> admin (Machines → your device → **Edit route settings**) and must be
+> **approved** before peers can use it. And if you later change the AP subnet,
+> re-approve the new route there — the old approval stays but no longer matches,
+> so the subnet silently becomes unreachable until you do.
+
 > **🔑 Auth key vs. node key — read this once**
 >
 > - The **auth key** (`tskey-auth-…`) is a *one-time ticket*: the device uses
