@@ -6951,14 +6951,16 @@
         .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
     });
 
-    /* Telemetry toggle lives in the About card now — applies immediately. */
+    /* Telemetry toggle lives in the About card. On by default; turning it
+     * ON applies immediately, turning it OFF asks first (it's the only
+     * signal the maintainer gets — see the README Telemetry section). */
     (function () {
       var atog = document.getElementById('about-tlm-enabled');
       if (!atog) return;
-      atog.addEventListener('change', function () {
-        var on = this.checked;
+
+      function applyTelemetry(on) {
         var st = document.getElementById('about-tlm-state');
-        this.disabled = true;
+        atog.disabled = true;
         apiFetch('/api/system', {
           method:  'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -6966,6 +6968,7 @@
         })
           .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
           .then(function () {
+            atog.checked = on;
             if (st) st.textContent = on ? 'On' : 'Off';
             showToast('success', 'Telemetry ' + (on ? 'enabled' : 'disabled'), '', 3000);
           })
@@ -6974,6 +6977,20 @@
             showToast('error', 'Save failed', '', 5000);
           })
           .finally(function () { atog.disabled = false; });
+      }
+
+      atog.addEventListener('change', function () {
+        if (this.checked) { applyTelemetry(true); return; }   // ON: no prompt
+        /* OFF: keep the toggle visually on until the operator confirms. */
+        this.checked = true;
+        showConfirm(
+          'Turn off anonymous telemetry?',
+            '<p style="margin:0 0 0.6rem 0;">It is completely anonymous — a salted one-way device hash + boot/flash counters + firmware version, at most once a day. <strong>Never SSIDs, IPs, MAC addresses, the tailnet name, or peers.</strong></p>'
+          + '<p style="margin:0 0 0.6rem 0;">Honestly, it is the only way I can spot a <strong>mass crash</strong> after a bad release, and the only hint of whether anyone actually runs this free hobby project. <strong>If you can, please leave it on</strong> — but it is entirely your call.</p>'
+          + '<p style="margin:0;"><a href="https://github.com/Csontikka/esp32-tailscale-subnet-router#telemetry" target="_blank" rel="noopener" style="color:var(--accent);">Exactly what it sends &rarr;</a></p>',
+          function () { applyTelemetry(false); },
+          { html: true, confirmText: 'Turn it off anyway', cancelText: 'Keep it on', danger: true }
+        );
       });
     })();
 
