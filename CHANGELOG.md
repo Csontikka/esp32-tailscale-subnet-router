@@ -38,8 +38,10 @@ from a built-in web UI.
 - **Operations**: encrypted config backup/restore, OTA updates, per-sink
   (console + SD) log levels with an INFO ceiling, pre-crash log capture,
   auto AP-channel realign on STA roam, syslog export.
-- **Opt-in anonymous telemetry**: daily SHA-256 device hash + boot/flash
-  counters + reboot cause + firmware version; no SSIDs/IPs/MACs/peers.
+- **Anonymous telemetry** (on by default, one-toggle opt-out): daily
+  salted one-way device hash + boot/flash counters + reboot/crash cause +
+  firmware/chip/uptime; no SSIDs/IPs/MACs/tailnet/peers. Fully inspectable
+  in `main/telemetry.c`.
 - **Project hardening**: SECURITY policy, CodeQL (C/C++ + Python),
   Dependabot, secret scanning, and a custom Sensitive Data Check.
 

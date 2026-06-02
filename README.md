@@ -113,8 +113,10 @@ traffic you route through it.)*
 - **Robust by design** — encrypted config backup/restore, OTA updates,
   per-sink (console + SD) log levels, auto AP-channel realign on STA
   roam, and pre-crash log capture.
-- **Opt-in anonymous telemetry** — a daily SHA-256 device hash + boot/
-  flash counters + firmware version. Never SSIDs, IPs, MACs, or peers.
+- **Anonymous telemetry (on by default, one toggle to opt out)** — a tiny
+  daily payload: a salted one-way device hash + boot/flash counters +
+  firmware/chip/uptime + reboot/crash cause. Never SSIDs, IPs, MACs,
+  tailnet, or peers — and fully inspectable in `main/telemetry.c`.
 
 ## Hardware
 
@@ -354,11 +356,74 @@ key); disable it for the tailnet or pre-authorize the node.
 
 ## Telemetry
 
-Opt-in. When enabled, the device sends — at most once every 24 h — a
-salted SHA-256 hash of its chip ID, boot/flash counters, the last reboot
-cause, and the firmware version, to a Cloudflare Worker. It **never**
-sends SSIDs, IP/MAC addresses, tailnet names, or peer information. It is
-off until you turn it on under **System → Telemetry**.
+The device reports a tiny, fully anonymous status payload to a Cloudflare
+Worker — a small JSON on boot, then a heartbeat roughly once a day. **It's
+on by default**, and one toggle under **System → Telemetry** turns it off
+for good (the choice is saved in NVS). Anyone can verify exactly what it
+does — the whole thing is one function in
+[`main/telemetry.c`](main/telemetry.c).
+
+### Exactly what it sends
+
+This is the *entire* payload — nothing else leaves the device:
+
+```json
+{
+  "dh": "a1b2c3d4e5f60718",
+  "v":  "0.1.0",
+  "bd": "2026-05-31",
+  "et": "heartbeat",
+  "bc": 276,
+  "fc": 158,
+  "up": 90074,
+  "rr": 1,
+  "rw": "",
+  "ch": "S3r0",
+  "fh": 53707,
+  "ac": 42,
+  "ts": "up"
+}
+```
+
+| Field | Meaning | Example |
+|---|---|---|
+| `dh` | anonymous device ID — first 8 bytes of `SHA-256(WiFi MAC + fixed salt)`, hex. One-way; it can't be turned back into your MAC | `a1b2c3d4e5f60718` |
+| `v`  | firmware version | `0.1.0` |
+| `bd` | firmware build date | `2026-05-31` |
+| `et` | event type — `boot`, `heartbeat`, or a crash report | `heartbeat` |
+| `bc` | total boot count | `276` |
+| `fc` | total firmware-flash count | `158` |
+| `up` | uptime, seconds | `90074` |
+| `rr` | reset-reason code (ESP-IDF reason, or `100` = new firmware / `101` = rollback) | `1` |
+| `rw` | short reboot-reason tag, or empty | `ch-realign 11->1` |
+| `ch` | chip model + silicon revision | `S3r0` |
+| `fh` | free heap at send time, bytes | `53707` |
+| `ac` | Tailscale (re)connect count this session | `42` |
+| `ts` | Tailscale toggle — `up` or `off` (just the switch; **no peers, no tailnet name**) | `up` |
+| `cr` | crash signature — **only** added to a crash report | `StoreProhibited @ ml_derp_tx` |
+
+It **never** sends SSIDs, IP or MAC addresses, tailnet names, peer
+information, or anything you typed into the UI. The device ID is a salted
+one-way hash (`compute_device_hash()` in
+[`main/telemetry.c`](main/telemetry.c)), so reports can be grouped per
+device without ever identifying one.
+
+### Why it's on by default (a note from the maintainer)
+
+No hidden agenda — the JSON above is literally all of it, and the code is
+right there to check. I'd genuinely appreciate you leaving it on unless
+you have a specific reason not to:
+
+- It's how I'd catch a **mass PANIC** rolling across devices after a bad
+  release — the same crash signature arriving from many `dh`s at once is a
+  five-alarm fire I'd otherwise never see.
+- Fully anonymized, it's the *only* signal I get for **how many people
+  actually run this**. This is a free hobby project; if essentially nobody
+  uses it long-term, that's fair feedback that I shouldn't keep pouring
+  effort in.
+
+Either way it's your call — flip it off under **System → Telemetry** and
+the device never phones home again.
 
 ## Security
 
