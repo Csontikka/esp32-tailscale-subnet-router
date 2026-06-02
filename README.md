@@ -4,7 +4,7 @@
 
 # ESP32 Tailscale Subnet Router
 
-**A pocket-sized WiFi NAT router *and* Tailscale subnet router on a single ESP32-S3 — no extra hardware, configured entirely from a built-in web UI.**
+**A pocket-sized WiFi NAT router *and* Tailscale subnet router on a single ESP32-S3 — built to put low-bandwidth IoT devices on your tailnet, no extra hardware, configured entirely from a built-in web UI.**
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![Platform: ESP32-S3](https://img.shields.io/badge/platform-ESP32--S3-7c3aed.svg)](#hardware)
@@ -26,9 +26,9 @@
 This firmware turns one ESP32-S3 board into two things at once:
 
 1. **A WiFi NAT router.** It joins your existing 2.4 GHz network as a
-   client (STA) and re-broadcasts its own access point (AP). Devices on
-   that AP reach the internet through the upstream WiFi, with NAPT,
-   DHCP, and an on-board DNS forwarder.
+   client (STA) and re-broadcasts its own access point (AP). The IoT
+   devices on that AP reach the internet through the upstream WiFi, with
+   NAPT, DHCP, and an on-board DNS forwarder.
 2. **A Tailscale subnet router.** It runs a userspace WireGuard +
    Tailscale (`ts2021`) stack, so any peer on your tailnet can reach the
    devices behind its AP — and the AP-side devices can use the ESP as a
@@ -53,6 +53,36 @@ collapses that into a ~$10 board you can leave plugged into a USB
 charger: it bridges a whole IoT subnet onto your tailnet *and* gives
 those devices internet through an exit node, while staying small enough
 to ignore.
+
+## What it's for — and what it isn't
+
+This is a **micro-controller** doing userspace encryption and NAT on a
+single shared 2.4 GHz radio. Its job is **reach, not throughput** — size
+your expectations accordingly.
+
+**✅ What it's for**
+
+- IoT / home-automation gear: **sensors, smart switches, plugs,
+  thermostats**, energy/environmental monitors, ESPHome / Zigbee / MQTT
+  bridges — anything small and low-bandwidth.
+- Low-rate control & telemetry: bursty, tiny payloads that are perfectly
+  happy with a few Mbit/s.
+- Reaching a device stuck behind NAT/CGNAT so you (or Home Assistant) can
+  poll it, flip a relay, or SSH in from anywhere on your tailnet.
+
+**🚫 What it's not for**
+
+- Being the everyday internet uplink for your **phone or laptop**.
+- **Streaming, video calls, or watching a camera feed in high resolution.**
+- Large downloads, backups, OTA images for other devices — anything
+  bandwidth-heavy.
+- A general-purpose VPN gateway for fast clients.
+
+Throughput through the tunnel is **a few Mbit/s** — plenty for switches
+and sensors, not for media. If you need real bandwidth, put a Raspberry
+Pi (or similar) on that job instead. *(Configuring the device from a
+phone or laptop browser is of course fine — that's just the admin UI, not
+traffic you route through it.)*
 
 ## Features
 
@@ -200,9 +230,13 @@ exit-node and subnet routing.
      │  │ ACL  │ │  exit-node aware route hook
      └─────┬─────┘
        AP  │  (2.4 GHz, 192.168.x.0/24 advertised to the tailnet)
-   ┌───────┼───────┐
- IoT     phone    laptop      ←→  reachable from any tailnet peer
+   ┌───────┼────────┐
+ sensor  switch  thermostat   ←→  reachable from any tailnet peer
 ```
+
+> The AP is for **IoT gear** — sensors, switches, low-bandwidth control —
+> not for routing your phone's or laptop's everyday internet. See
+> [What it's for](#what-its-for--and-what-it-isnt).
 
 - **Data plane vs control plane.** WireGuard moves packets; Tailscale's
   DISCO/`ts2021` control plane decides *how* (direct UDP vs DERP relay).
