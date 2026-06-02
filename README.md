@@ -174,16 +174,77 @@ existing 2.4 GHz network and (optionally) rename the AP it broadcasts.
 
 ### 4. Enrol on your tailnet
 
-On **Tailscale**, paste a Tailscale auth key, set a hostname, and list
-the subnet(s) to advertise (the AP subnet is offered automatically).
-Pick an exit node here if you want AP clients to egress through it.
+This is the one step with a couple of non-obvious Tailscale details — do
+them once and the device stays on your tailnet for good.
+
+#### 4a · Create a Tailscale auth key
+
+Log in to the [Tailscale admin console](https://login.tailscale.com/admin/settings/keys)
+→ **Settings → Keys** and click **Generate auth key…**.
+
+<div align="center">
+<img src="docs/images/tailscale-keys-page.png" alt="Tailscale admin — Keys page" width="80%">
+</div>
+
+Fill in the dialog:
+
+<div align="center">
+<img src="docs/images/tailscale-auth-key-create.png" alt="Generate auth key dialog" width="70%">
+</div>
+
+| Option | Value | Why |
+|---|---|---|
+| **Description** | `esp32-router` | so you can find it later |
+| **Reusable** | ✅ On | re-flash without regenerating a key |
+| **Ephemeral** | ❌ **Off** | ephemeral nodes get garbage-collected when offline — bad for a device that reboots |
+| **Pre-approved** | ✅ On *(if your tailnet uses device approval)* | lets the device join without a manual click |
+| **Tags** | `tag:esp32` *(optional)* | handy for ACL targeting |
+| **Expiration** | 90 days *(max)* | Tailscale caps this — you make the node **permanent** in 4c below |
+
+Copy the key (it starts with `tskey-auth-…`).
+
+#### 4b · Paste it into the device
+
+On the device's **Tailscale** tab, paste the auth key, set a **hostname**,
+and list the **subnet(s) to advertise** (your AP subnet is offered
+automatically). Pick an **exit node** here too if you want AP clients to
+egress through it. Save — the device registers with your tailnet on its
+next connect.
 
 <div align="center">
 <img src="docs/images/tailscale.png" alt="Tailscale configuration and peers" width="88%">
 </div>
 
-That's it — remote tailnet peers can now reach devices on the AP subnet,
-and AP devices can use the tailnet (and any exit node you selected).
+> **🔑 Auth key vs. node key — read this once**
+>
+> - The **auth key** (`tskey-auth-…`) is a *one-time ticket*: the device uses
+>   it only on first registration. After that it has its own private **node
+>   key** (stored in NVS) and no longer needs the auth key — so it's fine if
+>   the auth key later expires.
+> - The **node key** is the device's long-term identity, and Tailscale expires
+>   it after ~180 days by default. When it expires the device drops off the
+>   tailnet — exactly what you *don't* want on an unattended sensor.
+>
+> So once the device shows up in your tailnet, **disable its node-key expiry**
+> (next step). Skip it and everything looks fine for months, then the device
+> silently falls off and you won't know why. Do it for every device you flash.
+
+#### 4c · Disable node-key expiry (do this — always)
+
+1. Open the [Tailscale **Machines** page](https://login.tailscale.com/admin/machines).
+2. Find the new `esp32-router` entry.
+3. Click the `⋯` menu → **Disable key expiry**.
+
+<div align="center">
+<img src="docs/images/tailscale-disable-key-expiry.png" alt="Tailscale admin — Disable key expiry" width="80%">
+</div>
+
+4. **Reboot the device** (Reboot on the **System** tab, or power-cycle). The
+   expiry status is only re-fetched on a fresh control-plane login, so a plain
+   reconnect isn't enough.
+
+That's it — remote tailnet peers can now reach the IoT devices on the AP
+subnet, and those devices can use the tailnet (and any exit node you picked).
 
 ## Web UI tour
 
