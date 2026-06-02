@@ -266,7 +266,7 @@ The single-page UI has six sections:
 | **Tailscale** | Auth key, hostname, advertised routes, exit node, MTU, peer table |
 | **Firewall** | The four ACL chains, rule editor, hit counters |
 | **Diagnostics** | Route-explain, ping, traceroute, speed test, WiFi scan, PCAP, live + SD logs |
-| **System** | Device name, firmware/OTA, SD-card logging, syslog, telemetry, backup, danger zone |
+| **System** | Device name, firmware/OTA, SD-card logging, telemetry, backup, danger zone |
 
 ### Firewall / ACL
 

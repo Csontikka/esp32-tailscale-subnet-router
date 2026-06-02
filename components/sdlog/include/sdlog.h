@@ -1,10 +1,10 @@
 /* SD flight-recorder - persistent on-device log to a microSD card.
  *
- * Mirrors the syslog_client architecture: a vprintf hook formats each
- * ESP_LOG line into a FreeRTOS queue; a dedicated writer task fwrites
- * them to a rotating set of files on a FAT-mounted microSD card.
- * Serial console output is always preserved (the hook chains to the
- * previously-installed vprintf, i.e. syslog's, which chains to UART).
+ * A vprintf hook formats each ESP_LOG line into a FreeRTOS queue; a
+ * dedicated writer task fwrites them to a rotating set of files on a
+ * FAT-mounted microSD card. Serial console output is always preserved
+ * (the hook chains to the previously-installed vprintf, i.e. the UART
+ * console).
  *
  * The card survives reboots, so the log is the place to look after a
  * silent control-plane wedge: a fresh boot-marker file is created on
@@ -25,7 +25,7 @@ extern "C" {
 #endif
 
 /* Per-sink log level — esp_log_level_t-aligned (NONE/ERROR/WARN/INFO). Used
- * for BOTH the console (UART/syslog) sink and the SD recorder sink, each set
+ * for BOTH the console (UART) sink and the SD recorder sink, each set
  * INDEPENDENTLY. The compile ceiling is INFO, so INFO is available on demand;
  * sdlog drives the runtime master level = max(active sink levels) via
  * esp_log_level_set(), so INFO is only formatted when a sink actually asks
@@ -75,8 +75,8 @@ typedef esp_err_t (*sdlog_chunk_cb)(void *ctx, const char *buf, size_t len);
  * the recorder was previously enabled. Safe to call when no card is
  * present — the feature simply stays dark (present=false), no crash.
  *
- * Call AFTER syslog_init() so the vprintf hook chain stays:
- *   sdlog -> syslog -> UART.
+ * Call after the UART console is up; the vprintf hook chain is:
+ *   sdlog -> UART.
  */
 esp_err_t sdlog_init(void);
 
@@ -98,7 +98,7 @@ esp_err_t sdlog_enable(uint8_t sd_level);
 esp_err_t sdlog_disable(void);
 
 /**
- * Set the console (UART/syslog) output level (SDLOG_LVL_*). Applied LIVE
+ * Set the console (UART) output level (SDLOG_LVL_*). Applied LIVE
  * (the vprintf hook reads it atomically) and persisted to NVS — no reboot
  * needed; also refreshes the runtime master level. Independent of the SD
  * recorder: SDLOG_LVL_OFF silences the UART while the SD black-box can keep

@@ -22,7 +22,7 @@ jobs:
       matrix:
         # c-cpp = the ESP-IDF firmware (main/ + components/), scanned buildless
         #         so no cross-compile toolchain is needed in CI.
-        # python = the build/test tooling (tools/, syslog-docker/, gen scripts).
+        # python = the build/test tooling (tools/, gen scripts).
         language: [c-cpp, python]
 
     steps:

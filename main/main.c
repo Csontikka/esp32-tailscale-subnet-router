@@ -43,7 +43,6 @@
 #include "web_ui.h"
 #include "acl.h"
 #include "netif_hooks.h"
-#include "syslog_client.h"
 #include "sdlog.h"
 #include "remote_console.h"
 #include "nvs_params.h"
@@ -397,9 +396,6 @@ static void wifi_event_handler(void *arg, esp_event_base_t event_base,
         if (tailscale_enabled) {
             xTaskCreate(tailscale_connect_task, "ts_connect", 4096, NULL, 5, NULL);
         }
-        /* Tell the syslog forwarder to (re-)resolve its server now that
-         * the network is up — no-op if syslog isn't enabled. */
-        syslog_notify_connected();
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
 
         /* Copy the upstream DNS into the AP-side DHCP options so AP
@@ -743,15 +739,9 @@ void app_main(void)
      * the netif_hooks slice; this just makes the rules queryable. */
     load_acl_rules();
 
-    /* Remote syslog UDP forwarder. Loads NVS config and installs the
-     * vprintf hook if previously enabled. Waits for STA IP via
-     * syslog_notify_connected (wired below in the IP event handler). */
-    syslog_init();
-
     /* SD flight-recorder. Mounts the microSD and (if previously enabled
-     * in NVS) starts the writer task. Installed AFTER syslog_init so the
-     * vprintf hook chain stays sdlog -> syslog -> UART. Stays dark with no
-     * crash when no card is present. */
+     * in NVS) starts the writer task. Installs a vprintf hook (chain:
+     * sdlog -> UART). Stays dark with no crash when no card is present. */
     sdlog_init();
 
     /* Report why the previous boot rebooted (set in NVS before our deliberate

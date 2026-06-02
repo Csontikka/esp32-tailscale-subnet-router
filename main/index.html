@@ -2583,7 +2583,7 @@
       <div class="page-header">
         <div class="page-header-left">
           <h1 class="page-title">System</h1>
-          <p class="page-subtitle">Firmware info, telemetry, syslog, password, OTA, about, danger zone</p>
+          <p class="page-subtitle">Firmware info, telemetry, password, OTA, about, danger zone</p>
         </div>
         <div class="page-header-actions">
           <button class="btn btn-secondary btn-md" id="sys-reload">Refresh</button>
@@ -2702,39 +2702,6 @@
         </div>
       </div>
 
-      <!-- ===== Syslog ===== -->
-      <div class="card mt-4">
-        <div class="card-header">
-          <div class="card-header-left">
-            <span class="card-title">Remote syslog (UDP)</span>
-          </div>
-          <span class="badge badge-neutral" id="sys-syslog-badge">—</span>
-        </div>
-        <div class="card-body">
-          <p class="form-hint" style="margin:0 0 0.75rem 0;">When enabled, every ESP_LOG line is mirrored to a syslog server via UDP. Useful for tailing the device from rsyslog / papertrail / a Wireshark filter.</p>
-          <div class="form-group">
-            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
-              <input type="checkbox" id="sys-syslog-enabled"> Enable syslog forwarder
-            </label>
-          </div>
-          <div class="grid grid-cols-2">
-            <div class="form-group">
-              <label class="form-label" for="sys-syslog-server">Server (IPv4 or hostname)</label>
-              <input class="input mono" type="text" id="sys-syslog-server" placeholder="192.168.1.10">
-            </div>
-            <div class="form-group">
-              <label class="form-label" for="sys-syslog-port">Port</label>
-              <input class="input" type="number" id="sys-syslog-port" min="1" max="65535" value="514">
-            </div>
-          </div>
-        </div>
-        <div class="form-footer">
-          <span class="form-footer-hint">Applies immediately on save.</span>
-          <div class="form-footer-actions">
-            <button class="btn btn-primary btn-md" id="sys-syslog-save" disabled>Save</button>
-          </div>
-        </div>
-      </div>
 
       <!-- ===== SD flight-recorder ===== -->
       <div class="card mt-4">
@@ -6343,15 +6310,6 @@
           tlmBadge.textContent = tlm.enabled ? 'On' : 'Off';
           document.getElementById('sys-tlm-save').disabled = true;
 
-          var sl = d.syslog || {};
-          document.getElementById('sys-syslog-enabled').checked = !!sl.enabled;
-          document.getElementById('sys-syslog-server').value    = sl.server || '';
-          document.getElementById('sys-syslog-port').value      = sl.port   || 514;
-          var slBadge = document.getElementById('sys-syslog-badge');
-          slBadge.className   = sl.enabled ? 'badge badge-success' : 'badge badge-neutral';
-          slBadge.textContent = sl.enabled ? 'On' : 'Off';
-          document.getElementById('sys-syslog-save').disabled = true;
-
           /* SD flight-recorder card refreshes on every System-tab load. */
           if (typeof loadSdlog === 'function') loadSdlog();
 
@@ -6943,7 +6901,6 @@
         if (data.system.telemetry && typeof data.system.telemetry.enabled === 'boolean') {
           sb.telemetry = { enabled: data.system.telemetry.enabled };
         }
-        if (data.system.syslog) sb.syslog = data.system.syslog;
         if (Object.keys(sb).length) steps.push({ name: 'system', url: '/api/system', body: sb });
       }
       if (data.tailscale && data.tailscale.settings) {
@@ -7074,34 +7031,6 @@
         .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
     });
 
-    ['sys-syslog-enabled', 'sys-syslog-server', 'sys-syslog-port'].forEach(function (id) {
-      var el = document.getElementById(id);
-      el.addEventListener(el.type === 'checkbox' ? 'change' : 'input', function () {
-        document.getElementById('sys-syslog-save').disabled = false;
-      });
-    });
-    document.getElementById('sys-syslog-save').addEventListener('click', function () {
-      var enabled = document.getElementById('sys-syslog-enabled').checked;
-      var body = { syslog: { enabled: enabled } };
-      if (enabled) {
-        body.syslog.server = document.getElementById('sys-syslog-server').value.trim();
-        body.syslog.port   = parseInt(document.getElementById('sys-syslog-port').value, 10) || 514;
-        if (!body.syslog.server) {
-          showToast('error', 'Server required', 'Enter a syslog server hostname or IP.', 5000);
-          return;
-        }
-      }
-      var btn = this;
-      btn.disabled = true;
-      apiFetch('/api/system', {
-        method:  'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify(body)
-      })
-        .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
-        .then(function () { showToast('success', 'Syslog saved', '', 3000); loadSystem(); })
-        .catch(function () { btn.disabled = false; showToast('error', 'Save failed', '', 5000); });
-    });
 
     /* ===== SD flight-recorder ===== */
     var sdlogState = { present: false, enabled: false };

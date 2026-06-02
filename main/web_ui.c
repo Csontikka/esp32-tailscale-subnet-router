@@ -27,7 +27,6 @@
 #include "dns_relay.h"
 #include "lwip_route_hook.h"
 #include "acl.h"
-#include "syslog_client.h"
 #include "sdlog.h"
 #include "net_diag.h"
 #include "pcap_capture.h"
@@ -3071,17 +3070,6 @@ static esp_err_t system_handler(httpd_req_t *req)
     cJSON_AddStringToObject(t, "last_status", tm.last_status);
     cJSON_AddItemToObject(root, "telemetry", t);
 
-    /* Remote syslog status. */
-    cJSON *sl = cJSON_CreateObject();
-    bool sl_enabled = false;
-    char sl_server[64] = {0};
-    uint16_t sl_port = 0;
-    syslog_get_config(&sl_enabled, sl_server, sizeof sl_server, &sl_port);
-    cJSON_AddBoolToObject  (sl, "enabled", sl_enabled);
-    cJSON_AddStringToObject(sl, "server",  sl_server);
-    cJSON_AddNumberToObject(sl, "port",    sl_port);
-    cJSON_AddItemToObject(root, "syslog", sl);
-
     /* Log tail — read into a heap buffer to keep the request handler
      * stack small. Truncated to a known size so the JSON stays bounded. */
     char *log_buf = malloc(WEB_UI_LOG_SNAPSHOT_BYTES);
@@ -3252,22 +3240,6 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         ota_set_settings(auto_install, install_hour);
     }
 
-    /* Syslog block — { enabled, server, port }. Toggling enabled fires
-     * the appropriate enable/disable so the vprintf hook installs or
-     * tears down immediately. */
-    const cJSON *sl = cJSON_GetObjectItem(root, "syslog");
-    if (cJSON_IsObject(sl)) {
-        const cJSON *en  = cJSON_GetObjectItem(sl, "enabled");
-        const cJSON *srv = cJSON_GetObjectItem(sl, "server");
-        const cJSON *prt = cJSON_GetObjectItem(sl, "port");
-        if (cJSON_IsBool(en) && cJSON_IsTrue(en)) {
-            const char *server = cJSON_IsString(srv) ? srv->valuestring : "";
-            uint16_t    port   = cJSON_IsNumber(prt) ? (uint16_t)prt->valuedouble : 514;
-            syslog_enable(server, port);
-        } else if (cJSON_IsBool(en) && cJSON_IsFalse(en)) {
-            syslog_disable();
-        }
-    }
 
     cJSON_Delete(root);
     /* Surface any NVS write failures from the save path — see the
@@ -4268,7 +4240,7 @@ static esp_err_t sdlog_status_post_handler(httpd_req_t *req)
     } else if (cJSON_IsBool(en) && cJSON_IsFalse(en)) {
         sdlog_disable();
     }
-    /* Console (UART/syslog) output level — independent of the SD recorder,
+    /* Console (UART) output level — independent of the SD recorder,
      * applied live. Absent → unchanged, so the SD toggle and the console
      * selector can post separately. */
     const cJSON *cl = cJSON_GetObjectItem(root, "console_level");

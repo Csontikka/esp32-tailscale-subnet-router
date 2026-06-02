@@ -154,7 +154,7 @@ CONFIG_LWIP_TCP_WND_DEFAULT=32768
 # --- Flash mode — back to DIO after a QIO regression on this board ---------
 # Tried CONFIG_ESPTOOLPY_FLASHMODE_QIO=y for the 2× code-fetch win, the
 # build booted fine on the dev module, but a real phone STA started
-# losing connectivity to the AP under live use. No PANIC, no syslog
+# losing connectivity to the AP under live use. No PANIC, no log
 # marker — symptom was speedtest-fail + occasional deauth. Could be
 # the QIO timing margin on this exact board variant. DIO is the boring
 # safe default; revisit when there's a way to A/B without disrupting
@@ -232,7 +232,7 @@ CONFIG_MBEDTLS_CHACHAPOLY_C=y
 
 # --- ESP-IDF v5.5 sys_evt task stack ----------------------------------------
 # Default 2304 B overflows on the STA reconnect path (chained callbacks
-# through syslog/tailscale/AP-event handlers); bump to match TCPIP
+# through tailscale/AP-event handlers); bump to match TCPIP
 # task headroom.
 CONFIG_ESP_SYSTEM_EVENT_TASK_STACK_SIZE=6144
 

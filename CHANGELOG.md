@@ -37,7 +37,7 @@ from a built-in web UI.
   diagnostics, system.
 - **Operations**: encrypted config backup/restore, OTA updates, per-sink
   (console + SD) log levels with an INFO ceiling, pre-crash log capture,
-  auto AP-channel realign on STA roam, syslog export.
+  auto AP-channel realign on STA roam.
 - **Anonymous telemetry** (on by default, one-toggle opt-out): daily
   salted one-way device hash + boot/flash counters + reboot/crash cause +
   firmware/chip/uptime; no SSIDs/IPs/MACs/tailnet/peers. Fully inspectable

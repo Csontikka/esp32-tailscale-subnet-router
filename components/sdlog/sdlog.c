@@ -1,6 +1,6 @@
 /* SD flight-recorder - persist ESP_LOG output to a microSD card.
  *
- * Architecture (mirrors components/syslog/syslog_client.c):
+ * Architecture:
  *   vprintf hook  ──format──>  FreeRTOS queue  ──fwrite──>  FAT file
  *
  * The vprintf hook never touches the SD card. It accumulates a log line
@@ -9,9 +9,8 @@
  * zero timeout (drop-if-full). A dedicated writer task dequeues lines and
  * fwrites them to a rotating set of files under /sdcard/eslog/.
  *
- * The hook chains to the previously-installed vprintf (syslog's), so the
- * serial console and the remote syslog forwarder keep working. sdlog_init
- * MUST run after syslog_init for that chain to stay intact.
+ * The hook chains to the previously-installed vprintf (the UART console),
+ * so serial logging keeps working.
  *
  * Filenames are 8.3 only: the build has CONFIG_FATFS_LFN_NONE, so a long
  * name would be silently mangled. Files are "%08u.LOG" (monotonic seq),
@@ -57,7 +56,7 @@
 #include "microlink.h"   /* Phase B: health-snapshot accessors */
 
 /* Must match NVS_NAMESPACE in main/nvs_params.h. Duplicated to avoid a
- * circular component dependency on main (same trick as syslog_client.c). */
+ * circular component dependency on main. */
 #define SDLOG_NVS_NAMESPACE  "tsr"
 
 /* NVS keys (all under the shared "tsr" namespace). */
@@ -85,7 +84,7 @@
 #define SDLOG_MOUNT_POINT   "/sdcard"
 #define SDLOG_DIR           "/sdcard/eslog"
 
-/* Per-line ceiling and queue depth. 256 matches syslog's packet size. */
+/* Per-line ceiling and queue depth (256-byte log lines). */
 #define SDLOG_LINE_MAX      256
 #define SDLOG_QUEUE_DEPTH   32
 
@@ -156,7 +155,7 @@ static char     s_cur_name[SDLOG_NAME_MAX] = {0};
 static uint64_t s_bytes_written = 0;    /* total this boot                */
 static _Atomic uint32_t s_dropped = 0;  /* lines dropped (queue full)     */
 
-/* Formatting state for the hook (non-blocking trylock, like syslog). */
+/* Formatting state for the hook (non-blocking trylock). */
 static SemaphoreHandle_t s_fmt_mutex = NULL;
 static char *s_rawbuf = NULL;           /* line accumulation              */
 static char *s_pktbuf = NULL;           /* cleaned line                   */
@@ -242,7 +241,7 @@ static uint32_t bump_boot_counter(void)
     return boot;
 }
 
-/* ---- ANSI / level helpers (same shape as syslog_client.c) ---- */
+/* ---- ANSI / level helpers ---- */
 
 static char extract_level(const char *msg, const char **clean_start)
 {
@@ -598,7 +597,7 @@ static int sdlog_vprintf(const char *fmt, va_list args)
     va_list args_copy;
     va_copy(args_copy, args);
 
-    /* Console (UART/syslog) gate — INDEPENDENT of the SD recorder below. The
+    /* Console (UART) gate — INDEPENDENT of the SD recorder below. The
      * level letter ('W'/'E') is a literal at the start of fmt (ESP-IDF embeds
      * it in LOG_FORMAT). Raw printf()/panic/boot lines parse as non-W/E and
      * are ALWAYS kept unless the console is fully OFF, so critical un-leveled
@@ -746,7 +745,7 @@ static void start_writer(void)
     if (!s_pktbuf)   s_pktbuf = malloc(SDLOG_LINE_MAX);
 
     if (!s_writer_task && s_queue) {
-        /* 5120 mirrors syslog's writer budget: this task does buffered
+        /* 5120-byte stack: this task does buffered
          * stdio (FATFS sector cache + 256 B line scratch) plus ESP_LOG. */
         xTaskCreate(writer_task, "sdlog_wr", 5120, NULL, 4, &s_writer_task);
     }
@@ -783,7 +782,7 @@ esp_err_t sdlog_init(void)
     mount_card();   /* sets s_present; failure is non-fatal */
 
     /* Install the hook unconditionally so runtime enable/disable works.
-     * Runs AFTER syslog_init(), so the saved fn is syslog's hook. */
+     * Runs after the UART console is up, so the saved fn is its hook. */
     s_original_vprintf = esp_log_set_vprintf(sdlog_vprintf);
 
     if (atomic_load(&s_present) && atomic_load(&s_enabled)) {
