@@ -256,6 +256,12 @@ static esp_err_t do_https_ota(const char *url)
         .crt_bundle_attach = esp_crt_bundle_attach,
         .user_agent     = "esp32-tailscale-subnet-router-ota",
         .keep_alive_enable = true,
+        /* A GitHub release-asset URL 302-redirects from github.com to a
+         * *.githubusercontent.com URL with a long signed query string. The
+         * default 512-byte header buffer can't hold that Location header
+         * ("HTTP_CLIENT: Out of buffer" -> ESP_FAIL), so size it up. */
+        .buffer_size    = 4096,
+        .buffer_size_tx = 1024,
     };
     esp_https_ota_config_t ota = { .http_config = &http };
     return esp_https_ota(&ota);

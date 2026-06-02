@@ -3293,6 +3293,18 @@ static const httpd_uri_t uri_system_ota_poll = {
 /* Operator-driven "install now" — applies the cached pending update
  * (set by the latest poll) and reboots. No-op if update_available
  * is false. */
+/* ota_install_now() reboots on success but RETURNS on failure (e.g. a
+ * download error). A FreeRTOS task entry function must never return — doing
+ * so trips "Task should not return, Aborting now!" and panics the device, so
+ * a failed OTA would crash + reboot instead of just surfacing the error.
+ * Run it inside a wrapper that deletes the task on the failure path. */
+static void ota_install_task(void *arg)
+{
+    (void)arg;
+    ota_install_now();   /* reboots on success */
+    vTaskDelete(NULL);   /* failure path: clean up instead of aborting */
+}
+
 static esp_err_t system_ota_install_handler(httpd_req_t *req)
 {
     if (require_auth(req) != ESP_OK) return ESP_FAIL;
@@ -3307,8 +3319,7 @@ static esp_err_t system_ota_install_handler(httpd_req_t *req)
         "{\"ok\":true,\"reboot_required\":true}");
     /* Fire-and-forget so the HTTP response gets flushed before the
      * blocking download begins. ota_install_now() reboots on success. */
-    xTaskCreate((TaskFunction_t)ota_install_now, "ota_inst",
-                6144, NULL, 3, NULL);
+    xTaskCreate(ota_install_task, "ota_inst", 6144, NULL, 3, NULL);
     return e;
 }
 static const httpd_uri_t uri_system_ota_install = {
