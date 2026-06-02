@@ -29,18 +29,21 @@ extern "C" {
 
 #define RESET_HISTORY_MAX 10
 
-/* Layout v3 (2026-05-22): shrunk who[64]→32 + crash[160]→96 so the
- * full 10-entry blob is 1480 B instead of 2440 B — that's 960 B less
- * pressure on the NVS partition per save cycle. The 24K nvs partition
- * was filling up in less than a day with the larger struct; the smaller
- * blob plus the 64K partition bump should keep the situation sane.
- * `crash` still holds a comfortable one-line task=… pc=… bt=… frame —
- * the IDF panic dump itself lives in the coredump partition. */
+/* Layout v4 (2026-06-03): crash 96→128. v3 had shrunk who[64]→32 +
+ * crash[160]→96 to relieve a 24K NVS partition that was filling in under a
+ * day; the partition is now 64K, so a 10-entry blob of 1800 B is comfortable.
+ * The extra room lets the crash one-liner hold ~8 backtrace frames — enough
+ * to see PAST the abort() machinery (panic_abort/esp_system_abort/abort,
+ * which are the same 3 frames for every abort-based panic) to the real
+ * culprit. The full panic dump still lives in the coredump partition; the
+ * full frame list also rides up to telemetry via NVS.last_crash.
+ * Note: a struct-size change invalidates the old blob, so reset history is
+ * zeroed once on the first boot of this firmware (one-time, harmless). */
 typedef struct {
     uint32_t wallclock;     /* unix epoch seconds when this entry was saved; 0 if SNTP hadn't synced at boot */
     char     reason[16];    /* "PANIC", "SW", "TASK_WDT", "FLASH", ... */
     char     who[32];       /* deliberate-restart attribution; "" for hardware resets */
-    char     crash[96];     /* core-dump one-liner for PANIC/WDT rows; "" otherwise */
+    char     crash[128];    /* core-dump one-liner for PANIC/WDT rows; "" otherwise */
 } reset_history_entry_t;
 
 /* Record the current boot into hist[0]. Idempotent within a single boot

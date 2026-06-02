@@ -225,7 +225,7 @@ static esp_err_t do_send(const char *event_type)
     /* Only attach a crash signature on the first boot after PANIC/WDT.
      * The signature is "task=NAME pc=0xADDR bt=0x...,0x...,0x..." — code
      * addresses only, no stack content (see read_crash_sig comment). */
-    char crash_sig[180] = "";
+    char crash_sig[256] = "";
     if (last_rst_is_crash()) {
         read_crash_sig(crash_sig, sizeof(crash_sig));
     }

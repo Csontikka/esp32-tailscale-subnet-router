@@ -21,6 +21,6 @@ include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 
 # PROJECT_VER lands in the esp_app_desc_t struct so the running firmware
 # can report its version via the OTA APIs and the web UI's Status page.
-set(PROJECT_VER "0.1.3")
+set(PROJECT_VER "0.1.4")
 
 project(esp32_tsr)

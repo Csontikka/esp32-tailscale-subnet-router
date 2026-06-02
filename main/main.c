@@ -678,15 +678,23 @@ void app_main(void)
     if (esp_core_dump_image_check() == ESP_OK) {
         esp_core_dump_summary_t *sum = malloc(sizeof(*sum));
         if (sum && esp_core_dump_get_summary(sum) == ESP_OK) {
-            char crash_info[160];
+            /* Capture enough frames to see PAST the abort() machinery. An
+             * abort-based panic (assert, "task should not return", heap
+             * check) ALWAYS starts panic_abort -> esp_system_abort -> abort,
+             * so the first 3 frames are identical for every such crash — the
+             * real culprit is deeper. Record up to 10 frames in a loop so the
+             * signature is actually debuggable from Diagnostics + telemetry. */
+            char crash_info[256];
             const uint32_t *bt = sum->exc_bt_info.bt;
             int bt_n = sum->exc_bt_info.depth;
-            snprintf(crash_info, sizeof(crash_info),
-                     "task=%s pc=0x%08lx%s%08lx%s%08lx%s%08lx",
-                     sum->exc_task, (unsigned long)sum->exc_pc,
-                     bt_n > 0 ? " bt=0x" : "", bt_n > 0 ? (unsigned long)bt[0] : 0UL,
-                     bt_n > 1 ? ",0x"    : "", bt_n > 1 ? (unsigned long)bt[1] : 0UL,
-                     bt_n > 2 ? ",0x"    : "", bt_n > 2 ? (unsigned long)bt[2] : 0UL);
+            if (bt_n > 10) bt_n = 10;
+            int off = snprintf(crash_info, sizeof(crash_info),
+                               "task=%s pc=0x%08lx bt=",
+                               sum->exc_task, (unsigned long)sum->exc_pc);
+            for (int i = 0; i < bt_n && off > 0 && off < (int)sizeof(crash_info); i++) {
+                off += snprintf(crash_info + off, sizeof(crash_info) - off,
+                                "%s0x%08lx", i ? "," : "", (unsigned long)bt[i]);
+            }
             ESP_LOGE("crashlog", "*** LAST PANIC: %s ***", crash_info);
             nvs_handle_t ch;
             if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &ch) == ESP_OK) {
