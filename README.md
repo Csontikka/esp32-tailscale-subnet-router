@@ -66,7 +66,7 @@ your expectations accordingly.
   thermostats**, energy/environmental monitors, ESPHome / Zigbee / MQTT
   bridges — anything small and low-bandwidth.
 - Low-rate control & telemetry: bursty, tiny payloads that are perfectly
-  happy with a few Mbit/s.
+  happy with around a megabit.
 - Reaching a device stuck behind NAT/CGNAT so you (or Home Assistant) can
   poll it, flip a relay, or SSH in from anywhere on your tailnet.
 
@@ -78,9 +78,11 @@ your expectations accordingly.
   bandwidth-heavy.
 - A general-purpose VPN gateway for fast clients.
 
-Throughput through the tunnel is **a few Mbit/s** — plenty for switches
-and sensors, not for media. If you need real bandwidth, put a Raspberry
-Pi (or similar) on that job instead. *(Configuring the device from a
+Real-world throughput through the tunnel runs **roughly 0.3–1.4 Mbit/s**,
+depending on the path — plain STA routing is at the top of that range, a
+**direct** exit node in the middle, and a **DERP-relayed** exit node at
+the bottom. Plenty for switches and sensors, not for media. If you need
+real bandwidth, put a Raspberry Pi (or similar) on that job instead. *(Configuring the device from a
 phone or laptop browser is of course fine — that's just the admin UI, not
 traffic you route through it.)*
 
@@ -278,9 +280,10 @@ key); disable it for the tailnet or pre-authorize the node.
 - **Single radio.** STA and AP share one 2.4 GHz radio and channel. If
   the upstream AP is on a different channel after a roam, throughput
   collapses until the device realigns (it auto-reboots to do so).
-- **Throughput.** This is an MCU doing userspace crypto + NAT; expect a
-  few Mbit/s through the tunnel, not gigabit. Plenty for IoT and
-  remote-admin traffic.
+- **Throughput.** This is an MCU doing userspace crypto + NAT; expect
+  roughly **0.3–1.4 Mbit/s** through the tunnel (plain STA highest, direct
+  exit node mid, DERP-relayed exit node lowest), not gigabit. Plenty for
+  IoT and remote-admin traffic.
 - **Exit node fails closed.** By design — when a selected exit node is
   unreachable, AP-client internet traffic stops rather than leaking to
   the local uplink. Clear the exit node to restore direct internet.
