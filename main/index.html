@@ -6238,6 +6238,54 @@
       }
     })();
 
+    /* Release notes are fetched live from GitHub by the BROWSER, on demand
+     * (only when the operator opens the disclosure) — nothing is stored on
+     * the device. Shows every release newer than the running firmware. */
+    var _otaRunningVer = '';
+    function _verParts(v) {
+      if (!v) return null;
+      var m = String(v).trim().replace(/^v/i, '').match(/^(\d+)\.(\d+)\.(\d+)(.*)$/);
+      if (!m) return null;
+      return { n: [ +m[1], +m[2], +m[3] ], pre: !!(m[4] && m[4][0] === '-') };
+    }
+    function _verNewer(a, b) {           /* is release tag a newer than running b? */
+      var pa = _verParts(a), pb = _verParts(b);
+      if (!pa) return false;
+      if (!pb) return true;
+      for (var i = 0; i < 3; i++) { if (pa.n[i] !== pb.n[i]) return pa.n[i] > pb.n[i]; }
+      return (pb.pre && !pa.pre);        /* same x.y.z: a real release beats a -pre build */
+    }
+    function loadReleaseNotes() {
+      var el = document.getElementById('sys-ota-notes');
+      if (!el) return;
+      el.textContent = 'Loading from GitHub…';
+      fetch('https://api.github.com/repos/Csontikka/esp32-tailscale-subnet-router/releases', { cache: 'no-store' })
+        .then(function (r) {
+          if (r.status === 403) throw new Error('rate-limited');
+          if (!r.ok) throw new Error('HTTP ' + r.status);
+          return r.json();
+        })
+        .then(function (rels) {
+          if (!Array.isArray(rels) || !rels.length) { el.textContent = '— no releases published yet —'; return; }
+          var newer = rels.filter(function (rl) { return !rl.draft && _verNewer(rl.tag_name, _otaRunningVer); });
+          if (!newer.length) { el.textContent = "You're on the latest release (" + (_otaRunningVer || '?') + ').'; return; }
+          newer.sort(function (a, b) { return (b.published_at || '').localeCompare(a.published_at || ''); });
+          el.textContent = newer.map(function (rl) {
+            var head = (rl.name || rl.tag_name) + (rl.published_at ? '  (' + rl.published_at.slice(0, 10) + ')' : '');
+            return head + '\n' + Array(Math.min(head.length, 44) + 1).join('─') + '\n' + (rl.body || '(no description)').trim();
+          }).join('\n\n');
+        })
+        .catch(function (e) {
+          el.textContent = (e && e.message === 'rate-limited')
+            ? '— GitHub rate limit hit, try again later —'
+            : "— couldn't reach GitHub (offline?) —";
+        });
+    }
+    (function () {   /* lazy: fetch only when the disclosure is opened */
+      var wrap = document.getElementById('sys-ota-notes-wrap');
+      if (wrap) wrap.addEventListener('toggle', function () { if (wrap.open) loadReleaseNotes(); });
+    })();
+
     function renderOtaState(o) {
       var auto  = document.getElementById('sys-ota-auto');
       var hour  = document.getElementById('sys-ota-hour');
@@ -6247,7 +6295,6 @@
       var run   = document.getElementById('sys-ota-running');
       var lat   = document.getElementById('sys-ota-latest');
       var lver  = document.getElementById('sys-ota-last-ver');
-      var notes = document.getElementById('sys-ota-notes');
       var badge = document.getElementById('sys-ota-badge');
       var inst  = document.getElementById('sys-ota-install');
 
@@ -6259,7 +6306,7 @@
       stat.textContent = o.last_status || '—';
       run.textContent  = o.running_version || '—';
       lat.textContent  = o.last_version    || '—';
-      notes.textContent = o.release_notes  || '— no notes available —';
+      _otaRunningVer = o.running_version || '';   /* for the lazy GitHub notes fetch */
 
       if (o.update_available) {
         badge.className = 'badge badge-warning';

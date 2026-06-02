@@ -43,7 +43,6 @@ static volatile int      s_install_hour     = -1;  /* -1 = install ASAP */
 static volatile uint32_t s_last_check       = 0;
 static volatile bool     s_update_available = false;
 static char              s_last_version[32]   = {0};
-static char              s_release_notes[768] = {0};
 static char              s_last_status[64]    = {0};
 
 static TaskHandle_t      s_poll_task   = NULL;
@@ -281,10 +280,9 @@ static void poll_once(void)
 
     char tag[32]        = {0};
     char asset_url[256] = {0};
-    char notes[768]     = {0};
     if (!parse_release_json(json, tag, sizeof tag,
                             asset_url, sizeof asset_url,
-                            notes, sizeof notes)) {
+                            NULL, 0)) {
         set_status("parse failed (no %s asset?)", OTA_ASSET_NAME);
         free(json);
         return;
@@ -294,7 +292,6 @@ static void poll_once(void)
     bool newer = version_is_newer(tag);
     WITH_STATE_LOCK({
         strlcpy(s_last_version,  tag,       sizeof s_last_version);
-        strlcpy(s_release_notes, notes,     sizeof s_release_notes);
         strlcpy(s_pending_asset_url, asset_url, sizeof s_pending_asset_url);
         s_update_available = newer;
     });
@@ -452,7 +449,6 @@ void ota_get_state(ota_state_t *out)
             sizeof out->running_version);
     WITH_STATE_LOCK({
         strlcpy(out->last_version,   s_last_version,   sizeof out->last_version);
-        strlcpy(out->release_notes,  s_release_notes,  sizeof out->release_notes);
         strlcpy(out->last_status,    s_last_status,    sizeof out->last_status);
     });
 }

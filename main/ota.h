@@ -49,7 +49,6 @@ typedef struct {
     uint32_t last_check;
     char     running_version[32];  /* esp_app_get_description()->version */
     char     last_version[32];     /* most recently observed remote tag */
-    char     release_notes[768];   /* most recent release body, truncated */
     char     last_status[64];      /* "up to date", "http 404", "applied vX" … */
     bool     update_available;     /* last_version > running_version */
 } ota_state_t;

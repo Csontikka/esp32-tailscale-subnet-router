@@ -3030,7 +3030,6 @@ static esp_err_t system_handler(httpd_req_t *req)
         cJSON_AddNumberToObject(o, "last_check",       os.last_check);
         cJSON_AddStringToObject(o, "running_version",  os.running_version);
         cJSON_AddStringToObject(o, "last_version",     os.last_version);
-        cJSON_AddStringToObject(o, "release_notes",    os.release_notes);
         cJSON_AddStringToObject(o, "last_status",      os.last_status);
         cJSON_AddBoolToObject  (o, "update_available", os.update_available);
         cJSON_AddItemToObject(root, "ota", o);
