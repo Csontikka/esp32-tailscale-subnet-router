@@ -2671,6 +2671,12 @@
               <input type="checkbox" id="sys-ota-auto"> Install updates automatically
             </label>
           </div>
+          <div class="form-group" style="margin-top:0.5rem;">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="sys-ota-beta"> Beta channel (include pre-releases)
+            </label>
+            <span class="form-hint">Test devices only — also offers GitHub pre-releases. Off = stable releases only.</span>
+          </div>
           <div class="form-group" id="sys-ota-hour-wrap">
             <label class="form-label" for="sys-ota-hour">Install hour (local time)</label>
             <select class="input" id="sys-ota-hour">
@@ -6256,6 +6262,8 @@
       var inst  = document.getElementById('sys-ota-install');
 
       auto.checked = !!o.auto_install;
+      var beta = document.getElementById('sys-ota-beta');
+      if (beta) beta.checked = !!o.beta_channel;
       hour.value   = String(o.install_hour != null ? o.install_hour : -1);
       /* The hour select only matters when auto-install is on. */
       hourWrap.style.opacity = auto.checked ? '1' : '0.45';
@@ -6337,7 +6345,7 @@
 
     /* OTA card wiring — auto-install + install-hour save, "Check now"
      * trigger, "Install now" trigger, manual upload via XHR. */
-    ['sys-ota-auto', 'sys-ota-hour'].forEach(function (id) {
+    ['sys-ota-auto', 'sys-ota-beta', 'sys-ota-hour'].forEach(function (id) {
       document.getElementById(id).addEventListener('change', function () {
         document.getElementById('sys-ota-save').disabled = false;
         /* live-toggle the hour-select dim when auto flips */
@@ -6358,6 +6366,7 @@
         body:    JSON.stringify({
           ota: {
             auto_install: document.getElementById('sys-ota-auto').checked,
+            beta:         document.getElementById('sys-ota-beta').checked,
             install_hour: parseInt(document.getElementById('sys-ota-hour').value, 10)
           }
         })

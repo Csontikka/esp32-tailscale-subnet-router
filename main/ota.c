@@ -27,7 +27,8 @@ static const char *TAG = "ota";
 #define OTA_REPO_NAME        "esp32-tailscale-subnet-router"
 #define OTA_ASSET_NAME       "firmware.bin"
 #define OTA_HTTP_RX_BUF      2048
-#define OTA_API_JSON_MAX     16384       /* GitHub releases.latest JSON ~5 KB */
+#define OTA_API_JSON_MAX     32768       /* releases/latest ~5 KB; the beta /releases array (per_page=10) is larger */
+#define OTA_RELEASES_PER_PAGE 10         /* beta channel: newest N releases to scan (newest beta is among these) */
 
 #define OTA_POLL_INTERVAL_S  (24 * 3600) /* 1 day — non-configurable */
 #define OTA_BOOT_GRACE_S     20          /* settle before the first poll */
@@ -39,6 +40,7 @@ static const char *TAG = "ota";
  * recursive mutex; bool/int settings stay volatile-and-atomic since they
  * fit in a single store. */
 static volatile bool     s_auto_install     = false;
+static volatile bool     s_beta_channel     = false; /* poll /releases (incl. pre-releases) instead of /releases/latest */
 static volatile int      s_install_hour     = -1;  /* -1 = install ASAP */
 static volatile uint32_t s_last_check       = 0;
 static volatile bool     s_update_available = false;
@@ -267,14 +269,66 @@ static esp_err_t do_https_ota(const char *url)
     return esp_https_ota(&ota);
 }
 
-/* Fetch /releases/latest, parse, refresh observed-state. Does NOT
- * install — the scheduler / operator owns that decision. */
+/* Beta channel: from a /releases ARRAY, pick the highest-semver release that
+ * ships a firmware.bin asset (pre-releases included; drafts skipped). */
+static bool parse_newest_release_json(const char *json,
+                                      char *tag, size_t tag_len,
+                                      char *url, size_t url_len)
+{
+    cJSON *root = cJSON_Parse(json);
+    if (!root || !cJSON_IsArray(root)) { cJSON_Delete(root); return false; }
+    bool ok = false;
+    int best_mj = -1, best_mn = -1, best_pt = -1;
+    int n = cJSON_GetArraySize(root);
+    for (int i = 0; i < n; i++) {
+        cJSON *rel = cJSON_GetArrayItem(root, i);
+        if (!cJSON_IsObject(rel)) continue;
+        if (cJSON_IsTrue(cJSON_GetObjectItem(rel, "draft"))) continue;   /* never offer drafts */
+        cJSON *t = cJSON_GetObjectItem(rel, "tag_name");
+        if (!cJSON_IsString(t) || !t->valuestring) continue;
+        const char *dl_url = NULL;
+        cJSON *assets = cJSON_GetObjectItem(rel, "assets");
+        if (cJSON_IsArray(assets)) {
+            int an = cJSON_GetArraySize(assets);
+            for (int a = 0; a < an; a++) {
+                cJSON *as   = cJSON_GetArrayItem(assets, a);
+                cJSON *name = cJSON_GetObjectItem(as, "name");
+                cJSON *dl   = cJSON_GetObjectItem(as, "browser_download_url");
+                if (cJSON_IsString(name) && cJSON_IsString(dl) &&
+                    strstr(name->valuestring, OTA_ASSET_NAME)) { dl_url = dl->valuestring; break; }
+            }
+        }
+        if (!dl_url) continue;   /* a release without firmware.bin can't be installed */
+        int mj, mn, pt;
+        parse_version_tuple(t->valuestring, &mj, &mn, &pt);
+        if (mj > best_mj || (mj == best_mj && (mn > best_mn || (mn == best_mn && pt > best_pt)))) {
+            best_mj = mj; best_mn = mn; best_pt = pt;
+            strlcpy(tag, t->valuestring, tag_len);
+            strlcpy(url, dl_url, url_len);
+            ok = true;
+        }
+    }
+    cJSON_Delete(root);
+    return ok;
+}
+
+/* Fetch the relevant release(s), parse, refresh observed-state. Does NOT
+ * install — the scheduler / operator owns that decision. Stable channel uses
+ * /releases/latest (GitHub excludes pre-releases); the beta channel scans
+ * /releases and takes the highest-semver release, pre-releases included. */
 static void poll_once(void)
 {
-    char url_api[160];
-    snprintf(url_api, sizeof url_api,
-             "https://api.github.com/repos/%s/%s/releases/latest",
-             OTA_REPO_OWNER, OTA_REPO_NAME);
+    const bool beta = s_beta_channel;
+    char url_api[200];
+    if (beta) {
+        snprintf(url_api, sizeof url_api,
+                 "https://api.github.com/repos/%s/%s/releases?per_page=%d",
+                 OTA_REPO_OWNER, OTA_REPO_NAME, OTA_RELEASES_PER_PAGE);
+    } else {
+        snprintf(url_api, sizeof url_api,
+                 "https://api.github.com/repos/%s/%s/releases/latest",
+                 OTA_REPO_OWNER, OTA_REPO_NAME);
+    }
 
     int status = 0;
     char *json = http_get_text(url_api, OTA_API_JSON_MAX, &status);
@@ -286,9 +340,10 @@ static void poll_once(void)
 
     char tag[32]        = {0};
     char asset_url[256] = {0};
-    if (!parse_release_json(json, tag, sizeof tag,
-                            asset_url, sizeof asset_url,
-                            NULL, 0)) {
+    bool parsed = beta
+        ? parse_newest_release_json(json, tag, sizeof tag, asset_url, sizeof asset_url)
+        : parse_release_json(json, tag, sizeof tag, asset_url, sizeof asset_url, NULL, 0);
+    if (!parsed) {
         set_status("parse failed (no %s asset?)", OTA_ASSET_NAME);
         free(json);
         return;
@@ -422,6 +477,10 @@ void ota_init(void)
     }
     s_install_hour = (int)hour;
 
+    uint8_t beta8 = 0;
+    (void)nvs_param_get_u8("ota_beta", &beta8);
+    s_beta_channel = beta8 != 0;
+
     nvs_handle_t h;
     if (nvs_open(NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
         nvs_get_u32(h, "ota_last_check", (uint32_t *)&s_last_check);
@@ -439,14 +498,15 @@ void ota_init(void)
     if (!s_poll_task) {
         xTaskCreate(poll_task, "ota_poll", 6144, NULL, 3, &s_poll_task);
     }
-    ESP_LOGI(TAG, "ota_init: auto_install=%d install_hour=%d update_avail=%d",
-             (int)s_auto_install, s_install_hour, (int)s_update_available);
+    ESP_LOGI(TAG, "ota_init: auto_install=%d install_hour=%d beta=%d update_avail=%d",
+             (int)s_auto_install, s_install_hour, (int)s_beta_channel, (int)s_update_available);
 }
 
 void ota_get_state(ota_state_t *out)
 {
     if (!out) return;
     out->auto_install      = s_auto_install;
+    out->beta_channel      = s_beta_channel;
     out->install_hour      = s_install_hour;
     out->last_check        = s_last_check;
     out->update_available  = s_update_available;
@@ -469,6 +529,16 @@ esp_err_t ota_set_settings(bool auto_install, int install_hour)
     /* Wake the scheduler so a newly-enabled auto_install + ASAP can
      * react without waiting OTA_TICK_S. */
     if (s_poll_wake) xSemaphoreGive(s_poll_wake);
+    return ESP_OK;
+}
+
+/* Beta channel opt-in. When on, the poller scans /releases (pre-releases
+ * included) instead of /releases/latest. Re-poll explicitly afterwards
+ * (ota_poll_now) to apply the channel switch immediately. */
+esp_err_t ota_set_beta(bool enabled)
+{
+    s_beta_channel = enabled;
+    nvs_param_set_u8("ota_beta", enabled ? 1 : 0);
     return ESP_OK;
 }
 

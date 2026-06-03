@@ -401,6 +401,7 @@ static esp_err_t status_handler(httpd_req_t *req)
         cJSON *o = cJSON_CreateObject();
         cJSON_AddBoolToObject  (o, "update_available", os.update_available);
         cJSON_AddBoolToObject  (o, "auto_install",     os.auto_install);
+        cJSON_AddBoolToObject  (o, "beta_channel",     os.beta_channel);
         cJSON_AddNumberToObject(o, "install_hour",     os.install_hour);
         cJSON_AddStringToObject(o, "latest_version",   os.last_version);
         cJSON_AddStringToObject(o, "running_version",  os.running_version);
@@ -3033,6 +3034,7 @@ static esp_err_t system_handler(httpd_req_t *req)
         ota_get_state(&os);
         cJSON *o = cJSON_CreateObject();
         cJSON_AddBoolToObject  (o, "auto_install",     os.auto_install);
+        cJSON_AddBoolToObject  (o, "beta_channel",     os.beta_channel);
         cJSON_AddNumberToObject(o, "install_hour",     os.install_hour);
         cJSON_AddNumberToObject(o, "last_check",       os.last_check);
         cJSON_AddStringToObject(o, "running_version",  os.running_version);
@@ -3182,6 +3184,8 @@ static esp_err_t system_save_handler(httpd_req_t *req)
         int  install_hour = cJSON_IsNumber(ih) ? (int)ih->valuedouble
                                                : cur.install_hour;
         ota_set_settings(auto_install, install_hour);
+        const cJSON *bt = cJSON_GetObjectItem(o, "beta");
+        if (cJSON_IsBool(bt)) ota_set_beta(cJSON_IsTrue(bt));
     }
 
 

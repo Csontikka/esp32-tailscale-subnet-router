@@ -45,6 +45,7 @@ esp_err_t ota_upload_handler(httpd_req_t *req);
  * — if the poller hasn't run yet, the timestamps stay 0. */
 typedef struct {
     bool     auto_install;         /* operator opt-in for auto-apply */
+    bool     beta_channel;         /* poll /releases (incl. pre-releases) vs /releases/latest */
     int      install_hour;         /* 0..23 or -1 ("ASAP after poll") */
     uint32_t last_check;
     char     running_version[32];  /* esp_app_get_description()->version */
@@ -57,6 +58,10 @@ void      ota_get_state(ota_state_t *out);
 
 /* Operator-driven save. install_hour clamps to [-1, 23]. */
 esp_err_t ota_set_settings(bool auto_install, int install_hour);
+
+/* Beta-channel opt-in. true = poll /releases incl. pre-releases (test devices);
+ * false = /releases/latest, stable only. Re-poll (ota_poll_now) to apply now. */
+esp_err_t ota_set_beta(bool enabled);
 
 /* Synchronously trigger one poll right now. Returns the resulting status
  * string in `out_status` (best-effort, may be empty). */
