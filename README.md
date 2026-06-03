@@ -16,7 +16,7 @@
 
 ---
 
-> **Status — early access (`v0.1.7`).** Runs daily on the reference
+> **Status — early access (`v0.1.8`).** Runs daily on the reference
 > ESP32-S3 hardware and the core paths (WiFi NAT, Tailscale subnet
 > routing, DERP fallback, exit nodes, firewall) are exercised
 > continuously. Treat it as a capable hobby build, not a hardened
@@ -111,9 +111,9 @@ traffic you route through it.)*
   microSD "flight recorder" for catching control-plane stalls.
 - **DHCP niceties** — reservations, live lease table, per-client signal,
   and a MAC denylist.
-- **Robust by design** — encrypted config backup/restore, OTA updates,
-  per-sink (console + SD) log levels, auto AP-channel realign on STA
-  roam, and pre-crash log capture.
+- **Robust by design** — encrypted config backup/restore, OTA updates
+  (with an opt-in beta channel for pre-releases), per-sink (console + SD)
+  log levels, auto AP-channel realign on STA roam, and pre-crash log capture.
 - **Anonymous telemetry (on by default, one toggle to opt out)** — a tiny
   daily payload: a salted one-way device hash + boot/flash counters +
   firmware/chip/uptime + reboot/crash cause. Never SSIDs, IPs, MACs,

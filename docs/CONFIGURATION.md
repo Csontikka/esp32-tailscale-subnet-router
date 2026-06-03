@@ -88,6 +88,6 @@ Per rule: **source** / **destination** (`any` or CIDR), **protocol**
 | **Timezone** | Device TZ; a real change flags a pending reboot. |
 | **Anonymous telemetry** | On by default; one toggle in the **About** card opts out. Daily anonymous hash + counters (see README → Telemetry). |
 | **SD card logging** | Enable + per-sink (console / SD) log level; the on-device flight recorder. |
-| **Firmware update (OTA)** | Manual upload or polled auto-install window. |
+| **Firmware update (OTA)** | Manual upload, or polled auto-install window. Optional **beta channel** also offers GitHub pre-releases (off by default = stable releases only). |
 | **Encrypted backup / restore** | Export/import the full config, encrypted with a passphrase. |
 | **Danger zone** | Reboot, factory reset, reset Tailscale identity. |

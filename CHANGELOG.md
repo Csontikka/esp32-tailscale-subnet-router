@@ -6,6 +6,16 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.8] — 2026-06-03
+
+### Added
+
+- **OTA beta channel** — an opt-in toggle (System → Firmware update) that makes
+  the updater also offer GitHub **pre-releases** (highest semver wins), so test
+  devices can pull beta builds before they go stable. Off by default, so
+  production devices keep tracking only stable releases (`/releases/latest`).
+  Promote a beta by publishing it as a full (non-pre-release) release.
+
 ## [0.1.7] — 2026-06-03
 
 Reliability-focused early-access update: over-the-air updates are now
@@ -94,6 +104,7 @@ from a built-in web UI.
 - **Headscale is untested**; only hosted Tailscale has been validated.
 - Tailnet lock is unsupported.
 
-[Unreleased]: https://github.com/Csontikka/esp32-tailscale-subnet-router/compare/v0.1.7...HEAD
+[Unreleased]: https://github.com/Csontikka/esp32-tailscale-subnet-router/compare/v0.1.8...HEAD
+[0.1.8]: https://github.com/Csontikka/esp32-tailscale-subnet-router/releases/tag/v0.1.8
 [0.1.7]: https://github.com/Csontikka/esp32-tailscale-subnet-router/releases/tag/v0.1.7
 [0.1.0]: https://github.com/Csontikka/esp32-tailscale-subnet-router/releases/tag/v0.1.0
