@@ -1,4 +1,4 @@
 [submodule "external/microlink"]
 	path = external/microlink
 	url = https://github.com/Csontikka/microlink.git
-	branch = esp32-router-integration
+	branch = main
