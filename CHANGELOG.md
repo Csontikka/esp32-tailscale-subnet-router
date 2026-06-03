@@ -6,6 +6,47 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.7] — 2026-06-03
+
+Reliability-focused early-access update: over-the-air updates are now
+dependable, crash reports are actionable, and the Tailscale client (microlink)
+is consolidated. No breaking changes — settings and tailnet identity are
+preserved across the update.
+
+### Fixed
+
+- **OTA updates are now durable** — the running image marks itself valid after a
+  healthy boot, so the bootloader rollback no longer reverts a fresh update on
+  the next reboot.
+- **OTA downloads from GitHub Releases succeed** — the updater's HTTP buffer was
+  too small to hold the release-asset redirect header (it failed with
+  `ESP_FAIL`).
+- **A failed OTA no longer crashes the device** — the install path used to panic
+  and reboot on any download error (risking a loop with auto-install enabled); it
+  now surfaces the error and keeps running.
+- **Crash signatures are debuggable** — panic reports captured only the generic
+  `abort()` frames; they now record the backtrace through to the real fault
+  (Diagnostics → Reset history, and telemetry).
+
+### Changed
+
+- **AP channel is read-only**, auto-following the uplink channel (single radio).
+  Removed the non-functional manual channel control and the dead "Disable web
+  interface" placeholder.
+- **microlink** consolidated onto a single maintained line.
+- **Telemetry hardened** — the anonymous device hash now carries an integrity
+  check so the collector can drop spoofed/garbage events; the collector keeps
+  only coarse country/region and never stores a raw IP.
+
+### Known limitations
+
+- **Headscale does not currently work** — the ts2021 control-plane Noise
+  handshake fails (tracked in
+  [#7](https://github.com/Csontikka/esp32-tailscale-subnet-router/issues/7));
+  supersedes the "untested" note in 0.1.0. Hosted Tailscale is unaffected.
+- Carried over from 0.1.0: single 2.4 GHz radio (channel realign after a roam),
+  MCU-class throughput, tailnet lock unsupported.
+
 ## [0.1.0] — 2026-05-31
 
 First public early-access release. The firmware turns one ESP32-S3 into
@@ -53,5 +94,6 @@ from a built-in web UI.
 - **Headscale is untested**; only hosted Tailscale has been validated.
 - Tailnet lock is unsupported.
 
-[Unreleased]: https://github.com/Csontikka/esp32-tailscale-subnet-router/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/Csontikka/esp32-tailscale-subnet-router/compare/v0.1.7...HEAD
+[0.1.7]: https://github.com/Csontikka/esp32-tailscale-subnet-router/releases/tag/v0.1.7
 [0.1.0]: https://github.com/Csontikka/esp32-tailscale-subnet-router/releases/tag/v0.1.0

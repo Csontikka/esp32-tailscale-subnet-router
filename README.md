@@ -16,7 +16,7 @@
 
 ---
 
-> **Status — early access (`v0.1.0`).** Runs daily on the reference
+> **Status — early access (`v0.1.7`).** Runs daily on the reference
 > ESP32-S3 hardware and the core paths (WiFi NAT, Tailscale subnet
 > routing, DERP fallback, exit nodes, firewall) are exercised
 > continuously. Treat it as a capable hobby build, not a hardened
