@@ -52,7 +52,7 @@ Up to **5** networks, tried in order. Per network:
 | **Enabled** | Master switch for the tailnet client. |
 | **Auth key** | Tailscale auth key (`tskey-…`). Leave empty to keep current. |
 | **Hostname** | Node name on the tailnet. |
-| **Login server** | Custom control plane (Headscale). Empty = Tailscale. ⚠️ Headscale untested. |
+| **Login server** | Custom control plane (Headscale). Empty = Tailscale. ⚠️ Headscale does not currently work — control-plane Noise handshake fails (under investigation). |
 | **Advertised subnet routes** | One CIDR per line; the AP subnet is offered automatically. |
 | **Exit node** | Route AP-client public traffic through this tailnet exit node. Fails closed if unreachable. |
 | **Max peers** | Upper bound on tracked peers. |

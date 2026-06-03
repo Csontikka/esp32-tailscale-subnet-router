@@ -339,9 +339,12 @@ configuration reference.
 The device authenticates with a standard **Tailscale** auth key and has
 been validated against the hosted Tailscale control plane.
 
-> ⚠️ **Headscale is currently untested.** The UI accepts a custom login
-> server (Headscale) URL, but this path has **not** been exercised yet —
-> use it at your own risk and please report results.
+> ⚠️ **Headscale does not currently work.** The UI accepts a custom login
+> server (Headscale) URL, but testing against Headscale v0.28.0 found the
+> ts2021 control-plane **Noise handshake fails** (the server rejects the
+> machine-key handshake), so the device cannot register. Tracked in
+> [#7](../../issues/7) — a fix is being investigated. For now use Tailscale's
+> hosted control plane.
 
 `tailnet lock` is not supported (the device cannot sign its own node
 key); disable it for the tailnet or pre-authorize the node.
@@ -358,7 +361,7 @@ key); disable it for the tailnet or pre-authorize the node.
 - **Exit node fails closed.** By design — when a selected exit node is
   unreachable, AP-client internet traffic stops rather than leaking to
   the local uplink. Clear the exit node to restore direct internet.
-- **Headscale untested** (see above). **Tailnet lock unsupported.**
+- **Headscale not working** (see above — a control-plane handshake incompatibility is under investigation). **Tailnet lock unsupported.**
 - **2.4 GHz only**, single AP subnet.
 
 ## Telemetry
