@@ -105,6 +105,19 @@ static void compute_device_hash(void)
         snprintf(s_state.device_hash + i * 2, 3, "%02x", digest[i]);
     }
     s_state.device_hash[TELEMETRY_DH_HEX_LEN] = 0;
+
+    /* Append a 2-hex integrity check = SHA-256(check_salt || the 16-hex id)[0],
+     * so the telemetry collector can drop random/garbage POSTs. Friction, NOT
+     * auth — this firmware is open source. The check_salt MUST match the
+     * worker's dhCheck() salt byte-for-byte (distinct from the id salt above). */
+    static const char check_salt[] = "esp32-tailscale-v1";
+    uint8_t cin[sizeof(check_salt) - 1 + TELEMETRY_DH_HEX_LEN];
+    memcpy(cin, check_salt, sizeof(check_salt) - 1);
+    memcpy(cin + sizeof(check_salt) - 1, s_state.device_hash, TELEMETRY_DH_HEX_LEN);
+    uint8_t cdig[32];
+    mbedtls_sha256(cin, sizeof(cin), cdig, 0);
+    snprintf(s_state.device_hash + TELEMETRY_DH_HEX_LEN, 3, "%02x", cdig[0]);
+    s_state.device_hash[TELEMETRY_DH_FULL_LEN] = 0;
 }
 
 static const char *chip_model_str(void)

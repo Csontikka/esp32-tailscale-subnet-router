@@ -38,7 +38,8 @@ extern "C" {
 #define TELEMETRY_KEY_MAXLEN    48
 #define TELEMETRY_BAN_VER_MAX   40
 #define TELEMETRY_STATUS_MAX    64
-#define TELEMETRY_DH_HEX_LEN    16
+#define TELEMETRY_DH_HEX_LEN    16      /* anonymous id: SHA-256(MAC||salt)[0..7] */
+#define TELEMETRY_DH_FULL_LEN   18      /* id + 2-hex integrity check appended */
 
 typedef struct {
     bool      enabled;
@@ -46,7 +47,7 @@ typedef struct {
     char      key[TELEMETRY_KEY_MAXLEN];
     uint32_t  boot_count;
     uint32_t  flash_count;
-    char      device_hash[TELEMETRY_DH_HEX_LEN + 1];
+    char      device_hash[TELEMETRY_DH_FULL_LEN + 1];  /* 18 hex + NUL */
     uint64_t  last_send_ms;                       /* 0 = never sent */
     char      last_status[TELEMETRY_STATUS_MAX];  /* short human-readable */
     char      banner_seen_ver[TELEMETRY_BAN_VER_MAX];
