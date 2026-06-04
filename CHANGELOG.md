@@ -6,6 +6,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.9] — 2026-06-04
+
 ### Added
 
 - **Source-NAT advertised routes** — an opt-in toggle (Tailscale settings, off by
@@ -22,6 +24,8 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **Project logo in the header** — the web UI nav brand icon now uses an inline
   chip + WiFi mark (crisp vector, stays sharp at small sizes) instead of the
   generic placeholder icon.
+- **Mascot in the Support card** — a small hand-drawn mascot next to the
+  "Buy me a coffee" button, centred with it.
 
 ### Changed
 
@@ -130,7 +134,8 @@ from a built-in web UI.
 - **Headscale is untested**; only hosted Tailscale has been validated.
 - Tailnet lock is unsupported.
 
-[Unreleased]: https://github.com/Csontikka/esp32-tailscale-subnet-router/compare/v0.1.8...HEAD
+[Unreleased]: https://github.com/Csontikka/esp32-tailscale-subnet-router/compare/v0.1.9...HEAD
+[0.1.9]: https://github.com/Csontikka/esp32-tailscale-subnet-router/releases/tag/v0.1.9
 [0.1.8]: https://github.com/Csontikka/esp32-tailscale-subnet-router/releases/tag/v0.1.8
 [0.1.7]: https://github.com/Csontikka/esp32-tailscale-subnet-router/releases/tag/v0.1.7
 [0.1.0]: https://github.com/Csontikka/esp32-tailscale-subnet-router/releases/tag/v0.1.0

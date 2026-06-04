@@ -16,7 +16,7 @@
 
 ---
 
-> **Status — early access (`v0.1.8`).** Runs daily on the reference
+> **Status — early access (`v0.1.9`).** Runs daily on the reference
 > ESP32-S3 hardware and the core paths (WiFi NAT, Tailscale subnet
 > routing, DERP fallback, exit nodes, firewall) are exercised
 > continuously. Treat it as a capable hobby build, not a hardened
@@ -91,6 +91,10 @@ traffic you route through it.)*
 
 - **Dual role** — simultaneous WiFi STA (uplink) + AP (NAT router) +
   Tailscale subnet router.
+- **Expose the upstream LAN too** — beyond its own AP subnet, an optional
+  Source-NAT (à la Tailscale `--snat-subnet-routes`) lets tailnet peers reach
+  the network the device is *connected to*, with no static route needed on the
+  upstream router.
 - **Web UI for everything** — first-run password setup, WiFi join,
   tailnet enrolment, routes, firewall, diagnostics. Dark, responsive,
   single-page; served straight off the device.
@@ -387,7 +391,7 @@ This is the *entire* payload — nothing else leaves the device:
 ```json
 {
   "dh": "a1b2c3d4e5f60718",
-  "v":  "0.1.0",
+  "v":  "0.1.9",
   "bd": "2026-05-31",
   "et": "heartbeat",
   "bc": 276,
@@ -405,7 +409,7 @@ This is the *entire* payload — nothing else leaves the device:
 | Field | Meaning | Example |
 |---|---|---|
 | `dh` | anonymous device ID — first 8 bytes of `SHA-256(WiFi MAC + fixed salt)`, hex. One-way; it can't be turned back into your MAC | `a1b2c3d4e5f60718` |
-| `v`  | firmware version | `0.1.0` |
+| `v`  | firmware version | `0.1.9` |
 | `bd` | firmware build date | `2026-05-31` |
 | `et` | event type — `boot`, `heartbeat`, or a crash report | `heartbeat` |
 | `bc` | total boot count | `276` |
