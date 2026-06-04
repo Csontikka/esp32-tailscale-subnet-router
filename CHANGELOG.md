@@ -17,6 +17,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **Subnet prefix in the Status cards** — the Uplink and Access Point cards now
   show the address with its CIDR prefix (e.g. `192.168.1.50/24`, `192.168.4.1/24`).
 
+### Changed
+
+- **OTA version compare is pre-release-aware** — the updater now follows SemVer
+  pre-release precedence (`0.1.9-beta1 < 0.1.9-beta2 < … < 0.1.9`), so a device on
+  one beta is offered the next beta and the final stable release supersedes every
+  beta of that version. Beta builds carry the pre-release tag in their version
+  string. Previously the suffix was ignored, so successive betas of the same
+  `x.y.z` were never offered.
+
 ## [0.1.8] — 2026-06-03
 
 ### Added

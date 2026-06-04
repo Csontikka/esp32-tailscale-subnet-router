@@ -4,6 +4,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <ctype.h>
 #include <time.h>
 
 #include "freertos/FreeRTOS.h"
@@ -217,32 +218,70 @@ out:
     return ok;
 }
 
-static void parse_version_tuple(const char *s, int *maj, int *min, int *pat)
+/* Parsed semver: major.minor.patch + optional prerelease (everything after
+ * the first '-', e.g. "beta2"). Empty prerelease = a final/stable release. */
+typedef struct { int mj, mn, pt; char pre[24]; } ota_ver_t;
+
+static void parse_version_ex(const char *s, ota_ver_t *v)
 {
-    *maj = *min = *pat = 0;
+    v->mj = v->mn = v->pt = 0;
+    v->pre[0] = '\0';
     if (!s) return;
     if (*s == 'v' || *s == 'V') s++;
-    *maj = atoi(s);
+    v->mj = atoi(s);
     const char *p = strchr(s, '.');
-    if (!p) return;
-    *min = atoi(p + 1);
-    p = strchr(p + 1, '.');
-    if (!p) return;
-    *pat = atoi(p + 1);
+    if (p) { v->mn = atoi(p + 1); p = strchr(p + 1, '.'); }
+    if (p) v->pt = atoi(p + 1);
+    const char *dash = strchr(s, '-');           /* prerelease tag */
+    if (dash && dash[1]) strlcpy(v->pre, dash + 1, sizeof v->pre);
+}
+
+/* Natural (digit-aware) compare of two prerelease strings so "beta2" < "beta10"
+ * (a plain lexical compare would order them wrong). <0 a<b, 0 eq, >0 a>b. */
+static int prerelease_cmp(const char *a, const char *b)
+{
+    while (*a && *b) {
+        if (isdigit((unsigned char)*a) && isdigit((unsigned char)*b)) {
+            long na = strtol(a, (char **)&a, 10);
+            long nb = strtol(b, (char **)&b, 10);
+            if (na != nb) return na < nb ? -1 : 1;
+        } else {
+            if (*a != *b) return (unsigned char)*a < (unsigned char)*b ? -1 : 1;
+            a++; b++;
+        }
+    }
+    if (*a) return 1;
+    if (*b) return -1;
+    return 0;
+}
+
+/* SemVer precedence (RFC §11): compare major.minor.patch, then a version
+ * WITHOUT a prerelease outranks the same tuple WITH one (0.1.9 > 0.1.9-beta2),
+ * and among prereleases the identifiers are compared (beta1 < beta2 < beta10).
+ * <0 a<b, 0 equal, >0 a>b. */
+static int version_cmp(const ota_ver_t *a, const ota_ver_t *b)
+{
+    if (a->mj != b->mj) return a->mj < b->mj ? -1 : 1;
+    if (a->mn != b->mn) return a->mn < b->mn ? -1 : 1;
+    if (a->pt != b->pt) return a->pt < b->pt ? -1 : 1;
+    bool ea = !a->pre[0], eb = !b->pre[0];
+    if (ea && eb) return 0;
+    if (ea) return 1;                 /* stable a > prerelease b */
+    if (eb) return -1;                /* prerelease a < stable b */
+    return prerelease_cmp(a->pre, b->pre);
 }
 
 /* True iff `remote` is strictly newer than the running app. Equal +
- * downgrade both return false — yanked releases can't flash-wear-loop. */
+ * downgrade both return false — yanked releases can't flash-wear-loop.
+ * Prerelease-aware: a 0.1.9-beta1 device IS offered 0.1.9-beta2 (and later
+ * the stable 0.1.9 supersedes every 0.1.9-betaN). */
 static bool version_is_newer(const char *remote_tag)
 {
     const esp_app_desc_t *desc = esp_app_get_description();
-    const char *local = desc ? desc->version : "";
-    int rM=0,rm=0,rp=0,lM=0,lm=0,lp=0;
-    parse_version_tuple(remote_tag, &rM, &rm, &rp);
-    parse_version_tuple(local,      &lM, &lm, &lp);
-    if (rM != lM) return rM > lM;
-    if (rm != lm) return rm > lm;
-    return rp > lp;
+    ota_ver_t r, l;
+    parse_version_ex(remote_tag, &r);
+    parse_version_ex(desc ? desc->version : "", &l);
+    return version_cmp(&r, &l) > 0;
 }
 
 /* Cached URL for the latest-release asset, captured at poll time and
@@ -278,7 +317,7 @@ static bool parse_newest_release_json(const char *json,
     cJSON *root = cJSON_Parse(json);
     if (!root || !cJSON_IsArray(root)) { cJSON_Delete(root); return false; }
     bool ok = false;
-    int best_mj = -1, best_mn = -1, best_pt = -1;
+    ota_ver_t best = {0};
     int n = cJSON_GetArraySize(root);
     for (int i = 0; i < n; i++) {
         cJSON *rel = cJSON_GetArrayItem(root, i);
@@ -299,10 +338,10 @@ static bool parse_newest_release_json(const char *json,
             }
         }
         if (!dl_url) continue;   /* a release without firmware.bin can't be installed */
-        int mj, mn, pt;
-        parse_version_tuple(t->valuestring, &mj, &mn, &pt);
-        if (mj > best_mj || (mj == best_mj && (mn > best_mn || (mn == best_mn && pt > best_pt)))) {
-            best_mj = mj; best_mn = mn; best_pt = pt;
+        ota_ver_t cur;
+        parse_version_ex(t->valuestring, &cur);
+        if (!ok || version_cmp(&cur, &best) > 0) {
+            best = cur;
             strlcpy(tag, t->valuestring, tag_len);
             strlcpy(url, dl_url, url_len);
             ok = true;
