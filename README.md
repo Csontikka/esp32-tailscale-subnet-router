@@ -55,6 +55,29 @@ charger: it bridges a whole IoT subnet onto your tailnet *and* gives
 those devices internet through an exit node, while staying small enough
 to ignore.
 
+## Where it fits
+
+Typical setups people use it for:
+
+- **Weekend house / cabin.** A Tasmota/Shelly AC, water heater or
+  freeze-guard on the cabin's existing WiFi — your home Home Assistant
+  sees and controls it, with no public IP, port-forward or VPN server on
+  the cabin's router.
+- **Parents' / grandparents' place.** A couple of sensors (temperature,
+  door/window, water-leak) pulled into your own HA so you can watch them
+  and get alerted, without ever touching their router.
+- **CGNAT / mobile-broadband locations.** Sites with no public IP (4G
+  routers, shared building internet) that you could never reach before —
+  the tailnet bridges the CGNAT, so HA sees everything anyway.
+- **Garage / workshop / shed.** There's WiFi, but you don't want to set up
+  a VLAN or VPN; the garage door, irrigation or a frost guard just show
+  up in HA.
+- **Rentals / networks you don't own.** Not your router, no right to
+  port-forward — the ESP puts your gadgets on the tailnet as a node, done.
+
+The common thread: there's WiFi on site, but you can't (or don't want to)
+touch the router. That's exactly where this fits.
+
 ## What it's for — and what it isn't
 
 This is a **micro-controller** doing userspace encryption and NAT on a
