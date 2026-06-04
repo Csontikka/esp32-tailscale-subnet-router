@@ -42,7 +42,7 @@ browser. There is no app and no serial console required after the first
 flash.
 
 <div align="center">
-<img src="docs/images/status_v2.png" alt="Web UI — Status dashboard" width="88%">
+<img src="docs/images/status_v3.png" alt="Web UI — Status dashboard" width="88%">
 <br><em>The Status dashboard: uplink, access point, Tailscale node and peers at a glance.</em>
 </div>
 
@@ -176,7 +176,7 @@ On **Network → Access Point / Uplink networks**, point the device at your
 existing 2.4 GHz network and (optionally) rename the AP it broadcasts.
 
 <div align="center">
-<img src="docs/images/network-ap.png" alt="Access Point configuration" width="80%">
+<img src="docs/images/network-ap_v2.png" alt="Access Point configuration" width="80%">
 </div>
 
 ### 4. Enrol on your tailnet
@@ -219,7 +219,7 @@ egress through it. Save — the device registers with your tailnet on its
 next connect.
 
 <div align="center">
-<img src="docs/images/tailscale.png" alt="Tailscale configuration and peers" width="88%">
+<img src="docs/images/tailscale_v2.png" alt="Tailscale configuration and peers" width="88%">
 </div>
 
 > **Approve the route.** A newly advertised subnet shows up in the Tailscale
@@ -286,7 +286,7 @@ default. Rules match on protocol, source/destination CIDR, ports, and
 action, with live hit counters.
 
 <div align="center">
-<img src="docs/images/firewall.png" alt="Firewall — four ACL chains with example rules" width="88%">
+<img src="docs/images/firewall_v2.png" alt="Firewall — four ACL chains with example rules" width="88%">
 </div>
 
 | Chain | Direction |
