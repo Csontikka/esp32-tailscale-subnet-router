@@ -17,7 +17,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   upstream router no longer needs a route back to the tailnet). Enabling it offers
   to add the live uplink subnet to the advertised routes.
 - **Subnet prefix in the Status cards** — the Uplink and Access Point cards now
-  show the address with its CIDR prefix (e.g. `192.168.1.50/24`, `192.168.4.1/24`).
+  show the address with its CIDR prefix (e.g. `192.168.4.1/24`, `192.168.32.1/24`).
 - **Factory-reset dialog recommends a backup** — the confirmation now highlights
   that you should download an encrypted config backup first, with a one-click
   "Back up first" link into the backup flow.

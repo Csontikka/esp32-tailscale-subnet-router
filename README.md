@@ -390,7 +390,7 @@ This is the *entire* payload — nothing else leaves the device:
 
 ```json
 {
-  "dh": "a1b2c3d4e5f60718",
+  "dh": "a1b2c3d4e5f6071839",
   "v":  "0.1.9",
   "bd": "2026-05-31",
   "et": "heartbeat",
@@ -408,7 +408,7 @@ This is the *entire* payload — nothing else leaves the device:
 
 | Field | Meaning | Example |
 |---|---|---|
-| `dh` | anonymous device ID — first 8 bytes of `SHA-256(WiFi MAC + fixed salt)`, hex. One-way; it can't be turned back into your MAC | `a1b2c3d4e5f60718` |
+| `dh` | anonymous device ID — 16-hex `SHA-256(WiFi MAC + fixed salt)` plus a 2-hex integrity check (18 hex total). One-way; it can't be turned back into your MAC | `a1b2c3d4e5f6071839` |
 | `v`  | firmware version | `0.1.9` |
 | `bd` | firmware build date | `2026-05-31` |
 | `et` | event type — `boot`, `heartbeat`, or a crash report | `heartbeat` |
@@ -479,6 +479,13 @@ Found a bug or have an idea? Open an
 If this firmware saved you a router purchase or an afternoon of
 debugging, you can chip in:
 [buy me a coffee](https://buymeacoffee.com/csontikka) ☕
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="assets/logo/bunny.png">
+    <img alt="Csontikka" src="assets/logo/bunny_dark.png" width="52">
+  </picture>
+</p>
 
 ## Credits & license
 
