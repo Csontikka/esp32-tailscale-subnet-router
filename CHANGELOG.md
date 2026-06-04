@@ -6,6 +6,17 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+
+- **Source-NAT advertised routes** — an opt-in toggle (Tailscale settings, off by
+  default) that masquerades tunnel→LAN forwarded traffic to this device's uplink
+  IP, the way Tailscale's `--snat-subnet-routes` does. With it on, advertising the
+  uplink subnet makes that LAN reachable from the tailnet out of the box (the
+  upstream router no longer needs a route back to the tailnet). Enabling it offers
+  to add the live uplink subnet to the advertised routes.
+- **Subnet prefix in the Status cards** — the Uplink and Access Point cards now
+  show the address with its CIDR prefix (e.g. `192.168.1.50/24`, `192.168.4.1/24`).
+
 ## [0.1.8] — 2026-06-03
 
 ### Added

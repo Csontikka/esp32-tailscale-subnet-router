@@ -104,6 +104,7 @@ static void ip4_to_str(uint32_t ip_nbo, char *out, size_t out_size)
 static bool  request_authenticated(httpd_req_t *req);
 static void  ip4_hbo_to_str(uint32_t hbo, char *out, size_t out_size);
 static char *device_name_dup(void);
+static int   subnet_mask_prefix_len(uint32_t mask_nbo);
 
 static esp_err_t require_auth(httpd_req_t *req)
 {
@@ -283,6 +284,16 @@ static esp_err_t status_handler(httpd_req_t *req)
         cJSON_AddStringToObject(sta, "ip", buf);
         ip4_to_str(ip.gw.addr, buf, sizeof buf);
         cJSON_AddStringToObject(sta, "gateway", buf);
+        /* Prefix length + network CIDR — the UI shows the address as
+         * "<ip>/<prefix>" and the SNAT toggle offers this subnet for advertising. */
+        int sta_pfx = subnet_mask_prefix_len(ip.netmask.addr);
+        if (sta_pfx >= 0) {
+            cJSON_AddNumberToObject(sta, "prefix", sta_pfx);
+            char netbuf[16], cidrbuf[32];
+            ip4_to_str(ip.ip.addr & ip.netmask.addr, netbuf, sizeof netbuf);
+            snprintf(cidrbuf, sizeof cidrbuf, "%s/%u", netbuf, (unsigned)sta_pfx);
+            cJSON_AddStringToObject(sta, "cidr", cidrbuf);
+        }
     }
     /* DNS — main resolver only; secondary is rarely set on this device.
      * Reading via esp_netif_get_dns_info so we don't have to track
@@ -318,6 +329,8 @@ static esp_err_t status_handler(httpd_req_t *req)
         char buf[16];
         ip4_to_str(ip.ip.addr, buf, sizeof buf);
         cJSON_AddStringToObject(ap, "ip", buf);
+        int ap_pfx = subnet_mask_prefix_len(ip.netmask.addr);
+        if (ap_pfx >= 0) cJSON_AddNumberToObject(ap, "prefix", ap_pfx);
     }
     cJSON_AddNumberToObject(ap, "bytes_in",  (double)netif_hooks_get_ap_bytes_in());
     cJSON_AddNumberToObject(ap, "bytes_out", (double)netif_hooks_get_ap_bytes_out());
@@ -2593,6 +2606,7 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
     cJSON_AddNumberToObject(settings, "netcheck_threshold_ms",   tailscale_netcheck_threshold_ms);
     cJSON_AddBoolToObject  (settings, "lan_bypass",              tailscale_lan_bypass != 0);
     cJSON_AddBoolToObject  (settings, "accept_routes",           tailscale_accept_routes != 0);
+    cJSON_AddBoolToObject  (settings, "snat_subnet_routes",      tailscale_snat_subnet_routes != 0);
     if (tailscale_exit_node_ip) {
         /* tailscale_exit_node_ip is documented as host byte order. */
         char buf[16];
@@ -2822,6 +2836,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
         _TS_REFRESH_BOOL("netcheck_override",       tailscale_netcheck_override);
         _TS_REFRESH_BOOL("lan_bypass",              tailscale_lan_bypass);
         _TS_REFRESH_BOOL("accept_routes",           tailscale_accept_routes);
+        _TS_REFRESH_BOOL("snat_subnet_routes",      tailscale_snat_subnet_routes);
 
         #undef _TS_REFRESH_STR
         #undef _TS_REFRESH_BOOL
@@ -2834,6 +2849,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
             { cJSON_GetObjectItem(s, "netcheck_override"), (void *)"ts_nc_ovr"  },
             { cJSON_GetObjectItem(s, "lan_bypass"),        (void *)"ts_lan_bp"  },
             { cJSON_GetObjectItem(s, "accept_routes"),     (void *)"ts_acpt_rt" },
+            { cJSON_GetObjectItem(s, "snat_subnet_routes"), (void *)"ts_snat_sr" },
         };
         for (size_t i = 0; i < sizeof bool_keys / sizeof bool_keys[0]; i++) {
             const cJSON *v = bool_keys[i][0];

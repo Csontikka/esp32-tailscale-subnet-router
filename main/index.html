@@ -2142,6 +2142,13 @@
             <span class="form-hint">One CIDR per line.</span>
           </div>
 
+          <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="ts-snat"> Source-NAT advertised routes
+            </label>
+            <span class="form-hint">Masquerades tunnel&rarr;LAN traffic to this device's IP so upstream hosts can reply without a route back to the tailnet. On = works out of the box (Tailscale default for subnet routers). Off = the upstream router needs a static route (100.64.0.0/10 &rarr; this device).</span>
+          </div>
+
           <div class="grid grid-cols-2">
             <div class="form-group">
               <label class="form-label" for="ts-exit-node">Exit Node</label>
@@ -3219,7 +3226,7 @@
       // STA (uplink)
       var ul = data.sta || {};
       document.getElementById('uplink-ssid').textContent    = ul.ssid || '—';
-      document.getElementById('uplink-ip').textContent      = ul.ip      || '—';
+      document.getElementById('uplink-ip').textContent      = ul.ip ? (ul.ip + (ul.prefix != null ? '/' + ul.prefix : '')) : '—';
       document.getElementById('uplink-gateway').textContent = ul.gateway || '—';
       document.getElementById('uplink-dns').textContent     = ul.dns     || '—';
       document.getElementById('uplink-rssi').textContent    = (ul.rssi != null ? ul.rssi + ' dBm' : '—');
@@ -3249,7 +3256,7 @@
       // AP
       var ap = data.ap || {};
       document.getElementById('ap-ssid').textContent    = ap.ssid    || '—';
-      document.getElementById('ap-ip').textContent      = ap.ip      || '—';
+      document.getElementById('ap-ip').textContent      = ap.ip ? (ap.ip + (ap.prefix != null ? '/' + ap.prefix : '')) : '—';
       document.getElementById('ap-mac').textContent     = ap.mac     || '—';
       document.getElementById('ap-channel').textContent = ap.channel || '—';
       var txp = data.tx_power;
@@ -5241,6 +5248,7 @@
           document.getElementById('ts-max-peers').value     = s.max_peers   || 16;
           document.getElementById('ts-accept-routes').checked = !!s.accept_routes;
           document.getElementById('ts-lan-bypass').checked    = !!s.lan_bypass;
+          document.getElementById('ts-snat').checked          = !!s.snat_subnet_routes;
 
           /* Exit-node picker — populated from peers that advertise 0/0. */
           /* Strip the common tailnet suffix (everything after the first
@@ -5405,7 +5413,7 @@
 
     /* Dirty-track and wiring. */
     ['ts_enabled_on', 'ts_enabled_off', 'ts-auth-key', 'ts-hostname', 'ts-login',
-     'ts-routes', 'ts-max-peers', 'ts-accept-routes', 'ts-lan-bypass', 'ts-exit-node'
+     'ts-routes', 'ts-max-peers', 'ts-accept-routes', 'ts-lan-bypass', 'ts-snat', 'ts-exit-node'
     ].forEach(function (id) {
       var el = document.getElementById(id);
       var ev = (el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio')
@@ -5415,6 +5423,39 @@
       });
     });
     document.getElementById('ts-reload').addEventListener('click', loadTailscale);
+
+    /* SNAT toggle OFF→ON: SNAT only matters for a non-AP subnet you advertise,
+     * so offer to advertise the live uplink subnet (mirrors the AP-subnet-change
+     * offer). We just append to the routes textarea — the Save button (already
+     * marked dirty by the change above) persists both the flag and the route
+     * together, so there's no half-applied state. ON→OFF leaves routes alone. */
+    document.getElementById('ts-snat').addEventListener('change', function () {
+      if (!this.checked) return;
+      apiFetch('/api/status').then(function (r) { return r.json(); }).then(function (st) {
+        var cidr = st && st.sta && st.sta.cidr;
+        if (!cidr) {
+          showToast('info', 'No uplink subnet yet',
+            'Connect the uplink first, then add its subnet to the advertised routes manually.', 5000);
+          return;
+        }
+        var ta = document.getElementById('ts-routes');
+        var lines = ta.value.split('\n').map(function (s) { return s.trim(); });
+        if (lines.indexOf(cidr) !== -1) return;   /* already advertised */
+        showConfirm(
+          'Advertise your uplink subnet?',
+          '<p style="margin:0 0 0.6rem 0;">Source-NAT only matters for a non-AP subnet you advertise. '
+          + 'Add your uplink subnet <code class="mono">' + escapeHtml(cidr) + '</code> to the advertised routes '
+          + 'so tailnet peers can reach the uplink LAN through this device?</p>'
+          + '<p style="margin:0; color:var(--fg-muted); font-size:var(--text-xs);">Added to the list below — click Save to apply (takes effect after reboot).</p>',
+          function () {
+            var cur = ta.value.replace(/\s*$/, '');
+            ta.value = (cur ? cur + '\n' : '') + cidr;
+            document.getElementById('ts-save').disabled = false;
+          },
+          { html: true, confirmText: 'Add', danger: false }
+        );
+      }).catch(function () {});
+    });
 
     /* MTU card — separate Save button + dirty-track, applies live. */
     ['ts-mtu-mode', 'ts-mtu-fixed'].forEach(function (id) {
@@ -5505,6 +5546,7 @@
           max_peers:         parseInt(document.getElementById('ts-max-peers').value, 10) || 16,
           accept_routes:     document.getElementById('ts-accept-routes').checked,
           lan_bypass:        document.getElementById('ts-lan-bypass').checked,
+          snat_subnet_routes: document.getElementById('ts-snat').checked,
           exit_node_ip:      document.getElementById('ts-exit-node').value
         }
       };

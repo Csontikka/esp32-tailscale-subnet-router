@@ -26,6 +26,7 @@ extern int32_t tailscale_netcheck_threshold_ms;   // Switch only when measured R
 extern int32_t tailscale_default_derp_region;     // User-selected home DERP region id (0 = unset → Frankfurt fallback)
 extern int32_t tailscale_lan_bypass;              // 1 = exit-node mode lets RFC1918 (private) traffic egress via STA directly; 0 = everything via tunnel
 extern int32_t tailscale_accept_routes;           // 1 = honour subnet routes that peers advertise via AllowedIPs (matching dst → WG tunnel)
+extern int32_t tailscale_snat_subnet_routes;      // 1 = SNAT (masquerade) tunnel→STA forwarded subnet-route/exit-node-server traffic to this device's STA IP; 0 = keep peer src (upstream needs a route back). Default 0.
 
 // Accepted-routes table — rebuilt periodically from microlink peer info when
 // tailscale_accept_routes=1. Each entry is a CIDR (network in host byte order).

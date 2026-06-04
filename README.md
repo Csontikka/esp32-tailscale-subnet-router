@@ -224,6 +224,13 @@ next connect.
 > re-approve the new route there — the old approval stays but no longer matches,
 > so the subnet silently becomes unreachable until you do.
 
+> **Reaching the *uplink* LAN (not just the AP subnet).** To expose the network
+> the device is connected to (its STA/uplink side), advertise that subnet too and
+> turn on **Source-NAT advertised routes**. That masquerades tunnel→LAN traffic to
+> the device's own uplink IP (Tailscale's `--snat-subnet-routes` default), so
+> upstream hosts can reply without a route back to the tailnet. Without it, the
+> upstream router would need a static route (`100.64.0.0/10 → this device`).
+
 > **🔑 Auth key vs. node key — read this once**
 >
 > - The **auth key** (`tskey-auth-…`) is a *one-time ticket*: the device uses

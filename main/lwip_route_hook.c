@@ -795,6 +795,29 @@ err_t __wrap_ip_napt_forward(struct pbuf *p, struct ip_hdr *iphdr,
         if (ip_in_cgnat(dest_hbo) && IPH_PROTO(iphdr) == 6 /* IPPROTO_TCP */) {
             return ERR_OK;
         }
+
+        /* SNAT advertised subnet routes (opt-in, tailscale --snat-subnet-routes
+         * semantics, default OFF). A packet forwarded FROM the tunnel (WG netif)
+         * OUT through the STA uplink keeps its tailnet source (100.x) today,
+         * because esp-lwip only masquerades when the INBOUND netif has napt set
+         * (ip4_napt.c: `if (!inp->napt) return ERR_OK`) and only the AP netif is
+         * napt-enabled. Without SNAT the uplink host replies to 100.x via its own
+         * gateway, which has no tailnet route → return path lost. We opt this one
+         * forward call into masquerade by transiently setting inp(WG)->napt around
+         * __real, so the src is rewritten to the STA netif IP; the reply then
+         * lands on the ESP and ip4_input's un-NAT (ip4.c, `!inp->napt && dest==inp`
+         * on the STA side) reverses it automatically. Gated to inp==wg && outp==sta
+         * so AP→tunnel / tunnel→AP / AP→WAN paths are untouched (no regression).
+         * Runs in the single-threaded tcpip context, so the toggle is race-free. */
+        if (tailscale_snat_subnet_routes && inp && outp && inp != outp &&
+            !ip_in_cgnat(dest_hbo) &&
+            inp == find_wg_netif() && netif_is_sta(outp)) {
+            uint8_t saved = inp->napt;
+            inp->napt = 1;
+            err_t r = __real_ip_napt_forward(p, iphdr, inp, outp);
+            inp->napt = saved;
+            return r;
+        }
     }
     return __real_ip_napt_forward(p, iphdr, inp, outp);
 }

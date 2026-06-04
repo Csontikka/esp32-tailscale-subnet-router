@@ -42,6 +42,7 @@ int32_t tailscale_netcheck_threshold_ms = 100;    /* default: 100 ms hysteresis 
 int32_t tailscale_default_derp_region = 0;        /* 0 = unset → Frankfurt fallback in microlink */
 int32_t tailscale_lan_bypass = 1;                  /* 1 = exit-node lets LAN egress via STA, like tailscale --exit-node-allow-lan-access */
 int32_t tailscale_accept_routes = 0;               /* 0 = default; 1 = honour subnet routes advertised by peers (tailscale --accept-routes) */
+int32_t tailscale_snat_subnet_routes = 0;          /* 0 = default OFF; 1 = SNAT tunnel→STA forwarded subnet-route/exit-node-server traffic to our STA IP (tailscale --snat-subnet-routes), so upstream hosts can reply without a route back to the tailnet */
 
 /* Accepted-routes table — rebuilt by route_supervisor_task. Stored in host
  * byte order to match the route-hook arithmetic. */
@@ -100,6 +101,9 @@ void tailscale_init(void)
     }
     if (nvs_param_get_int("ts_acpt_rt", &v) == ESP_OK) {
         tailscale_accept_routes = (v ? 1 : 0);
+    }
+    if (nvs_param_get_int("ts_snat_sr", &v) == ESP_OK) {
+        tailscale_snat_subnet_routes = (v ? 1 : 0);
     }
     ESP_LOGI(TAG, "Config loaded (enabled=%ld, max_peers=%ld, login_server=%s, exit_node=%lu.%lu.%lu.%lu)",
              (long)tailscale_enabled, (long)tailscale_max_peers,

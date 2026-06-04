@@ -54,6 +54,7 @@ Up to **5** networks, tried in order. Per network:
 | **Hostname** | Node name on the tailnet. |
 | **Login server** | Custom control plane (Headscale). Empty = Tailscale. ⚠️ Headscale does not currently work — control-plane Noise handshake fails (under investigation). |
 | **Advertised subnet routes** | One CIDR per line; the AP subnet is offered automatically. |
+| **Source-NAT advertised routes** | Off by default. Masquerades traffic forwarded from the tunnel out to the uplink LAN (or out to the internet when this device is an exit node) to the device's own STA IP — the Tailscale default for subnet routers. **On** = the uplink subnet works the moment you advertise it (upstream hosts reply to this device, which un-NATs back into the tunnel). **Off** = the upstream router needs a static route for the tailnet (`100.64.0.0/10 → this device`) instead. Enabling it offers to add your uplink subnet to the advertised routes. ⚠️ Do **not** advertise *and* accept the same subnet — that loops the inbound route back into the tunnel. |
 | **Exit node** | Route AP-client public traffic through this tailnet exit node. Fails closed if unreachable. |
 | **Max peers** | Upper bound on tracked peers. |
 | **Accept peer subnet routes** | Install routes other nodes advertise. |
