@@ -469,6 +469,9 @@ tools/                helper scripts
 The entire web UI is the single file `main/index.html`, embedded into
 the firmware by `main/CMakeLists.txt` at build time.
 
+See **[CONTRIBUTING.md](CONTRIBUTING.md)** for build/flash setup and pull-request
+guidelines, and **[docs/TESTING.md](docs/TESTING.md)** for the test harness.
+
 ## Support
 
 Found a bug or have an idea? Open an
