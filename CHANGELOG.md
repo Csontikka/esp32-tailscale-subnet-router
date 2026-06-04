@@ -19,8 +19,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **Factory-reset dialog recommends a backup** — the confirmation now highlights
   that you should download an encrypted config backup first, with a one-click
   "Back up first" link into the backup flow.
-- **Project logo in the header** — the web UI nav brand icon now uses the project
-  logo instead of the generic placeholder icon.
+- **Project logo in the header** — the web UI nav brand icon now uses an inline
+  chip + WiFi mark (crisp vector, stays sharp at small sizes) instead of the
+  generic placeholder icon.
 
 ### Changed
 
