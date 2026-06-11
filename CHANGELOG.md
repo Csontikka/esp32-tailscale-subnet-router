@@ -6,6 +6,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.16] — 2026-06-11
+
+This release folds in the fixes that had only been serial-flashed since 0.1.12
+(0.1.13–0.1.15 were test builds, never published).
+
+### Fixed
+
+- **Exit node now establishes itself reliably (WireGuard handshake timestamps).**
+  The handshake's TAI64N timestamp is now sampled from the SNTP wall clock on every
+  emit, instead of a per-boot counter that could fall behind the value a peer had
+  already stored and get every initiation silently dropped as a replay. The ESP now
+  brings up an exit-node tunnel on its own and self-heals across reboots, so AP
+  clients keep their internet through the exit node. (microlink submodule.)
+- **DNS relay no longer crash-loops at boot under verbose logging.** The relay
+  listener/worker task stacks were enlarged (to 8 KB) so enabling INFO-level SD
+  recording at boot can no longer overflow them into a panic loop.
+- **Firmware-update check on the beta channel no longer fails to parse.** The
+  `/releases` JSON the beta channel scans had grown past the 32 KB download buffer
+  and was being truncated, so "Check now" reported `parse failed (no firmware.bin
+  asset?)` even though every release ships the asset. The buffer is now 128 KB.
+
 ## [0.1.9] — 2026-06-04
 
 ### Added
