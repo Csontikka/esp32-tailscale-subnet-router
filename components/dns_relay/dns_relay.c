@@ -42,8 +42,14 @@
 #define DNS_RELAY_TX_RETRIES    4        /* upstream sendto ENOMEM: retry, don't drop the query */
 #define DNS_RELAY_TX_RETRY_MS   5        /* per-retry backoff; WiFi TX buffers free within a few ms */
 
-#define DNS_LISTENER_STACK      4096
-#define DNS_WORKER_STACK        4608
+/* PSRAM-backed stacks (see xTaskCreateWithCaps below), so generous sizing is
+ * cheap. Bumped 2026-06-10: at INFO verbosity (SD recorder sd_level=3) the
+ * per-line vsnprintf formatting on the task stack overflowed the old 4096-byte
+ * listener stack at boot -> "stack overflow in task dns_relay" PANIC -> boot
+ * loop. The recorder's INFO option is user-selectable and must not be able to
+ * crash these tasks. */
+#define DNS_LISTENER_STACK      8192
+#define DNS_WORKER_STACK        8192
 #define DNS_RELAY_TASK_PRIO     4
 #define DNS_WORKER_COUNT        2
 #define DNS_WORK_QUEUE_DEPTH    8
