@@ -6,6 +6,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.17] — 2026-06-11
+
+Stable release. Promotes the 0.1.16 fixes (exit-node TAI64N handshake timestamps,
+DNS-relay task-stack hardening, OTA beta-channel JSON buffer) to a stable build;
+no functional changes versus 0.1.16.
+
 ## [0.1.16] — 2026-06-11
 
 This release folds in the fixes that had only been serial-flashed since 0.1.12
