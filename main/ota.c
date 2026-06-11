@@ -28,7 +28,10 @@ static const char *TAG = "ota";
 #define OTA_REPO_NAME        "esp32-tailscale-subnet-router"
 #define OTA_ASSET_NAME       "firmware.bin"
 #define OTA_HTTP_RX_BUF      2048
-#define OTA_API_JSON_MAX     32768       /* releases/latest ~5 KB; the beta /releases array (per_page=10) is larger */
+#define OTA_API_JSON_MAX     131072      /* 128 KB: releases/latest ~5 KB, but the beta /releases array (per_page=10)
+                                          * already exceeds 32 KB (~38 KB and growing with release-notes bodies) and
+                                          * was being TRUNCATED → cJSON parse-fail → "no firmware.bin asset?". Plenty
+                                          * of headroom now; this buffer is a plain malloc that lands in PSRAM. */
 #define OTA_RELEASES_PER_PAGE 10         /* beta channel: newest N releases to scan (newest beta is among these) */
 
 #define OTA_POLL_INTERVAL_S  (24 * 3600) /* 1 day — non-configurable */
