@@ -6,6 +6,29 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.20] — 2026-09-10
+
+microlink brought up to the esphome-tailscale line (four ports plus this
+week's fixes), the standalone firmware's own diagnostics tightened, and a
+long-standing exit-node foot-gun closed. Device-tested on the reference
+router before tagging: manual OTA, an AP client through the router, exit
+node via a peer, and a same-window A/B against 0.1.19.
+
+### Added
+- **Client version (`Hostinfo.IPNVersion`)** — new *Client version* field on the Tailscale card (NVS `ts_ipn_ver`, API `settings.ipn_version`). The Tailscale admin console gates some device operations on the reported client version and shows "Device is too old" when it is empty; set e.g. `1.98.9` to clear that (the `version.Long()` hash suffix is appended automatically). Empty by default — a public client should not claim a version it is not. Port of esphome-tailscale#39 by @timmills.
+- **Netmap-buffer allocation failures are explicit.** All four control-plane allocation sites log the requested size against free PSRAM/internal memory and the largest free block instead of failing silently into "MapRequest failed, will retry" (found via esphome-tailscale#45 on a 2 MB-PSRAM board).
+- **One-line DISCO summary** every 10 s while inbound discovery traffic flows (`DISCO: N packets in 10 s, M iterations budget-capped`), replacing per-packet chatter.
+
+### Changed
+- **The DISCO/WireGuard manager budgets its work per iteration** (8 DISCO / 40 ms; each WireGuard drain 64 packets / 30 ms in its own window) and always reaches its 10 ms sleep, so a peer that keeps probing can no longer monopolise the core. Per-packet DISCO lines moved to DEBUG; `DISCO PONG unmatched` / `probe table full` rate-limited to one line per 10 s. In the same-window A/B under a live DISCO loop this gave a 3× better on-device download and half the AP-client latency versus 0.1.19 (esphome-tailscale#46).
+- **`/key` sends the real capability version** (`ML_CTRL_PROTOCOL_VER`, 131) instead of a hardcoded 88. Headscale ≥ 0.29 rejects 88 as an unsupported client at the very first step; SaaS accepted both.
+
+### Fixed
+- **Refused registrations now say why** — `RegisterResponse.Error`, `NodeKeyExpired` and `AuthURL` are acted on like the reference client does; `User.ID`/`DisplayName` are display-only (auth-key and tag-owned nodes legitimately have no user). Port of esphome-tailscale#38 by @timmills.
+- **Peers removed by the control plane disappear immediately** — `PeersRemoved` carries NodeIDs; the handler expected nodekey strings, so a deleted node lingered (probed, DISCO-pinged) until the next full netmap. Port of esphome-tailscale#42.
+- **Selecting an exit node no longer black-holes AP clients until the next restart.** Saving `exit_node_ip` flipped the live default route to the tunnel within seconds, while microlink only learns the exit node when it (re)starts — so every AP client lost the internet until the operator restarted (measured on 0.1.19: public IP unreachable, a 5 MB download stuck at 0 bytes for 90 s). The save now persists the choice only, as its `restart_required` response always implied; *Settings* shows the saved value (plus `exit_node_restart_pending`), *Status* the live one, and the route follows on restart.
+- **Stale crash signatures are no longer re-sent.** A BROWNOUT or watchdog reset produces no coredump, yet the telemetry gate treated it as a crash and re-sent the *previous* panic's signature from NVS, so the fleet view showed phantom repeat crashes. The signature is now erased on any boot without a fresh coredump — it lives for exactly the one boot after the panic.
+
 ## [0.1.19] — 2026-08-15
 
 Stable release. Promotes the 0.1.19-beta1 DERP-liveness work to a stable
