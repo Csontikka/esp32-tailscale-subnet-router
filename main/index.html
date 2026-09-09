@@ -2145,6 +2145,14 @@
             </div>
           </div>
 
+          <div class="grid grid-cols-2">
+            <div class="form-group">
+              <label class="form-label" for="ts-ipn-version">Client version</label>
+              <input class="input" type="text" id="ts-ipn-version" placeholder="e.g. 1.98.9" maxlength="40">
+              <span class="form-hint">Reported as Hostinfo.IPNVersion. Empty = not reported. Set it only to clear the admin console's "Device is too old" gate. Applies on restart.</span>
+            </div>
+          </div>
+
           <div class="form-group">
             <label class="form-label" for="ts-routes">Advertised Subnet Routes</label>
             <textarea class="textarea input" id="ts-routes" placeholder="192.168.4.0/24" style="min-height:5rem; font-family:var(--font-mono); font-size:0.9rem;"></textarea>
@@ -5252,6 +5260,7 @@
           })();
           document.getElementById('ts-hostname').value      = s.hostname     || '';
           document.getElementById('ts-login').value         = s.login_server || '';
+          document.getElementById('ts-ipn-version').value   = s.ipn_version  || '';
           document.getElementById('ts-routes').value        = s.advertise_routes || '';
           document.getElementById('ts-max-peers').value     = s.max_peers   || 16;
           document.getElementById('ts-accept-routes').checked = !!s.accept_routes;
@@ -5420,7 +5429,7 @@
     }
 
     /* Dirty-track and wiring. */
-    ['ts_enabled_on', 'ts_enabled_off', 'ts-auth-key', 'ts-hostname', 'ts-login',
+    ['ts_enabled_on', 'ts_enabled_off', 'ts-auth-key', 'ts-hostname', 'ts-login', 'ts-ipn-version',
      'ts-routes', 'ts-max-peers', 'ts-accept-routes', 'ts-lan-bypass', 'ts-snat', 'ts-exit-node'
     ].forEach(function (id) {
       var el = document.getElementById(id);
@@ -5550,6 +5559,7 @@
           enabled:           enabled,
           hostname:          document.getElementById('ts-hostname').value.trim(),
           login_server:      document.getElementById('ts-login').value.trim(),
+          ipn_version:       document.getElementById('ts-ipn-version').value.trim(),
           advertise_routes:  document.getElementById('ts-routes').value,
           max_peers:         parseInt(document.getElementById('ts-max-peers').value, 10) || 16,
           accept_routes:     document.getElementById('ts-accept-routes').checked,

@@ -2599,6 +2599,7 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
     }
     if (tailscale_hostname)         cJSON_AddStringToObject(settings, "hostname",       tailscale_hostname);
     if (tailscale_login_server)     cJSON_AddStringToObject(settings, "login_server",   tailscale_login_server);
+    if (tailscale_ipn_version)      cJSON_AddStringToObject(settings, "ipn_version",    tailscale_ipn_version);
     if (tailscale_advertise_routes) cJSON_AddStringToObject(settings, "advertise_routes", tailscale_advertise_routes);
     cJSON_AddNumberToObject(settings, "max_peers",               tailscale_max_peers);
     cJSON_AddNumberToObject(settings, "default_derp_region",     tailscale_default_derp_region);
@@ -2607,11 +2608,19 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
     cJSON_AddBoolToObject  (settings, "lan_bypass",              tailscale_lan_bypass != 0);
     cJSON_AddBoolToObject  (settings, "accept_routes",           tailscale_accept_routes != 0);
     cJSON_AddBoolToObject  (settings, "snat_subnet_routes",      tailscale_snat_subnet_routes != 0);
-    if (tailscale_exit_node_ip) {
-        /* tailscale_exit_node_ip is documented as host byte order. */
-        char buf[16];
-        ip4_hbo_to_str(tailscale_exit_node_ip, buf, sizeof buf);
-        cJSON_AddStringToObject(settings, "exit_node_ip", buf);
+    {
+        /* Settings show the SAVED exit node (NVS), not the live one: a save
+         * no longer touches the running route (see the save handler), so the
+         * two can legitimately differ until the next restart. Status keeps
+         * reporting the live value from tailscale_exit_node_ip. */
+        int32_t saved = 0;
+        if (nvs_param_get_int("ts_exit_node", &saved) == ESP_OK && saved != 0) {
+            char buf[16];
+            ip4_hbo_to_str((uint32_t)saved, buf, sizeof buf);
+            cJSON_AddStringToObject(settings, "exit_node_ip", buf);
+        }
+        cJSON_AddBoolToObject(settings, "exit_node_restart_pending",
+                              (uint32_t)saved != tailscale_exit_node_ip);
     }
     cJSON_AddItemToObject(root, "settings", settings);
 
@@ -2799,6 +2808,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
         save_str_if_present(s, "auth_key",         "ts_authkey");
         save_str_if_present(s, "hostname",         "ts_hostname");
         save_str_if_present(s, "login_server",     "ts_login");
+        save_str_if_present(s, "ipn_version",      "ts_ipn_ver");
         save_str_if_present(s, "advertise_routes", "ts_routes");
 
         /* tailscale_init only reads these globals at boot, so the
@@ -2828,6 +2838,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
         _TS_REFRESH_STR ("auth_key",                tailscale_auth_key);
         _TS_REFRESH_STR ("hostname",                tailscale_hostname);
         _TS_REFRESH_STR ("login_server",            tailscale_login_server);
+        _TS_REFRESH_STR ("ipn_version",             tailscale_ipn_version);
         _TS_REFRESH_STR ("advertise_routes",        tailscale_advertise_routes);
         _TS_REFRESH_BOOL("enabled",                 tailscale_enabled);
         _TS_REFRESH_NUM ("max_peers",               tailscale_max_peers);
@@ -2871,7 +2882,15 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
             if (exit_node->valuestring[0] == '\0' || ip4addr_aton(exit_node->valuestring, &a)) {
                 uint32_t hbo = lwip_ntohl(a.addr);
                 nvs_save_int("ts_exit_node", (int32_t)hbo);
-                tailscale_exit_node_ip = hbo;
+                /* Persist ONLY. Mirroring into tailscale_exit_node_ip here
+                 * made the route supervisor flip netif_default to the WG
+                 * netif within 2 s, while microlink learns the exit node
+                 * only when it (re)starts -- so every AP client lost the
+                 * internet until the operator restarted (measured: public
+                 * IP unreachable, a download stuck at 0 bytes for 90 s).
+                 * The response already says restart_required; the route
+                 * now follows on restart, when the tunnel is actually
+                 * configured for it. */
             }
         }
     }

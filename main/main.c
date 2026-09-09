@@ -726,6 +726,21 @@ void app_main(void)
         }
         free(sum);
         esp_core_dump_image_erase();
+    } else {
+        /* No coredump this boot -> whatever "last_crash" holds belongs to an
+         * OLDER panic that was already reported. Telemetry gates the
+         * signature on last_rst being a crash code, and BROWNOUT / WDT
+         * resets produce no coredump, so without this erase they re-sent the
+         * previous panic's signature and the fleet view showed a phantom
+         * repeat crash. The signature now lives for exactly the one boot
+         * that follows the panic. */
+        nvs_handle_t ch;
+        if (nvs_open(NVS_NAMESPACE, NVS_READWRITE, &ch) == ESP_OK) {
+            nvs_erase_key(ch, "last_crash");
+            nvs_erase_key(ch, "last_crash_at");
+            nvs_commit(ch);
+            nvs_close(ch);
+        }
     }
 
     /* Tailscale (microlink) settings — separate NVS keys (ts_*); loader

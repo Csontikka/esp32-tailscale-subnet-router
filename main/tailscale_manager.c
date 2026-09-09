@@ -8,6 +8,7 @@
  */
 
 #include <string.h>
+#include <stdio.h>
 #include <time.h>
 #include <arpa/inet.h>
 #include "esp_log.h"
@@ -34,6 +35,7 @@ int32_t tailscale_enabled = 0;
 char* tailscale_auth_key = NULL;
 char* tailscale_hostname = NULL;
 char* tailscale_login_server = NULL;
+char* tailscale_ipn_version = NULL;
 char* tailscale_advertise_routes = NULL;
 int32_t tailscale_max_peers = 16;
 uint32_t tailscale_exit_node_ip = 0;
@@ -78,6 +80,7 @@ void tailscale_init(void)
     tailscale_auth_key         = nvs_str_or_empty("ts_authkey");
     tailscale_hostname         = nvs_str_or_empty("ts_hostname");
     tailscale_login_server     = nvs_str_or_empty("ts_login");
+    tailscale_ipn_version      = nvs_str_or_empty("ts_ipn_ver");
     tailscale_advertise_routes = nvs_str_or_empty("ts_routes");
     if (nvs_param_get_int("ts_maxpeers", &v) == ESP_OK && v >= 1 && v <= 64) {
         tailscale_max_peers = v;
@@ -131,6 +134,25 @@ bool tailscale_in_subnet(uint32_t ip)
     return (ip & tailscale_subnet_mask) == tailscale_subnet_ip;
 }
 
+/* Hostinfo.IPNVersion (esphome-tailscale#39). The admin console gates some
+ * operations on the reported client version and shows "Device is too old"
+ * when it is empty. tailscale parses the field as version.Long()
+ * ("x.y.z-t<hash>-g<hash>") and silently drops a bare semver, so a plain
+ * "1.98.9" gets the zero hash suffix appended here. Off by default: a
+ * public client should not claim a version it is not. Static buffer --
+ * microlink keeps the pointer for the life of the instance. */
+static const char *ipn_version_effective(void)
+{
+    static char buf[64];
+    if (!tailscale_ipn_version || !tailscale_ipn_version[0]) return NULL;
+    if (strchr(tailscale_ipn_version, '-')) {
+        snprintf(buf, sizeof buf, "%s", tailscale_ipn_version);
+    } else {
+        snprintf(buf, sizeof buf, "%s-t00000000000-g00000000000", tailscale_ipn_version);
+    }
+    return buf;
+}
+
 esp_err_t tailscale_connect(void)
 {
     if (!tailscale_enabled) {
@@ -170,6 +192,7 @@ esp_err_t tailscale_connect(void)
         .stun_interval_ms = 0,
         .ctrl_watchdog_ms = 0,
         .ctrl_host = (tailscale_login_server && tailscale_login_server[0]) ? tailscale_login_server : NULL,
+        .ipn_version = ipn_version_effective(),
         .advertise_routes = (tailscale_advertise_routes && tailscale_advertise_routes[0]) ? tailscale_advertise_routes : NULL,
         .netcheck_override_enabled = (tailscale_netcheck_override != 0),
         .netcheck_override_threshold_ms = (uint32_t)tailscale_netcheck_threshold_ms,
