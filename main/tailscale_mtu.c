@@ -2,7 +2,8 @@
  *
  * See include/tailscale_mtu.h for the design rationale. This file owns:
  *   - NVS persistence for mode/fixed_mtu
- *   - Periodic re-evaluation (30s) so direct↔DERP transitions take effect
+ *   - Periodic re-application (30s) so a wg netif that appears after boot
+ *     (microlink reconnect) picks the value up without a callback
  *   - Application to the three knobs: ap_mss_clamp, ap_pmtu, wg netif mtu
  *
  * SPDX-License-Identifier: MIT
@@ -47,48 +48,6 @@ static struct netif *find_wg_netif(void)
     return NULL;
 }
 
-/* True if at least one tailnet peer is currently on a direct UDP path.
- * Falls back to false when microlink isn't running or the peer list is
- * empty — in either case we want the DERP-safe MTU floor. */
-static bool any_direct_peer(void)
-{
-    struct microlink_s *ml = tailscale_get_microlink();
-    if (!ml) return false;
-    int n = microlink_get_peer_count(ml);
-    for (int i = 0; i < n; i++) {
-        microlink_peer_info_t pi;
-        if (microlink_get_peer_info(ml, i, &pi) != ESP_OK) continue;
-        if (pi.online && pi.direct_path) return true;
-    }
-    return false;
-}
-
-/* True if the SELECTED EXIT NODE is reached via DERP (no live direct UDP
- * path), so its forwarded internet traffic needs the DERP-safe MTU/MSS.
- *
- * 2026-05-28 fix: the auto-MTU previously keyed off any_direct_peer() — i.e.
- * it picked the large "direct" MTU whenever ANY peer (e.g. a LAN homeassistant
- * or home-server) had a direct path, even when the EXIT NODE itself was DERP-only.
- * That over-large MSS (1380) made the phone's TCP segments too big for the
- * WG-over-DERP path → packet loss / PMTU-blackhole → ~0.05 Mbit. The exit
- * node's path is what the forwarded traffic actually traverses, so key off it.
- * No exit node selected → fall back to the any-direct-peer heuristic (used for
- * advertised-subnet traffic, where there is no single egress peer). */
-static bool exit_path_is_derp(void)
-{
-    if (tailscale_exit_node_ip == 0) return false;   /* no exit node */
-    struct microlink_s *ml = tailscale_get_microlink();
-    if (!ml) return true;                            /* can't tell → DERP-safe */
-    int n = microlink_get_peer_count(ml);
-    for (int i = 0; i < n; i++) {
-        microlink_peer_info_t pi;
-        if (microlink_get_peer_info(ml, i, &pi) != ESP_OK) continue;
-        if (pi.vpn_ip == tailscale_exit_node_ip)
-            return !(pi.online && pi.direct_path);   /* DERP unless a live direct path */
-    }
-    return true;   /* exit node not in the peer list yet → DERP-safe */
-}
-
 static void apply(uint16_t mtu, uint16_t mss, uint16_t pmtu, const char *src)
 {
     s_state.eff_mtu  = mtu;
@@ -123,19 +82,12 @@ void tailscale_mtu_update(void)
         if (mtu > TS_MTU_MAX) mtu = TS_MTU_MAX;
         src = "user";
     } else {
-        bool derp;
-        if (tailscale_exit_node_ip != 0) {
-            /* Exit-node mode: key off the exit node's own path (the one the
-             * forwarded internet traffic traverses), not any-direct-peer. */
-            derp = exit_path_is_derp();
-            src  = derp ? "auto-DERP (exit relayed)" : "auto-direct (exit direct)";
-        } else {
-            /* No exit node: advertised-subnet traffic has no single egress
-             * peer, so keep the any-direct-peer heuristic. */
-            derp = !any_direct_peer();
-            src  = derp ? "auto-DERP" : "auto-direct";
-        }
-        mtu = derp ? TS_MTU_DERP_DEFAULT : TS_MTU_DIRECT_DEFAULT;
+        /* tailscale's tunnel MTU, direct or relayed alike: every peer's tun
+         * is 1280, so nothing larger ever gets through on the far side. The
+         * old direct/DERP split (1420 on a direct exit path) is what made
+         * exit-node bulk downloads black-hole -- see the header. */
+        mtu = TS_MTU_TAILSCALE;
+        src = "auto (tailscale tun MTU)";
     }
 
     /* TCP MSS clamp = MTU - 20 (IP header) - 20 (TCP header). PMTU value

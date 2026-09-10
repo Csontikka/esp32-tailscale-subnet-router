@@ -6,6 +6,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+- **Exit-node bulk downloads no longer black-hole.** With an exit node on a direct UDP path the automatic tunnel MTU was 1420, so AP clients were MSS-clamped to 1380 and servers sent 1368-byte segments — which the exit node cannot forward into its own tunnel (every Tailscale peer's tun device is 1280). The exit node answered with ICMP "fragmentation needed"; servers that honour it recovered, servers that ignore it retransmitted the same oversized segment until the client gave up: measured through the reference router, one 5 MB download in four never delivered a byte in 90 s, deterministically per server. Auto MTU is now 1280 unconditionally (the Tailscale tunnel MTU, direct or relayed alike), so the MSS clamp is 1240 and nothing on the return path ever needs fragmenting. The *Fixed* MTU mode is unchanged.
+
 ## [0.1.21] — 2026-09-10
 
 microlink brought up to the esphome-tailscale line again ([esphome-tailscale#46](https://github.com/Csontikka/esphome-tailscale/issues/46), the protocol direction): the DISCO manager backs off the way `tailscaled` does, the per-packet crypto cost is gone, and a dual-homed peer no longer re-handshakes every 3 s. Device-tested on the reference router before tagging: manual OTA, exit node via a peer, an AP client through the router, six peers direct in every phase, and the night's soak on this code.

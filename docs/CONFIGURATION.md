@@ -63,9 +63,11 @@ Up to **5** networks, tried in order. Per network:
 
 ### Tunnel MTU
 
-`Auto (peer-aware)` is recommended — it derives the effective MTU/MSS
-from the active path (direct vs DERP, exit vs not). A fixed MTU can be
-forced (576–1500) if a path misbehaves.
+`Auto` is recommended — 1280, the Tailscale tunnel MTU. Every peer's tun
+device is 1280 whether the path is direct or DERP-relayed, so that is the
+largest packet the far end carries; the AP-side TCP MSS clamp (1240) and the
+ICMP path-MTU replies follow from it. A fixed MTU can be forced (576–1500)
+if a path misbehaves.
 
 ## Firewall
 

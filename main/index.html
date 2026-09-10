@@ -2213,7 +2213,7 @@
         </div>
         <div class="card-body">
           <p class="form-hint" style="margin:0 0 0.75rem 0;">
-            <strong>AUTO</strong> keys off the <em>exit node's</em> path: <code class="mono">1420</code> when the exit node has a direct UDP path, <code class="mono">1280</code> when the exit node is DERP-relayed (DERP carries WireGuard over TLS/TCP, so the inner packets need a smaller MTU — an over-large MSS gets dropped/blackholed and collapses throughput). With no exit node, it falls back to any-direct-peer for advertised-subnet traffic.
+            <strong>AUTO</strong> uses <code class="mono">1280</code>, the Tailscale tunnel MTU: every peer's tun device is 1280 whether the path is direct or DERP-relayed, so that is the largest packet the far end carries — a bigger value only invites segments the exit node has to bounce with ICMP, which not every server honours.
             <strong>FIXED</strong> pins a user-supplied value in <code class="mono">576..1500</code>.
             The effective MTU drives the WireGuard netif MTU, the AP-side TCP MSS clamp on every SYN, and the next-hop MTU reported in ICMP frag-needed replies.
           </p>
@@ -2221,13 +2221,13 @@
             <div class="form-group">
               <label class="form-label" for="ts-mtu-mode">Mode</label>
               <select class="select input" id="ts-mtu-mode">
-                <option value="0">Auto (peer-aware)</option>
+                <option value="0">Auto (1280, Tailscale tunnel MTU)</option>
                 <option value="1">Fixed</option>
               </select>
             </div>
             <div class="form-group" id="ts-mtu-fixed-wrap">
               <label class="form-label" for="ts-mtu-fixed">Fixed MTU (576..1500)</label>
-              <input class="input mono" type="number" id="ts-mtu-fixed" min="576" max="1500" step="1" placeholder="1420">
+              <input class="input mono" type="number" id="ts-mtu-fixed" min="576" max="1500" step="1" placeholder="1280">
             </div>
           </div>
           <div class="stat-row"><span class="stat-label">Effective MTU</span> <span class="stat-value mono" id="ts-mtu-eff">—</span></div>
@@ -5413,7 +5413,7 @@
           var mtu = (d && d.mtu) || {};
           var mtuMode = parseInt(mtu.mode || 0, 10);
           document.getElementById('ts-mtu-mode').value  = String(mtuMode);
-          document.getElementById('ts-mtu-fixed').value = mtu.fixed_mtu || 1420;
+          document.getElementById('ts-mtu-fixed').value = mtu.fixed_mtu || 1280;
           document.getElementById('ts-mtu-fixed-wrap').style.display = (mtuMode === 1) ? '' : 'none';
           document.getElementById('ts-mtu-eff').textContent      = (mtu.eff_mtu  || '—') + ' B';
           document.getElementById('ts-mtu-eff-mss').textContent  = (mtu.eff_mss  || '—') + ' B';
@@ -5492,7 +5492,7 @@
       var body = {
         mtu: {
           mode:      parseInt(document.getElementById('ts-mtu-mode').value, 10) || 0,
-          fixed_mtu: parseInt(document.getElementById('ts-mtu-fixed').value, 10) || 1420
+          fixed_mtu: parseInt(document.getElementById('ts-mtu-fixed').value, 10) || 1280
         }
       };
       apiFetch('/api/tailscale', {

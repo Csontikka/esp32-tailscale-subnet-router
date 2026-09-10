@@ -3,9 +3,15 @@
  * Owns the wg0 netif MTU and the AP-side TCP MSS / ICMP PMTU values
  * used by netif_hooks.c. Two modes:
  *
- *   AUTO  — picks 1420 when at least one peer is on a direct UDP path,
- *           1280 when all traffic is DERP-relayed (DERP adds ~60B of
- *           HTTP framing on top of WG, so 1280 is the safe floor).
+ *   AUTO  — 1280, tailscale's tunnel MTU. Every tailscale peer's tun
+ *           device is 1280 (tstun.DefaultTUNMTU) on a direct UDP path
+ *           just as much as over DERP, so 1280 is the largest inner
+ *           packet the far end will ever carry. AUTO used to pick 1420
+ *           when the exit node had a direct path; the resulting 1380 MSS
+ *           made servers send 1368-byte segments the exit node could not
+ *           forward into its tunnel, and a server that ignores the exit
+ *           node's ICMP "fragmentation needed" then black-holed the flow
+ *           (one 5 MB download in four never delivered a byte).
  *   FIXED — user-supplied constant in [576..1500].
  *
  * tailscale_mtu_update() recomputes everything from the current
@@ -30,9 +36,11 @@ typedef enum {
     TS_MTU_FIXED = 1,
 } ts_mtu_mode_t;
 
-/* Sensible defaults — see header comment for the rationale. */
-#define TS_MTU_DIRECT_DEFAULT  1420   /* matches WIREGUARDIF_MTU */
-#define TS_MTU_DERP_DEFAULT    1280   /* DERP-safe floor */
+/* AUTO value — see header comment for the rationale. The two older names
+ * stay as aliases; both paths carry the same 1280 now. */
+#define TS_MTU_TAILSCALE       1280   /* tailscale's tun MTU on every peer */
+#define TS_MTU_DIRECT_DEFAULT  TS_MTU_TAILSCALE
+#define TS_MTU_DERP_DEFAULT    TS_MTU_TAILSCALE
 #define TS_MTU_MIN              576   /* RFC 791 minimum reassembly */
 #define TS_MTU_MAX             1500   /* Ethernet payload max */
 
