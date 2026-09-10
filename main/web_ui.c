@@ -2608,6 +2608,11 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
     cJSON_AddBoolToObject  (settings, "lan_bypass",              tailscale_lan_bypass != 0);
     cJSON_AddBoolToObject  (settings, "accept_routes",           tailscale_accept_routes != 0);
     cJSON_AddBoolToObject  (settings, "snat_subnet_routes",      tailscale_snat_subnet_routes != 0);
+    cJSON_AddBoolToObject  (settings, "advertise_ap",            tailscale_advertise_ap != 0);
+    {
+        const char *eff = tailscale_advertise_routes_effective();
+        cJSON_AddStringToObject(settings, "effective_routes", eff ? eff : "");
+    }
     {
         /* Settings show the SAVED exit node (NVS), not the live one: a save
          * no longer touches the running route (see the save handler), so the
@@ -2848,6 +2853,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
         _TS_REFRESH_BOOL("lan_bypass",              tailscale_lan_bypass);
         _TS_REFRESH_BOOL("accept_routes",           tailscale_accept_routes);
         _TS_REFRESH_BOOL("snat_subnet_routes",      tailscale_snat_subnet_routes);
+        _TS_REFRESH_BOOL("advertise_ap",            tailscale_advertise_ap);
 
         #undef _TS_REFRESH_STR
         #undef _TS_REFRESH_BOOL
@@ -2861,6 +2867,7 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
             { cJSON_GetObjectItem(s, "lan_bypass"),        (void *)"ts_lan_bp"  },
             { cJSON_GetObjectItem(s, "accept_routes"),     (void *)"ts_acpt_rt" },
             { cJSON_GetObjectItem(s, "snat_subnet_routes"), (void *)"ts_snat_sr" },
+            { cJSON_GetObjectItem(s, "advertise_ap"),      (void *)"ts_adv_ap"  },
         };
         for (size_t i = 0; i < sizeof bool_keys / sizeof bool_keys[0]; i++) {
             const cJSON *v = bool_keys[i][0];

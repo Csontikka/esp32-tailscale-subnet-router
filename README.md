@@ -262,8 +262,8 @@ Copy the key (it starts with `tskey-auth-…`).
 #### 4b · Paste it into the device
 
 On the device's **Tailscale** tab, paste the auth key, set a **hostname**,
-and list the **subnet(s) to advertise** (your AP subnet is offered
-automatically). Pick an **exit node** here too if you want AP clients to
+and check the **subnet(s) to advertise** (your AP subnet is advertised
+by default; add more below it). Pick an **exit node** here too if you want AP clients to
 egress through it. Save — the device registers with your tailnet on its
 next connect.
 

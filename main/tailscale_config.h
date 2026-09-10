@@ -20,6 +20,7 @@ extern char* tailscale_hostname;         // Hostname registered on the tailnet
 extern char* tailscale_login_server;     // "" = Tailscale SaaS; otherwise Headscale URL (e.g. "http://192.168.1.42")
 extern char* tailscale_ipn_version;      // Hostinfo.IPNVersion reported to the control plane; "" = not reported (default)
 extern char* tailscale_advertise_routes; // Newline-separated CIDRs (e.g. "192.168.4.0/24\n192.168.1.0/24")
+extern int32_t tailscale_advertise_ap;   // 1 (default) = the AP subnet is advertised as a subnet route, computed live from the AP settings; 0 = only the listed routes
 extern int32_t tailscale_max_peers;      // Active WG tunnels (microlink default 16, range 1..64)
 extern uint32_t tailscale_exit_node_ip;  // VPN IP (host byte order) of selected exit node; 0 = none
 extern int32_t tailscale_netcheck_override;       // 1 = let netcheck override the chosen default region, 0 = always stay on default
@@ -60,6 +61,12 @@ void tailscale_connect_task(void *pvParameters);
 
 // Routing-decision helpers (called from netif hooks)
 void tailscale_set_subnet(uint32_t ip, uint32_t mask);
+
+/* The RoutableIPs actually handed to microlink: the AP subnet (when
+ * tailscale_advertise_ap) plus tailscale_advertise_routes, de-duplicated,
+ * newline-separated. NULL when nothing is advertised. Static storage,
+ * recomputed on every call. */
+const char *tailscale_advertise_routes_effective(void);
 bool tailscale_in_subnet(uint32_t ip);
 
 #ifdef __cplusplus

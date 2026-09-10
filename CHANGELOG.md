@@ -6,6 +6,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Changed
+- **The AP subnet is advertised by default.** A subnet router's reason to exist is its AP subnet, but the route list only ever held what the operator typed in — the UI merely *offered* the AP CIDR — so a freshly flashed device announced nothing until someone filled the field (the reference router itself had run that way for months, found while checking the renewed admin-API token). New *Advertise the AP subnet* switch on the Tailscale card, on by default: the AP CIDR is announced as a subnet route, computed live from the AP settings (changing the AP address needs no route edit any more), and the free-text list becomes *additional* routes. Advertising on its own moves no traffic — peers use the route only after it is approved in the admin console. Turn the switch off to announce only the listed routes.
+
 ## [0.1.23] — 2026-09-10
 
 One microlink fix, found while checking the renewed admin-API token: the *Client version* setting added in 0.1.20 did not actually stick. Device-tested before tagging: manual OTA, the version visible in the admin console with the setting on and gone again with it cleared, six peers direct.

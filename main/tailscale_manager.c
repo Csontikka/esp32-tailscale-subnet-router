@@ -11,6 +11,8 @@
 #include <stdio.h>
 #include <time.h>
 #include <arpa/inet.h>
+#include <stdlib.h>
+#include "lwip/ip4_addr.h"
 #include "esp_log.h"
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
@@ -37,6 +39,7 @@ char* tailscale_hostname = NULL;
 char* tailscale_login_server = NULL;
 char* tailscale_ipn_version = NULL;
 char* tailscale_advertise_routes = NULL;
+int32_t tailscale_advertise_ap = 1;
 int32_t tailscale_max_peers = 16;
 uint32_t tailscale_exit_node_ip = 0;
 int32_t tailscale_netcheck_override = 0;          /* default: OFF — netcheck mis-selects regions (garbage STUN RTTs: picked London #8 for a HU node, fra/nue sometimes missing because probes tunnel through the exit netif) which destabilises DERP. Stay on the configured/echoed home region until the netcheck STUN path is fixed. Runtime-overridable via NVS. */
@@ -82,6 +85,9 @@ void tailscale_init(void)
     tailscale_login_server     = nvs_str_or_empty("ts_login");
     tailscale_ipn_version      = nvs_str_or_empty("ts_ipn_ver");
     tailscale_advertise_routes = nvs_str_or_empty("ts_routes");
+    if (nvs_param_get_int("ts_adv_ap", &v) == ESP_OK) {
+        tailscale_advertise_ap = v ? 1 : 0;
+    }
     if (nvs_param_get_int("ts_maxpeers", &v) == ESP_OK && v >= 1 && v <= 64) {
         tailscale_max_peers = v;
     }
@@ -153,6 +159,69 @@ static const char *ipn_version_effective(void)
     return buf;
 }
 
+/* The AP subnet as "a.b.c.d/p" from the same NVS keys wifi_init_softap
+ * uses (ap_ip / ap_mask, default 192.168.4.1/24). Read from NVS rather
+ * than the live netif so it is right at boot, before the AP is up. */
+static bool ap_cidr_from_nvs(char *out, size_t out_size)
+{
+    char *ip_s = nvs_param_get_str("ap_ip");
+    char *mask_s = nvs_param_get_str("ap_mask");
+    ip4_addr_t ip, mask;
+    bool ok = ip_s && ip_s[0] && mask_s && mask_s[0] &&
+              ip4addr_aton(ip_s, &ip) && ip4addr_aton(mask_s, &mask);
+    if (!ok) {
+        ip4addr_aton("192.168.4.1", &ip);
+        ip4addr_aton("255.255.255.0", &mask);
+    }
+    free(ip_s);
+    free(mask_s);
+    uint32_t m = lwip_ntohl(ip4_addr_get_u32(&mask));
+    if (m == 0) return false;
+    unsigned prefix = 0;
+    for (uint32_t t = m; t & 0x80000000u; t <<= 1) prefix++;
+    uint32_t net = lwip_ntohl(ip4_addr_get_u32(&ip)) & m;
+    snprintf(out, out_size, "%u.%u.%u.%u/%u",
+             (unsigned)(net >> 24) & 0xFF, (unsigned)(net >> 16) & 0xFF,
+             (unsigned)(net >> 8) & 0xFF, (unsigned)net & 0xFF, prefix);
+    return true;
+}
+
+/* A subnet router's reason to exist is its AP subnet, so that is advertised
+ * by default -- the free-text list only ever held what the operator typed,
+ * and the UI merely *offered* the AP CIDR: a fresh device announced nothing
+ * until someone filled the field (the reference router ran that way for
+ * months). Advertising is harmless on its own: peers use the route only
+ * after it is approved in the admin console. The AP CIDR follows the AP
+ * settings, so changing the AP address needs no route edit any more. */
+const char *tailscale_advertise_routes_effective(void)
+{
+    static char buf[640];
+    size_t pos = 0;
+    buf[0] = '\0';
+    char ap[32] = "";
+    if (tailscale_advertise_ap && ap_cidr_from_nvs(ap, sizeof ap)) {
+        pos += (size_t)snprintf(buf + pos, sizeof buf - pos, "%s", ap);
+    }
+    const char *p = tailscale_advertise_routes ? tailscale_advertise_routes : "";
+    while (*p && pos < sizeof buf - 2) {
+        const char *eol = p;
+        while (*eol && *eol != '\n' && *eol != '\r') eol++;
+        size_t len = (size_t)(eol - p);
+        while (len > 0 && (p[len - 1] == ' ' || p[len - 1] == '\t')) len--;
+        while (len > 0 && (*p == ' ' || *p == '\t')) { p++; len--; }
+        bool dup = (len > 0 && ap[0] && strlen(ap) == len && strncmp(p, ap, len) == 0);
+        if (len > 0 && !dup && len < sizeof buf - pos - 2) {
+            if (pos > 0) buf[pos++] = '\n';
+            memcpy(buf + pos, p, len);
+            pos += len;
+            buf[pos] = '\0';
+        }
+        p = eol;
+        while (*p == '\n' || *p == '\r') p++;
+    }
+    return buf[0] ? buf : NULL;
+}
+
 esp_err_t tailscale_connect(void)
 {
     if (!tailscale_enabled) {
@@ -193,7 +262,7 @@ esp_err_t tailscale_connect(void)
         .ctrl_watchdog_ms = 0,
         .ctrl_host = (tailscale_login_server && tailscale_login_server[0]) ? tailscale_login_server : NULL,
         .ipn_version = ipn_version_effective(),
-        .advertise_routes = (tailscale_advertise_routes && tailscale_advertise_routes[0]) ? tailscale_advertise_routes : NULL,
+        .advertise_routes = tailscale_advertise_routes_effective(),
         .netcheck_override_enabled = (tailscale_netcheck_override != 0),
         .netcheck_override_threshold_ms = (uint32_t)tailscale_netcheck_threshold_ms,
         .preferred_derp_region = (uint16_t)tailscale_default_derp_region,
