@@ -6,8 +6,15 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.24] — 2026-09-10
+
+A subnet router that advertises its subnet out of the box, and a build-reproducibility fix. Device-tested before tagging: manual OTA, the route switch off and on with the advertised set read back from the admin API, six peers direct, an AP client through the router.
+
 ### Changed
 - **The AP subnet is advertised by default.** A subnet router's reason to exist is its AP subnet, but the route list only ever held what the operator typed in — the UI merely *offered* the AP CIDR — so a freshly flashed device announced nothing until someone filled the field (the reference router itself had run that way for months, found while checking the renewed admin-API token). New *Advertise the AP subnet* switch on the Tailscale card, on by default: the AP CIDR is announced as a subnet route, computed live from the AP settings (changing the AP address needs no route edit any more), and the free-text list becomes *additional* routes. Advertising on its own moves no traffic — peers use the route only after it is approved in the admin console. Turn the switch off to announce only the listed routes.
+
+### Build
+- **`sdkconfig.defaults` now pins `CONFIG_LWIP_MAX_ACTIVE_TCP=24` and `CONFIG_LWIP_TCP_OOSEQ_MAX_PBUFS=4`.** Every release since 0.1.17 was built from a local sdkconfig that carried these two values; the tracked defaults never had them, so a fresh clone would have compiled IDF's 16 active PCBs and a derived out-of-order limit — a different firmware from the one measured on the reference router. Pinned with the rationale next to them; nothing changes for the published binaries.
 
 ## [0.1.23] — 2026-09-10
 
