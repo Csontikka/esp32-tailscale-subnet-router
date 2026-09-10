@@ -176,6 +176,15 @@ CONFIG_ESPTOOLPY_FLASHMODE="dio"
 CONFIG_LWIP_TCP_RCV_SCALE=2
 CONFIG_LWIP_TCP_RECVMBOX_SIZE=12
 
+# Pinned so a fresh clone builds what the reference router has been running and
+# measured with (every release since 0.1.17 was built from a local sdkconfig that
+# carried these; the git-tracked defaults silently fell back to IDF's 16 and a
+# derived OOSEQ limit). 24 active TCP PCBs = 16 AP clients' NAT flows plus the
+# device's own control/DERP/web sockets under load; 4 out-of-order pbufs per
+# connection = enough to ride a reordering tunnel without eating the pool.
+CONFIG_LWIP_MAX_ACTIVE_TCP=24
+CONFIG_LWIP_TCP_OOSEQ_MAX_PBUFS=4
+
 # --- DHCP server ------------------------------------------------------------
 CONFIG_LWIP_DHCPS_MAX_STATION_NUM=16
 
