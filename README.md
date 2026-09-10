@@ -134,6 +134,12 @@ traffic you route through it.)*
   action, plus per-rule hit counters.
 - **DNS forwarder with cache** — on-board resolver for AP clients with a
   PSRAM-backed response cache and configurable upstream.
+- **SNMP monitoring** — read-only SNMPv1/v2c agent on UDP 161, off by
+  default. Standard MIBs so existing tooling discovers it without a custom
+  MIB file: MIB-II system and interfaces (`eth0`, `wlan0`, `ts0`, each with
+  live traffic counters — the Tailscale tunnel included),
+  HOST-RESOURCES-MIB for per-core CPU load and memory, and
+  ENTITY-SENSOR-MIB for the die temperature.
 - **Operations toolbox** — on-device ping / traceroute / route-explain,
   a 1 MB download/upload speed test, live WiFi scan, and a
   microSD "flight recorder" for catching control-plane stalls.
