@@ -6,14 +6,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
-Three fixes ported from [@gszigethy](https://github.com/gszigethy)'s fork ([gszigethy/esp32-tailscale-subnet-router](https://github.com/gszigethy/esp32-tailscale-subnet-router), commits `82aa72b`, `3919040`, `d1f81a6`), found while reviewing his Ethernet-uplink work; the Ethernet parts stay in the fork until there is hardware here to test them on.
+## [0.1.25] — 2026-09-10
 
-### Fixed
-- **Two Tailscale connect tasks could tear down and rebuild the same instance at once.** The connect task is spawned from the STA got-IP handler with nothing serialising it, so a WiFi flap inside the up-to-30 s SNTP wait started a second one; both end in `tailscale_connect()`, which destroys and re-creates the microlink instance — one destroying the handle the other was initialising through (use-after-free), or two instances with the first one's tasks and sockets leaked. A lifecycle mutex now makes connect and disconnect mutually exclusive, and redundant requests collapse to "one in flight, one queued". Reproduced and verified here with a deliberate burst of three connect requests (new test hook `POST /api/debug/ts-reconnect {"burst": N}`).
-- **Long Cookie headers logged the operator out.** The session lookup read the header into 160 bytes and treated truncation as an error, so a browser that also held a couple of unrelated cookies for the same origin (reverse proxy, shared hostname) was silently unauthenticated. Now 512 bytes, truncation tolerated, and the token comparison is bounded to the cookie value and constant-time.
-
-### Changed
-- `ap_connect` / `connect_count` are `volatile`: written by WiFi event handlers, read from the web server and spin-waited on by the telemetry sender; it only worked because `vTaskDelay()` is opaque to the compiler.
+A robustness release: three fixes ported from a community fork, and a microlink teardown bug they helped surface. Device-tested before tagging: manual OTA, five bursts of three connect requests and three single reconnects with no reset and a steady heap, six peers direct, an AP client through the router, the exit node via a relay and back.
 
 Three fixes ported from [@gszigethy](https://github.com/gszigethy)'s fork ([gszigethy/esp32-tailscale-subnet-router](https://github.com/gszigethy/esp32-tailscale-subnet-router), commits `82aa72b`, `3919040`, `d1f81a6`), found while reviewing his Ethernet-uplink work; the Ethernet parts stay in the fork until there is hardware here to test them on.
 
