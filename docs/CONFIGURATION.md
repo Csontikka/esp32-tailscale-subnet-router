@@ -85,6 +85,50 @@ Per rule: **source** / **destination** (`any` or CIDR), **protocol**
 (Any / ICMP / TCP / UDP), **source/dest port** (`0` = any, TCP/UDP only),
 **action** (Allow / Deny).
 
+## SNMP
+
+Read-only SNMPv1/v2c agent, **off by default**. When enabled it binds
+UDP `0.0.0.0:161` on every interface — including the tailnet, so a poller
+anywhere on your tailnet can reach it without opening anything to the LAN.
+Requests whose community string does not match are dropped without a reply,
+so a wrong community is indistinguishable from the agent being off.
+
+| Field | Meaning |
+|---|---|
+| **Enable SNMP** | Starts/stops the agent in place; no reboot. |
+| **Community** | Shared secret for v1/v2c. There is no v3 — treat this as a password sent in clear text and prefer reaching the device over the tailnet. |
+| **sysName / sysContact / sysLocation** | Served as `1.3.6.1.2.1.1.{5,4,6}.0`. Free text. |
+
+Only GET and GETNEXT are answered; there is no SET, so nothing can be
+changed over SNMP. GETBULK is accepted but returns one successor per
+varbind, so bulk walks simply take more round trips.
+
+### What it serves
+
+| MIB | OIDs | Notes |
+|---|---|---|
+| MIB-II system | `1.3.6.1.2.1.1` | sysDescr carries the firmware version. |
+| MIB-II interfaces | `1.3.6.1.2.1.2` | Fixed indices: **1** `eth0`, **2** `wlan0`, **3** `ts0` (Tailscale tunnel). Octet and packet counters on all three. |
+| HOST-RESOURCES-MIB | `1.3.6.1.2.1.25` | `hrProcessorLoad.{1,2}` per core (0–100, 5 s window), `hrStorageTable` for internal DRAM and PSRAM, `hrSystemProcesses` for the task count. |
+| ENTITY-SENSOR-MIB | `1.3.6.1.2.1.99` | Die temperature, deci-degrees Celsius (`entPhySensorPrecision` = 1, so 508 means 50.8 °C). |
+| Private | `1.3.6.1.4.1.99999.1.1.4.0` | `heapMinFreeBytes`, the all-time-low free-heap watermark — the one reading with no standard equivalent. **99999 is not an IANA-assigned enterprise number**; do not grow this tree. |
+
+Interface indices are deliberately fixed rather than derived from lwIP's
+`netif_list`, so a graph pointed at ifIndex 2 keeps meaning `wlan0` even
+as interfaces come and go. An interface that is down — or that this board
+does not have at all, such as `eth0` on a WiFi-only build — reports
+`ifOperStatus down` with zero counters rather than disappearing and
+renumbering the rows after it.
+
+Quick check from any machine with net-snmp:
+
+```bash
+snmpwalk -v2c -c <community> <device-ip> 1.3.6.1.2.1.1        # system
+snmpwalk -v2c -c <community> <device-ip> 1.3.6.1.2.1.2.2.1.10 # ifInOctets
+snmpget  -v2c -c <community> <device-ip> 1.3.6.1.2.1.25.3.3.1.2.1  # CPU core 0
+snmpget  -v2c -c <community> <device-ip> 1.3.6.1.2.1.99.1.1.1.4.1  # temperature
+```
+
 ## System
 
 | Field | Meaning |
