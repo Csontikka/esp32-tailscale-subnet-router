@@ -6,6 +6,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+- **Every reconnect still leaked ~15 KB of PSRAM** (microlink). After the 650 KB fix each stop/start cycle lost a further 14.6–15.2 KB: the lwIP WireGuard device (`struct wireguard_device`, 14 664 bytes on this build — every peer's keypairs and handshake state) was never freed. `wireguardif_shutdown()` only cancels its timer, and the teardown freed the 260-byte netif around the device and nothing else. The device is now released on stop, key material zeroed first, and packets or peer updates still queued when the instance is destroyed are freed with it. Seven reconnects on the reference router: −656 B net (−94 B per cycle, noise), previously −14.6 KB each.
+
 ## [0.1.25] — 2026-09-10
 
 A robustness release: three fixes ported from a community fork, and a microlink teardown bug they helped surface. Device-tested before tagging: manual OTA, five bursts of three connect requests and three single reconnects with no reset and a steady heap, six peers direct, an AP client through the router, the exit node via a relay and back.
