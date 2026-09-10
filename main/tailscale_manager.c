@@ -17,6 +17,7 @@
 #include "esp_err.h"
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "microlink.h"
 #include "sdlog.h"
 #include "tailscale_config.h"
@@ -63,6 +64,40 @@ static uint32_t tailscale_subnet_mask = 0;
 /* Microlink instance owned by this module. */
 static microlink_t *s_microlink = NULL;
 
+/* Lifecycle serialization (ported from gszigethy's fork, 82aa72b).
+ *
+ * tailscale_connect_task is spawned from the STA got-IP handler, and nothing
+ * used to stop two of them running at once: a WiFi flap inside the SNTP wait
+ * (up to 30 s) starts a second task, and both end in tailscale_connect(),
+ * which tears down s_microlink and builds a new instance. Two in there at
+ * once means one calls microlink_destroy() on the handle the other is still
+ * initialising through -- a use-after-free -- or both call microlink_init()
+ * and the first instance leaks with its tasks and sockets still live. The
+ * fork hit it from its per-interface route toggles; here the trigger is
+ * rarer but the same WiFi bounce that already cost us one teardown panic.
+ *
+ * s_life_mux makes the connect/disconnect bodies mutually exclusive.
+ * s_connect_queued additionally collapses redundant *requests*: a task that
+ * has not yet started reads the config globals when it does, so it already
+ * reflects whatever was saved meanwhile, and a second waiter would only
+ * reconnect once more for nothing. One in flight plus one queued is enough
+ * to guarantee no change is missed; every surplus task was a 30 s SNTP
+ * waiter holding 4 KB of stack. */
+static SemaphoreHandle_t s_life_mux = NULL;
+static portMUX_TYPE      s_queue_lock = portMUX_INITIALIZER_UNLOCKED;
+static int               s_connect_queued = 0;
+
+/* Tolerate a NULL mutex (alloc failure at boot) so a heap-starved device
+ * degrades to the old unserialized behaviour rather than deadlocking. */
+static inline void life_lock(void)
+{
+    if (s_life_mux) xSemaphoreTake(s_life_mux, portMAX_DELAY);
+}
+static inline void life_unlock(void)
+{
+    if (s_life_mux) xSemaphoreGive(s_life_mux);
+}
+
 /* Start SNTP if it has not been started yet.  Called by tailscale_connect_task
  * (before the WireGuard handshake needs real wall-clock time) and by the WiFi
  * STA-got-IP event handler in esp32_nat_router.c. */
@@ -77,6 +112,14 @@ void init_sntp_if_needed(void)
 void tailscale_init(void)
 {
     int32_t v = 0;
+    /* Before anything can spawn a connect task: app_main calls this once,
+     * early, so every later caller finds the mutex already there. */
+    if (s_life_mux == NULL) {
+        s_life_mux = xSemaphoreCreateMutex();
+        if (s_life_mux == NULL) {
+            ESP_LOGE(TAG, "lifecycle mutex alloc failed - connect/disconnect unserialized");
+        }
+    }
     if (nvs_param_get_int("ts_enabled", &v) == ESP_OK) {
         tailscale_enabled = v;
     }
@@ -222,7 +265,7 @@ const char *tailscale_advertise_routes_effective(void)
     return buf[0] ? buf : NULL;
 }
 
-esp_err_t tailscale_connect(void)
+static esp_err_t tailscale_connect_locked(void)
 {
     if (!tailscale_enabled) {
         ESP_LOGI(TAG, "Tailscale not enabled");
@@ -296,8 +339,19 @@ esp_err_t tailscale_connect(void)
     return ESP_OK;
 }
 
+esp_err_t tailscale_connect(void)
+{
+    life_lock();
+    esp_err_t err = tailscale_connect_locked();
+    life_unlock();
+    return err;
+}
+
 void tailscale_disconnect(void)
 {
+    /* Same mutex as connect: a disconnect landing in the middle of a
+     * connect's teardown/re-init would double-free s_microlink. */
+    life_lock();
     tailscale_connected = false;
     tailscale_tunnel_ip = 0;
     if (s_microlink) {
@@ -306,6 +360,7 @@ void tailscale_disconnect(void)
         microlink_destroy(s_microlink);
         s_microlink = NULL;
     }
+    life_unlock();
     ESP_LOGI(TAG, "Tailscale stopped");
 }
 
@@ -326,6 +381,23 @@ bool tailscale_is_connected(void)
 
 void tailscale_connect_task(void *pvParameters)
 {
+    /* Collapse redundant requests: one task in flight plus one queued behind
+     * it is enough (the queued one reads the config globals only when it
+     * runs), anything beyond that would reconnect again for the same state. */
+    bool coalesced = false;
+    portENTER_CRITICAL(&s_queue_lock);
+    if (s_connect_queued >= 1) {
+        coalesced = true;
+    } else {
+        s_connect_queued++;
+    }
+    portEXIT_CRITICAL(&s_queue_lock);
+    if (coalesced) {
+        ESP_LOGW(TAG, "connect already queued - coalescing this request");
+        vTaskDelete(NULL);
+        return;
+    }
+
     init_sntp_if_needed();
 
     /* Microlink's Noise handshake is timestamped; we need real wall-clock
@@ -352,6 +424,14 @@ void tailscale_connect_task(void *pvParameters)
         ESP_LOGW(TAG, "SNTP timeout after %ds, attempting Tailscale connect anyway", max_retry / 2);
     }
 
-    tailscale_connect();
+    /* Serialize the actual work, and free the queue slot as we enter it: a
+     * request arriving from here on reflects state we have not read yet, so
+     * it must be allowed to queue rather than be dropped as a duplicate. */
+    life_lock();
+    portENTER_CRITICAL(&s_queue_lock);
+    if (s_connect_queued > 0) s_connect_queued--;
+    portEXIT_CRITICAL(&s_queue_lock);
+    (void)tailscale_connect_locked();
+    life_unlock();
     vTaskDelete(NULL);
 }

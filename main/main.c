@@ -115,8 +115,13 @@ static EventGroupHandle_t s_wifi_event_group;
  * is up (telemetry waits for it before its first send); connect_count
  * is the live count of AP clients (rendered on the Status page and
  * reported in telemetry). */
-int ap_connect   = 0;
-int connect_count = 0;
+/* volatile: telemetry.c's sender task spin-waits on ap_connect and the web
+ * UI reads both from the httpd task, while the writers are WiFi event
+ * handlers on another task. Without it the compiler is free to hoist the
+ * load out of `while (!ap_connect)`; it only happens to work because
+ * vTaskDelay() is an opaque call it cannot see through. (gszigethy 3919040) */
+volatile int ap_connect   = 0;
+volatile int connect_count = 0;
 
 /* Forward declarations — definitions land further down in this file. */
 /* Non-static — also called from web_ui.c when DNS-relay state changes,

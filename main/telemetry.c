@@ -44,8 +44,8 @@
 /* Cross-module state owned by main.c. ap_connect lets the sender task
  * gate the first send on the upstream STA being up; connect_count is
  * the AP-client count we report in every event. */
-extern int ap_connect;
-extern int connect_count;
+extern volatile int ap_connect;
+extern volatile int connect_count;
 
 static const char *TAG = "telemetry";
 

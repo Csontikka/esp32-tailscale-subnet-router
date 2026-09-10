@@ -62,8 +62,8 @@
 #include "driver/temperature_sensor.h"
 
 /* Globals owned by main.c — link status flags rendered in /api/status. */
-extern int ap_connect;
-extern int connect_count;
+extern volatile int ap_connect;
+extern volatile int connect_count;
 
 static const char *TAG = "web_ui";
 
@@ -3846,10 +3846,37 @@ static void session_clear_all(void)
 
 /* Locate the slot a request's ts_session cookie points at. Returns
  * the index, or -1 if no cookie / no match / matched-but-expired. */
+/* Compare a candidate cookie value against a stored token without an early
+ * exit, so how long this takes does not reveal how many leading characters
+ * the caller guessed right. The tokens are 64 hex chars of esp_fill_random,
+ * so a timing oracle is the only realistic way to attack one -- remote
+ * enough on a jittery embedded HTTP server, but the constant-time form costs
+ * nothing. The candidate is bounded to its own cookie value first (up to the
+ * next ';'), so the comparison never reads past it. (gszigethy d1f81a6) */
+static bool token_equals(const char *candidate, const char *stored, size_t n)
+{
+    size_t avail = strcspn(candidate, ";");
+    if (avail != n) return false;   /* length is not secret */
+    unsigned diff = 0;
+    for (size_t i = 0; i < n; i++) {
+        diff |= (unsigned)((unsigned char)candidate[i] ^ (unsigned char)stored[i]);
+    }
+    return diff == 0;
+}
+
 static int session_find_for_req(httpd_req_t *req)
 {
-    char hdr[160];
-    if (httpd_req_get_hdr_value_str(req, "Cookie", hdr, sizeof hdr) != ESP_OK) return -1;
+    /* Roomy enough for the whole Cookie header: 11 B of name + a 64-char
+     * token is 75 B, but the header also carries every other cookie the
+     * browser holds for this origin (a reverse proxy or a shared hostname
+     * adds them freely). At the old 160 B a request that merely accumulated
+     * a couple of unrelated cookies overflowed, and since truncation was
+     * treated as an error the operator was logged out with no indication
+     * why. Tolerate TRUNC too: a truncated header may still contain a
+     * complete ts_session value, and if it does not the match simply fails. */
+    char hdr[512];
+    esp_err_t herr = httpd_req_get_hdr_value_str(req, "Cookie", hdr, sizeof hdr);
+    if (herr != ESP_OK && herr != ESP_ERR_HTTPD_RESULT_TRUNC) return -1;
     const char *p = strstr(hdr, "ts_session=");
     if (!p) return -1;
     p += strlen("ts_session=");
@@ -3857,9 +3884,7 @@ static int session_find_for_req(httpd_req_t *req)
     for (int i = 0; i < WEB_UI_SESSION_MAX; i++) {
         if (!s_sessions[i].token[0])    continue;
         if (now >= s_sessions[i].expires_us) continue;
-        size_t n = strlen(s_sessions[i].token);
-        if (strncmp(p, s_sessions[i].token, n) == 0
-            && (p[n] == '\0' || p[n] == ';')) {
+        if (token_equals(p, s_sessions[i].token, strlen(s_sessions[i].token))) {
             return i;
         }
     }
