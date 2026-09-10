@@ -6,6 +6,14 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.22] — 2026-09-10
+
+Two fixes from a morning of measuring the reference router: the exit-node download black-hole that had been on the list since the first exit-node tests, and two more places where microlink talked more than the reference client does. Device-tested before tagging: manual OTA, exit node via a peer with eight bulk downloads, an AP client through the router, six peers direct.
+
+### Changed
+- **Endpoint updates reach the control plane only when the endpoints changed** (microlink; reference client: `setEndpoints` gates the update with `endpointSetsEqual`). The 23 s re-STUN used to re-send an identical update every time — a fresh HTTP/2 stream for the node and a peer-change patch pushed to every peer on the tailnet — with nothing new in it. Still sent once per (re)connect.
+- **One PONG per PING, back to where it came from** (microlink; reference client: `handlePingLocked`). The fan-out — the source, every LAN endpoint of the peer, plus always a copy via DERP — cost the pinger an unmatched PONG per extra copy and a DERP round trip per PING for nothing. DERP is used only when the direct send itself fails.
+
 ### Fixed
 - **Exit-node bulk downloads no longer black-hole.** With an exit node on a direct UDP path the automatic tunnel MTU was 1420, so AP clients were MSS-clamped to 1380 and servers sent 1368-byte segments — which the exit node cannot forward into its own tunnel (every Tailscale peer's tun device is 1280). The exit node answered with ICMP "fragmentation needed"; servers that honour it recovered, servers that ignore it retransmitted the same oversized segment until the client gave up: measured through the reference router, one 5 MB download in four never delivered a byte in 90 s, deterministically per server. Auto MTU is now 1280 unconditionally (the Tailscale tunnel MTU, direct or relayed alike), so the MSS clamp is 1240 and nothing on the return path ever needs fragmenting. The *Fixed* MTU mode is unchanged.
 
