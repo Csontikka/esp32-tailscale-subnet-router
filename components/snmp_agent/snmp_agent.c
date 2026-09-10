@@ -401,16 +401,21 @@ static int ber_enc_i32(uint8_t *b, int cap, int32_t v)
     return tot;
 }
 
+/* strnlen, not strlen: s comes from a getter in s_mib[] and nothing here can
+ * prove it is terminated. Anything longer than the buffer cannot be encoded
+ * anyway, so stopping the scan at cap loses nothing and keeps the length out
+ * of the range where 1 + llen + slen overflows int. The remaining-space test
+ * is then written against cap rather than against that sum. */
 static int ber_enc_str(uint8_t *b, int cap, const char *s)
 {
-    int slen = (int)strlen(s);
+    if (cap < 2) return 0;
+    int slen = (int)strnlen(s, (size_t)cap);
     int llen = ber_put_len(b+1, cap-1, slen);
     if (!llen) return 0;
-    int tot = 1 + llen + slen;
-    if (cap < tot) return 0;
+    if (slen > cap - 1 - llen) return 0;
     b[0] = 0x04;
     memcpy(b + 1 + llen, s, slen);
-    return tot;
+    return 1 + llen + slen;
 }
 
 static int ber_enc_octstr(uint8_t *b, int cap, const uint8_t *bytes, int n)
