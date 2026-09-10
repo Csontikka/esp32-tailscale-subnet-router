@@ -6,6 +6,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.23] — 2026-09-10
+
+One microlink fix, found while checking the renewed admin-API token: the *Client version* setting added in 0.1.20 did not actually stick. Device-tested before tagging: manual OTA, the version visible in the admin console with the setting on and gone again with it cleared, six peers direct.
+
+### Fixed
+- **The admin console lost the client version after every reconnect.** `Hostinfo.IPNVersion` was only put into two of the four Hostinfo messages microlink sends (register, initial map); the long-poll MapRequest and the endpoint update carried a Hostinfo without it, and the control plane keeps the last Hostinfo it receives — so the value set under *Client version* showed up for a moment after registration and vanished with the first endpoint update, re-arming the console's "Device is too old" gate. All four now carry it.
+
 ## [0.1.22] — 2026-09-10
 
 Two fixes from a morning of measuring the reference router: the exit-node download black-hole that had been on the list since the first exit-node tests, and two more places where microlink talked more than the reference client does. Device-tested before tagging: manual OTA, exit node via a peer with eight bulk downloads, an AP client through the router, six peers direct.
