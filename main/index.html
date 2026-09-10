@@ -2620,7 +2620,45 @@
         </div>
       </div>
 
-
+      <!-- ===== SNMP agent ===== -->
+      <div class="card mt-4">
+        <div class="card-header">
+          <div class="card-header-left">
+            <span class="card-title">SNMP agent</span>
+          </div>
+          <span class="badge badge-neutral" id="sys-snmp-badge">—</span>
+        </div>
+        <div class="card-body">
+          <div class="check-group" style="margin-bottom:0.75rem;">
+            <input type="checkbox" id="sys-snmp-en" class="check-input">
+            <label for="sys-snmp-en" class="form-label" style="margin:0;">Enable SNMP agent</label>
+          </div>
+          <div class="grid grid-cols-2" style="gap:0.75rem;">
+            <div class="form-group" style="margin:0;">
+              <label class="form-label" for="sys-snmp-community">Community</label>
+              <input class="input" type="text" id="sys-snmp-community" maxlength="255" placeholder="public" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="form-group" style="margin:0;">
+              <label class="form-label" for="sys-snmp-sysname">sysName</label>
+              <input class="input" type="text" id="sys-snmp-sysname" maxlength="255" placeholder="" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="form-group" style="margin:0;">
+              <label class="form-label" for="sys-snmp-contact">sysContact</label>
+              <input class="input" type="text" id="sys-snmp-contact" maxlength="255" placeholder="" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="form-group" style="margin:0;">
+              <label class="form-label" for="sys-snmp-location">sysLocation</label>
+              <input class="input" type="text" id="sys-snmp-location" maxlength="255" placeholder="" autocomplete="off" spellcheck="false">
+            </div>
+          </div>
+          <p class="form-hint" style="margin:0.75rem 0 0 0;">ℹ Listens on all interfaces · UDP 0.0.0.0:161 · SNMPv1/v2c · read-only, no SET · MIB-II system + interfaces (ifIndex 1 eth0, 2 wlan0, 3 ts0 — an interface this board doesn't have reports ifOperStatus down) · HOST-RESOURCES-MIB (CPU load, memory) · ENTITY-SENSOR-MIB (die temperature)</p>
+        </div>
+        <div class="form-footer">
+          <div class="form-footer-actions">
+            <button class="btn btn-primary btn-md" id="sys-snmp-save" disabled>Save</button>
+          </div>
+        </div>
+      </div>
 
       <!-- ===== SD flight-recorder ===== -->
       <div class="card mt-4">
@@ -6229,6 +6267,9 @@
           /* SD flight-recorder card refreshes on every System-tab load. */
           if (typeof loadSdlog === 'function') loadSdlog();
 
+          /* SNMP agent card — separate endpoint, separate fetch. */
+          if (typeof loadSnmp === 'function') loadSnmp();
+
           /* Idle session timeout — snap the select to whichever option
            * matches the persisted value, falling back to 30 min if the
            * server returned something we don't render as a choice. */
@@ -7180,6 +7221,77 @@
         .catch(function () { pre.textContent = '(failed to load tail)'; showToast('error', 'Tail failed', '', 5000); });
     }
     (function () { var b = document.getElementById('sys-sdlog-tail-refresh'); if (b) b.addEventListener('click', sdlogTail); })();
+
+    /* ------------------------------------------------------------------ */
+    /* SNMP agent card                                                      */
+    /* ------------------------------------------------------------------ */
+    function loadSnmp() {
+      apiFetch('/api/snmp')
+        .then(function (r) { return r.json(); })
+        .then(function (d) {
+          var badge = document.getElementById('sys-snmp-badge');
+          if (d.running) {
+            badge.className   = 'badge badge-success';
+            badge.textContent = 'Running';
+          } else {
+            badge.className   = 'badge badge-neutral';
+            badge.textContent = 'Stopped';
+          }
+          document.getElementById('sys-snmp-en').checked         = !!d.enabled;
+          document.getElementById('sys-snmp-community').value    = d.community     || '';
+          document.getElementById('sys-snmp-sysname').value      = d.sys_name      || '';
+          document.getElementById('sys-snmp-contact').value      = d.sys_contact   || '';
+          document.getElementById('sys-snmp-location').value     = d.sys_location  || '';
+          document.getElementById('sys-snmp-save').disabled = true;
+        }).catch(function () {});
+    }
+
+    (function () {
+      var btn    = document.getElementById('sys-snmp-save');
+      var fields = ['sys-snmp-community', 'sys-snmp-sysname',
+                    'sys-snmp-contact',   'sys-snmp-location'];
+      function markDirty() { if (btn) btn.disabled = false; }
+      var enChk = document.getElementById('sys-snmp-en');
+      if (enChk) enChk.addEventListener('change', markDirty);
+      fields.forEach(function (id) {
+        var el = document.getElementById(id);
+        if (el) { el.addEventListener('input', markDirty); el.addEventListener('change', markDirty); }
+      });
+      if (!btn) return;
+      btn.addEventListener('click', function () {
+        btn.disabled    = true;
+        btn.textContent = 'Saving…';
+        apiFetch('/api/snmp', {
+          method:  'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            enabled:      document.getElementById('sys-snmp-en').checked,
+            community:    document.getElementById('sys-snmp-community').value,
+            sys_name:     document.getElementById('sys-snmp-sysname').value,
+            sys_contact:  document.getElementById('sys-snmp-contact').value,
+            sys_location: document.getElementById('sys-snmp-location').value
+          })
+        })
+          .then(function (r) { return r.json(); })
+          .then(function (d) {
+            btn.textContent = 'Save';
+            if (d.ok) {
+              showToast('success', 'Saved', 'SNMP settings updated.', 4000);
+              /* Re-fetch after 2 s to let the agent reconfigure before
+               * updating the Running/Stopped badge. */
+              setTimeout(loadSnmp, 2000);
+            } else {
+              showToast('error', 'Error', 'Save failed.', 4000);
+              btn.disabled = false;
+            }
+          })
+          .catch(function () {
+            btn.textContent = 'Save';
+            btn.disabled    = false;
+            showToast('error', 'Error', 'Network error.', 4000);
+          });
+      });
+    })();
 
     /* Idle-timeout dropdown — dirty-track + save. The new value also
      * resets the SPA-side countdown so the operator sees the new window

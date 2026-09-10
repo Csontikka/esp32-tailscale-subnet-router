@@ -96,7 +96,8 @@ CONFIG_LWIP_L2_TO_L3_COPY=y
 # load (Ookla opens 8-16 parallel TCP streams + DNS forwarder + telemetry
 # + WG + DERP + 2 httpd pools) blew past 16 and httpd logged
 # "httpd_accept_conn: error in accept (23)" — errno 23 = ENFILE. Up to 24.
-CONFIG_LWIP_MAX_SOCKETS=24
+# Raised to 26: +1 for the SNMP agent UDP socket on port 161, +1 headroom.
+CONFIG_LWIP_MAX_SOCKETS=26
 # 2026-05-24 throughput-regression bisect: comparing the migration target
 # sdkconfig against the pre-migration OLD repo (which delivered the
 # expected 1 Mbps WG-tunnel throughput) showed the NEW config aggressively

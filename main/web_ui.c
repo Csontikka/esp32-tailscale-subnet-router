@@ -25,6 +25,7 @@
 #include "nvs_params.h"
 #include "microlink.h"
 #include "dns_relay.h"
+#include "snmp_agent.h"
 #include "lwip_route_hook.h"
 #include "acl.h"
 #include "sdlog.h"
@@ -210,20 +211,16 @@ static uint8_t sample_cpu_load_pct(void)
 }
 
 /* Internal CPU temperature in °C, or -999 if the sensor isn't available.
- * Lazy-installs on first call; the sensor draws ~1 mA continuously while
- * enabled, so we keep it running once installed rather than turn it on
- * and off per sample. Diag-tab also calls into this via its own copy
- * (kept until the diag handler migrates to this shared helper). */
+ *
+ * The chip has one thermal sensor and temperature_sensor_install() refuses a
+ * second owner. snmp_agent_init() claims it at boot (unconditionally, even
+ * with the agent disabled), so lazy-installing a second handle here would
+ * fail and return -999 forever while logging "Already installed" on every
+ * status poll. Read through the one owner instead. */
 static float sample_cpu_temp_c(void)
 {
-    static temperature_sensor_handle_t s_sensor = NULL;
-    if (!s_sensor) {
-        temperature_sensor_config_t cfg = TEMPERATURE_SENSOR_CONFIG_DEFAULT(-10, 80);
-        if (temperature_sensor_install(&cfg, &s_sensor) != ESP_OK) return -999.0f;
-        temperature_sensor_enable(s_sensor);
-    }
     float tc = 0;
-    if (temperature_sensor_get_celsius(s_sensor, &tc) != ESP_OK) return -999.0f;
+    if (!snmp_agent_chip_temp_c(&tc)) return -999.0f;
     return tc;
 }
 
@@ -419,6 +416,15 @@ static esp_err_t status_handler(httpd_req_t *req)
         cJSON_AddStringToObject(o, "latest_version",   os.last_version);
         cJSON_AddStringToObject(o, "running_version",  os.running_version);
         cJSON_AddItemToObject(root, "ota", o);
+    }
+
+    /* SNMP agent quick state — drives the System-tab card without a
+     * second round-trip to /api/snmp. */
+    {
+        cJSON *snmp = cJSON_CreateObject();
+        cJSON_AddBoolToObject(snmp, "enabled", snmp_agent_is_enabled());
+        cJSON_AddBoolToObject(snmp, "running", snmp_agent_is_running());
+        cJSON_AddItemToObject(root, "snmp", snmp);
     }
 
     char *body = cJSON_PrintUnformatted(root);
@@ -3332,6 +3338,109 @@ static const httpd_uri_t uri_system_debug_ts_reconnect = {
 static const httpd_uri_t uri_system_save = {
     .uri = "/api/system", .method = HTTP_POST, .handler = system_save_handler,
 };
+
+/* ------------------------------------------------------------------ */
+/* SNMP agent — GET /api/snmp, POST /api/snmp                          */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t snmp_get_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+
+    bool enabled, running;
+    char community[256], sys_name[256], sys_contact[256], sys_location[256];
+    snmp_agent_get_config(&enabled, &running,
+                          community,    sizeof community,
+                          sys_name,     sizeof sys_name,
+                          sys_contact,  sizeof sys_contact,
+                          sys_location, sizeof sys_location);
+
+    cJSON *root = cJSON_CreateObject();
+    if (!root) { httpd_resp_send_500(req); return ESP_FAIL; }
+
+    cJSON_AddBoolToObject  (root, "enabled",       enabled);
+    cJSON_AddBoolToObject  (root, "running",       running);
+    cJSON_AddStringToObject(root, "community",     community);
+    cJSON_AddStringToObject(root, "sys_name",      sys_name);
+    cJSON_AddStringToObject(root, "sys_contact",   sys_contact);
+    cJSON_AddStringToObject(root, "sys_location",  sys_location);
+
+    char *body = cJSON_PrintUnformatted(root);
+    cJSON_Delete(root);
+    if (!body) { httpd_resp_send_500(req); return ESP_FAIL; }
+    httpd_resp_set_type(req, "application/json");
+    esp_err_t err = httpd_resp_sendstr(req, body);
+    free(body);
+    return err;
+}
+
+static esp_err_t snmp_post_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    nvs_save_errors_reset();
+
+    char buf[512];
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON");
+        return ESP_FAIL;
+    }
+
+    /* Seed from current config so omitted fields remain unchanged. */
+    bool cur_enabled, cur_running;
+    char community[256], sys_name[256], sys_contact[256], sys_location[256];
+    snmp_agent_get_config(&cur_enabled, &cur_running,
+                          community,    sizeof community,
+                          sys_name,     sizeof sys_name,
+                          sys_contact,  sizeof sys_contact,
+                          sys_location, sizeof sys_location);
+
+    bool enabled = cur_enabled;
+    const cJSON *j;
+
+    j = cJSON_GetObjectItem(root, "enabled");
+    if (cJSON_IsBool(j)) enabled = cJSON_IsTrue(j);
+
+    j = cJSON_GetObjectItem(root, "community");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(community, sizeof community, "%s", j->valuestring);
+
+    j = cJSON_GetObjectItem(root, "sys_name");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(sys_name, sizeof sys_name, "%s", j->valuestring);
+
+    j = cJSON_GetObjectItem(root, "sys_contact");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(sys_contact, sizeof sys_contact, "%s", j->valuestring);
+
+    j = cJSON_GetObjectItem(root, "sys_location");
+    if (cJSON_IsString(j) && j->valuestring)
+        snprintf(sys_location, sizeof sys_location, "%s", j->valuestring);
+
+    cJSON_Delete(root);
+
+    /* Persist via error-tracking NVS wrappers (feeds send_save_response). */
+    nvs_save_u8 (SNMP_NVS_KEY_EN,       (uint8_t)enabled);
+    nvs_save_str(SNMP_NVS_KEY_COMM,     community);
+    nvs_save_str(SNMP_NVS_KEY_NAME,     sys_name);
+    nvs_save_str(SNMP_NVS_KEY_CONTACT,  sys_contact);
+    nvs_save_str(SNMP_NVS_KEY_LOCATION, sys_location);
+
+    /* Apply live — agent starts, stops or reconfigures in-place. */
+    snmp_agent_apply_live(enabled, community, sys_name, sys_contact, sys_location);
+
+    return send_save_response(req);
+}
+
+static const httpd_uri_t uri_snmp_get = {
+    .uri = "/api/snmp", .method = HTTP_GET,  .handler = snmp_get_handler,
+};
+static const httpd_uri_t uri_snmp_post = {
+    .uri = "/api/snmp", .method = HTTP_POST, .handler = snmp_post_handler,
+};
+
 static const httpd_uri_t uri_system_restart = {
     .uri = "/api/system/restart", .method = HTTP_POST, .handler = system_restart_handler,
 };
@@ -4552,6 +4661,8 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_tailscale_reset_identity);
     httpd_register_uri_handler(server, &uri_system);
     httpd_register_uri_handler(server, &uri_system_save);
+    httpd_register_uri_handler(server, &uri_snmp_get);
+    httpd_register_uri_handler(server, &uri_snmp_post);
     httpd_register_uri_handler(server, &uri_system_restart);
     httpd_register_uri_handler(server, &uri_system_factory_reset);
     httpd_register_uri_handler(server, &uri_system_ota);

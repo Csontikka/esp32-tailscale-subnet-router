@@ -49,6 +49,7 @@
 #include "esp_core_dump.h"
 #include "nvs.h"
 #include "dns_relay.h"
+#include "snmp_agent.h"
 #include "wifi_networks.h"
 #include "dhcp_reservations.h"
 #include "portmap.h"
@@ -683,6 +684,13 @@ void app_main(void)
      * (re-)bind. Loads enable + upstream-override from NVS itself. */
     dns_relay_init();
     dns_relay_set_state_cb(dns_relay_state_cb);
+
+    /* SNMP agent — read-only SNMPv1/v2c on 0.0.0.0:161, off unless the NVS
+     * enable flag is set. Called before the network comes up on purpose: it
+     * also claims the single on-die temperature sensor, which web_ui reads
+     * through snmp_agent_chip_temp_c(). Interfaces are picked up later by
+     * its own 5 s tick, so ordering against WiFi/Ethernet init is free. */
+    snmp_agent_init();
 
     /* If a core dump was saved on the previous boot, extract a one-line
      * summary (task name + PC + first backtrace frames) and persist it

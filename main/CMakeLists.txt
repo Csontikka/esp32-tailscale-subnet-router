@@ -53,7 +53,7 @@ idf_component_register(SRCS "main.c"
                                   esp_http_server json esp_app_format
                                   acl sdlog remote_console
                                   web_password net_diag dhcpserver
-                                  espcoredump dns_relay cli
+                                  espcoredump dns_relay snmp_agent cli
                                   app_update esp_https_ota
                     INCLUDE_DIRS ".")
 
