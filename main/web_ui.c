@@ -3288,6 +3288,47 @@ static const httpd_uri_t uri_system_debug_crash = {
     .uri = "/api/debug/crash", .method = HTTP_POST, .handler = system_debug_crash_handler,
 };
 
+/* POST /api/debug/ts-reconnect {"burst": N} -- test hook for the Tailscale
+ * lifecycle serialization (tailscale_manager.c): spawns N (1..5) connect
+ * tasks 100 ms apart, the way N WiFi got-IP events in quick succession
+ * would. Expected: one connect runs, one is queued behind it, the rest log
+ * "coalescing" and exit, and the tunnel comes back with every peer. Same
+ * guard as /api/debug/crash: authenticated, deliberate, never called by the
+ * SPA. */
+static void reconnect_burst_task(void *arg)
+{
+    int n = (int)(intptr_t)arg;
+    for (int i = 0; i < n; i++) {
+        xTaskCreate(tailscale_connect_task, "ts_connect", 4096, NULL, 5, NULL);
+        vTaskDelay(pdMS_TO_TICKS(100));
+    }
+    vTaskDelete(NULL);
+}
+static esp_err_t system_debug_ts_reconnect_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    char buf[64];
+    int n = 3;
+    if (recv_body(req, buf, sizeof buf, NULL) == ESP_OK) {
+        cJSON *root = cJSON_Parse(buf);
+        if (root) {
+            const cJSON *b = cJSON_GetObjectItem(root, "burst");
+            if (cJSON_IsNumber(b)) n = (int)b->valuedouble;
+            cJSON_Delete(root);
+        }
+    }
+    if (n < 1) n = 1;
+    if (n > 5) n = 5;
+    xTaskCreate(reconnect_burst_task, "ts_burst", 2048, (void *)(intptr_t)n, 5, NULL);
+    httpd_resp_set_type(req, "application/json");
+    char resp[48];
+    snprintf(resp, sizeof resp, "{\"ok\":true,\"burst\":%d}", n);
+    return httpd_resp_sendstr(req, resp);
+}
+static const httpd_uri_t uri_system_debug_ts_reconnect = {
+    .uri = "/api/debug/ts-reconnect", .method = HTTP_POST, .handler = system_debug_ts_reconnect_handler,
+};
+
 static const httpd_uri_t uri_system_save = {
     .uri = "/api/system", .method = HTTP_POST, .handler = system_save_handler,
 };
@@ -4520,6 +4561,7 @@ void web_ui_init(void)
     httpd_register_uri_handler(server, &uri_system_secrets_post);
     httpd_register_uri_handler(server, &uri_system_diag);
     httpd_register_uri_handler(server, &uri_system_debug_crash);
+    httpd_register_uri_handler(server, &uri_system_debug_ts_reconnect);
     httpd_register_uri_handler(server, &uri_auth_status);
     httpd_register_uri_handler(server, &uri_auth_login);
     httpd_register_uri_handler(server, &uri_auth_logout);

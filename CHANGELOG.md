@@ -6,6 +6,25 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+Three fixes ported from [@gszigethy](https://github.com/gszigethy)'s fork ([gszigethy/esp32-tailscale-subnet-router](https://github.com/gszigethy/esp32-tailscale-subnet-router), commits `82aa72b`, `3919040`, `d1f81a6`), found while reviewing his Ethernet-uplink work; the Ethernet parts stay in the fork until there is hardware here to test them on.
+
+### Fixed
+- **Two Tailscale connect tasks could tear down and rebuild the same instance at once.** The connect task is spawned from the STA got-IP handler with nothing serialising it, so a WiFi flap inside the up-to-30 s SNTP wait started a second one; both end in `tailscale_connect()`, which destroys and re-creates the microlink instance — one destroying the handle the other was initialising through (use-after-free), or two instances with the first one's tasks and sockets leaked. A lifecycle mutex now makes connect and disconnect mutually exclusive, and redundant requests collapse to "one in flight, one queued". Reproduced and verified here with a deliberate burst of three connect requests (new test hook `POST /api/debug/ts-reconnect {"burst": N}`).
+- **Long Cookie headers logged the operator out.** The session lookup read the header into 160 bytes and treated truncation as an error, so a browser that also held a couple of unrelated cookies for the same origin (reverse proxy, shared hostname) was silently unauthenticated. Now 512 bytes, truncation tolerated, and the token comparison is bounded to the cookie value and constant-time.
+
+### Changed
+- `ap_connect` / `connect_count` are `volatile`: written by WiFi event handlers, read from the web server and spin-waited on by the telemetry sender; it only worked because `vTaskDelay()` is opaque to the compiler.
+
+Three fixes ported from [@gszigethy](https://github.com/gszigethy)'s fork ([gszigethy/esp32-tailscale-subnet-router](https://github.com/gszigethy/esp32-tailscale-subnet-router), commits `82aa72b`, `3919040`, `d1f81a6`), found while reviewing his Ethernet-uplink work; the Ethernet parts stay in the fork until there is hardware here to test them on.
+
+### Fixed
+- **Two Tailscale connect tasks could tear down and rebuild the same instance at once.** The connect task is spawned from the STA got-IP handler with nothing serialising it, so a WiFi flap inside the up-to-30 s SNTP wait started a second one; both end in `tailscale_connect()`, which destroys and re-creates the microlink instance — one destroying the handle the other was initialising through (use-after-free), or two instances with the first one's tasks and sockets leaked. A lifecycle mutex now makes connect and disconnect mutually exclusive, and redundant requests collapse to "one in flight, one queued". Reproduced and verified here with a deliberate burst of three connect requests (new test hook `POST /api/debug/ts-reconnect {"burst": N}`).
+- **A reconnect could crash the device, and every reconnect leaked ~650 KB of PSRAM** (microlink). Reproduced with the new burst hook: `microlink_stop()` slept a fixed 3 s and then `microlink_destroy()` freed the instance under a coord task still inside the map long-poll (PANIC in `poll_map_update`); and `destroy` never released the long-poll accumulators nor the DERP TLS state — 5.12 → 4.27 → 3.62 → 2.97 MB free over three clean reconnects, about eight WiFi flaps from an out-of-memory router. Every microlink task now signs off before exiting, `stop` waits for all of them (bounded at 15 s, leaking the instance deliberately if one is stuck), and `destroy` frees the buffers and the TLS state. Five bursts of three and three single reconnects on the reference router: no reset, heap steady.
+- **Long Cookie headers logged the operator out.** The session lookup read the header into 160 bytes and treated truncation as an error, so a browser that also held a couple of unrelated cookies for the same origin (reverse proxy, shared hostname) was silently unauthenticated. Now 512 bytes, truncation tolerated, and the token comparison is bounded to the cookie value and constant-time.
+
+### Changed
+- `ap_connect` / `connect_count` are `volatile`: written by WiFi event handlers, read from the web server and spin-waited on by the telemetry sender; it only worked because `vTaskDelay()` is opaque to the compiler.
+
 ## [0.1.24] — 2026-09-10
 
 A subnet router that advertises its subnet out of the box, and a build-reproducibility fix. Device-tested before tagging: manual OTA, the route switch off and on with the advertised set read back from the admin API, six peers direct, an AP client through the router.
