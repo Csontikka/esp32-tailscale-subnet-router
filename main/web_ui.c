@@ -4689,10 +4689,27 @@ static const httpd_uri_t uri_sdlog_erase = {
     .uri = "/api/sdlog/erase", .method = HTTP_POST, .handler = sdlog_erase_handler,
 };
 
-/* Wrapper with the URI-handler signature (no err code) so the same
- * redirect can be both a wildcard URI handler AND a 404 fallback.
- * Wildcard match avoids the "httpd_uri: URI ... not found" WARN
- * spam the 404-only path used to emit. */
+/* Registration is fallible: esp_http_server refuses a handler once
+ * max_uri_handlers is full and returns ESP_ERR_HTTPD_HANDLERS_FULL. Every
+ * call site used to discard that, so the table filling up would silently
+ * drop whichever endpoints were registered last -- those URLs would then 404
+ * and the SPA would fail somewhere far from the cause. Log it loudly and name
+ * the knob instead. */
+static void reg_uri(httpd_handle_t srv, const httpd_uri_t *u)
+{
+    esp_err_t err = httpd_register_uri_handler(srv, u);
+    if (err != ESP_OK) {
+        ESP_LOGE(TAG, "register %s failed: %s (raise conf.max_uri_handlers)",
+                 u->uri, esp_err_to_name(err));
+    }
+}
+
+/* Start the HTTP server and register every endpoint.
+ *
+ * Note on matching: conf.uri_match_fn is httpd_uri_match_wildcard, but that
+ * only widens patterns that themselves end in '*'. uri_index is the exact
+ * path "/", so there is no catch-all and an unregistered path really does
+ * 404. */
 void web_ui_init(void)
 {
     static httpd_handle_t server = NULL;
@@ -4718,7 +4735,11 @@ void web_ui_init(void)
      * instead of WebCrypto's ~100 ms. */
     httpd_config_t conf           = HTTPD_DEFAULT_CONFIG();
     conf.uri_match_fn             = httpd_uri_match_wildcard;
-    conf.max_uri_handlers         = 58;
+    /* Headroom, deliberately. The limit used to equal the number of
+     * handlers registered below, leaving no room: the next endpoint added
+     * would fail to register (now logged by reg_uri, previously silent).
+     * Each unused slot costs one pointer. */
+    conf.max_uri_handlers         = 80;
     conf.stack_size               = 12288;
     /* Without the mbedTLS context cost we can afford the bigger pool
      * the pre-HTTPS web server used. The SPA's first-paint opens 5-7
@@ -4732,64 +4753,64 @@ void web_ui_init(void)
         ESP_LOGE(TAG, "httpd_start failed");
         return;
     }
-    httpd_register_uri_handler(server, &uri_index);
-    httpd_register_uri_handler(server, &uri_status);
-    httpd_register_uri_handler(server, &uri_network);
-    httpd_register_uri_handler(server, &uri_network_save);
-    httpd_register_uri_handler(server, &uri_network_scan);
-    httpd_register_uri_handler(server, &uri_network_scan_result);
-    httpd_register_uri_handler(server, &uri_tools_route);
-    httpd_register_uri_handler(server, &uri_tools_ping);
-    httpd_register_uri_handler(server, &uri_tools_trace);
-    httpd_register_uri_handler(server, &uri_tools_nettest_get);
-    httpd_register_uri_handler(server, &uri_tools_nettest_post);
-    httpd_register_uri_handler(server, &uri_firewall);
-    httpd_register_uri_handler(server, &uri_firewall_add);
-    httpd_register_uri_handler(server, &uri_firewall_delete);
-    httpd_register_uri_handler(server, &uri_firewall_clear);
-    httpd_register_uri_handler(server, &uri_dhcp_reservations);
-    httpd_register_uri_handler(server, &uri_dhcp_reservations_save);
-    httpd_register_uri_handler(server, &uri_dhcp_leases);
-    httpd_register_uri_handler(server, &uri_dhcp_kick);
-    httpd_register_uri_handler(server, &uri_portmap);
-    httpd_register_uri_handler(server, &uri_portmap_save);
-    httpd_register_uri_handler(server, &uri_mac_deny);
-    httpd_register_uri_handler(server, &uri_mac_deny_save);
-    httpd_register_uri_handler(server, &uri_log_raw);
-    httpd_register_uri_handler(server, &uri_log_clear);
-    httpd_register_uri_handler(server, &uri_log_precrash);
-    httpd_register_uri_handler(server, &uri_log_precrash_clear);
-    httpd_register_uri_handler(server, &uri_tailscale);
-    httpd_register_uri_handler(server, &uri_tailscale_save);
-    httpd_register_uri_handler(server, &uri_tailscale_reset_identity);
-    httpd_register_uri_handler(server, &uri_system);
-    httpd_register_uri_handler(server, &uri_system_save);
-    httpd_register_uri_handler(server, &uri_snmp_get);
-    httpd_register_uri_handler(server, &uri_snmp_post);
-    httpd_register_uri_handler(server, &uri_system_restart);
-    httpd_register_uri_handler(server, &uri_system_factory_reset);
-    httpd_register_uri_handler(server, &uri_system_ota);
-    httpd_register_uri_handler(server, &uri_system_ota_poll);
-    httpd_register_uri_handler(server, &uri_system_ota_install);
-    httpd_register_uri_handler(server, &uri_system_secrets_get);
-    httpd_register_uri_handler(server, &uri_system_secrets_post);
-    httpd_register_uri_handler(server, &uri_system_diag);
-    httpd_register_uri_handler(server, &uri_system_debug_crash);
-    httpd_register_uri_handler(server, &uri_system_debug_ts_reconnect);
-    httpd_register_uri_handler(server, &uri_system_debug_radio_get);
-    httpd_register_uri_handler(server, &uri_system_debug_radio_post);
-    httpd_register_uri_handler(server, &uri_auth_status);
-    httpd_register_uri_handler(server, &uri_auth_login);
-    httpd_register_uri_handler(server, &uri_auth_logout);
-    httpd_register_uri_handler(server, &uri_auth_setup);
-    httpd_register_uri_handler(server, &uri_auth_change_password);
-    httpd_register_uri_handler(server, &uri_auth_clear_password);
-    httpd_register_uri_handler(server, &uri_sdlog_status_get);
-    httpd_register_uri_handler(server, &uri_sdlog_status_post);
-    httpd_register_uri_handler(server, &uri_sdlog_list);
-    httpd_register_uri_handler(server, &uri_sdlog_download);
-    httpd_register_uri_handler(server, &uri_sdlog_tail);
-    httpd_register_uri_handler(server, &uri_sdlog_erase);
+    reg_uri(server, &uri_index);
+    reg_uri(server, &uri_status);
+    reg_uri(server, &uri_network);
+    reg_uri(server, &uri_network_save);
+    reg_uri(server, &uri_network_scan);
+    reg_uri(server, &uri_network_scan_result);
+    reg_uri(server, &uri_tools_route);
+    reg_uri(server, &uri_tools_ping);
+    reg_uri(server, &uri_tools_trace);
+    reg_uri(server, &uri_tools_nettest_get);
+    reg_uri(server, &uri_tools_nettest_post);
+    reg_uri(server, &uri_firewall);
+    reg_uri(server, &uri_firewall_add);
+    reg_uri(server, &uri_firewall_delete);
+    reg_uri(server, &uri_firewall_clear);
+    reg_uri(server, &uri_dhcp_reservations);
+    reg_uri(server, &uri_dhcp_reservations_save);
+    reg_uri(server, &uri_dhcp_leases);
+    reg_uri(server, &uri_dhcp_kick);
+    reg_uri(server, &uri_portmap);
+    reg_uri(server, &uri_portmap_save);
+    reg_uri(server, &uri_mac_deny);
+    reg_uri(server, &uri_mac_deny_save);
+    reg_uri(server, &uri_log_raw);
+    reg_uri(server, &uri_log_clear);
+    reg_uri(server, &uri_log_precrash);
+    reg_uri(server, &uri_log_precrash_clear);
+    reg_uri(server, &uri_tailscale);
+    reg_uri(server, &uri_tailscale_save);
+    reg_uri(server, &uri_tailscale_reset_identity);
+    reg_uri(server, &uri_system);
+    reg_uri(server, &uri_system_save);
+    reg_uri(server, &uri_snmp_get);
+    reg_uri(server, &uri_snmp_post);
+    reg_uri(server, &uri_system_restart);
+    reg_uri(server, &uri_system_factory_reset);
+    reg_uri(server, &uri_system_ota);
+    reg_uri(server, &uri_system_ota_poll);
+    reg_uri(server, &uri_system_ota_install);
+    reg_uri(server, &uri_system_secrets_get);
+    reg_uri(server, &uri_system_secrets_post);
+    reg_uri(server, &uri_system_diag);
+    reg_uri(server, &uri_system_debug_crash);
+    reg_uri(server, &uri_system_debug_ts_reconnect);
+    reg_uri(server, &uri_system_debug_radio_get);
+    reg_uri(server, &uri_system_debug_radio_post);
+    reg_uri(server, &uri_auth_status);
+    reg_uri(server, &uri_auth_login);
+    reg_uri(server, &uri_auth_logout);
+    reg_uri(server, &uri_auth_setup);
+    reg_uri(server, &uri_auth_change_password);
+    reg_uri(server, &uri_auth_clear_password);
+    reg_uri(server, &uri_sdlog_status_get);
+    reg_uri(server, &uri_sdlog_status_post);
+    reg_uri(server, &uri_sdlog_list);
+    reg_uri(server, &uri_sdlog_download);
+    reg_uri(server, &uri_sdlog_tail);
+    reg_uri(server, &uri_sdlog_erase);
     ESP_LOGI(TAG, "web UI listening on :%d (HTTP)", conf.server_port);
     /* HTTPS redirect server gone with HTTPS itself — direct HTTP-on-80
      * is now the only listener, so nothing to redirect anywhere. */
