@@ -4689,6 +4689,31 @@ static const httpd_uri_t uri_sdlog_erase = {
     .uri = "/api/sdlog/erase", .method = HTTP_POST, .handler = sdlog_erase_handler,
 };
 
+/* GET /favicon.ico. The SPA declares an inline SVG icon (index.html), but
+ * browsers and bookmark/PWA paths still probe this URL, and with no handler
+ * each probe logged an "httpd_uri: URI ... not found" WARN plus a 404. Serve
+ * the same icon (every current browser accepts SVG here) with a long cache
+ * lifetime so it is asked for once. Deliberately unauthenticated, like "/":
+ * it is a static decoration and the login overlay shows it before a session
+ * exists. */
+static const char FAVICON_SVG[] =
+    "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'>"
+    "<rect width='32' height='32' rx='7' fill='#161a1f'/>"
+    "<path d='M16 6.5c-4.3 0-7.9 1.3-7.9 1.3v3.1S11.7 9.6 16 9.6s7.9 1.3 7.9 "
+    "1.3V7.8S20.3 6.5 16 6.5zM8.1 13.6v3.1S11.7 15.4 16 15.4s7.9 1.3 7.9 "
+    "1.3v-3.1S20.3 12.3 16 12.3s-7.9 1.3-7.9 1.3zm5.9 5.6v6.3h4v-6.3h-4z' "
+    "fill='#4ade80'/></svg>";
+
+static esp_err_t favicon_handler(httpd_req_t *req)
+{
+    httpd_resp_set_type(req, "image/svg+xml");
+    httpd_resp_set_hdr(req, "Cache-Control", "public, max-age=604800, immutable");
+    return httpd_resp_send(req, FAVICON_SVG, sizeof FAVICON_SVG - 1);
+}
+static const httpd_uri_t uri_favicon = {
+    .uri = "/favicon.ico", .method = HTTP_GET, .handler = favicon_handler,
+};
+
 /* Registration is fallible: esp_http_server refuses a handler once
  * max_uri_handlers is full and returns ESP_ERR_HTTPD_HANDLERS_FULL. Every
  * call site used to discard that, so the table filling up would silently
@@ -4709,7 +4734,7 @@ static void reg_uri(httpd_handle_t srv, const httpd_uri_t *u)
  * Note on matching: conf.uri_match_fn is httpd_uri_match_wildcard, but that
  * only widens patterns that themselves end in '*'. uri_index is the exact
  * path "/", so there is no catch-all and an unregistered path really does
- * 404. */
+ * 404 (which is why /favicon.ico needs its own handler above). */
 void web_ui_init(void)
 {
     static httpd_handle_t server = NULL;
@@ -4754,6 +4779,7 @@ void web_ui_init(void)
         return;
     }
     reg_uri(server, &uri_index);
+    reg_uri(server, &uri_favicon);
     reg_uri(server, &uri_status);
     reg_uri(server, &uri_network);
     reg_uri(server, &uri_network_save);
