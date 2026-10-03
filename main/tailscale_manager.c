@@ -84,6 +84,7 @@ static microlink_t *s_microlink = NULL;
  * to guarantee no change is missed; every surplus task was a 30 s SNTP
  * waiter holding 4 KB of stack. */
 static SemaphoreHandle_t s_life_mux = NULL;
+static uint32_t s_life_generation = 0;
 static portMUX_TYPE      s_queue_lock = portMUX_INITIALIZER_UNLOCKED;
 static int               s_connect_queued = 0;
 
@@ -96,6 +97,21 @@ static inline void life_lock(void)
 static inline void life_unlock(void)
 {
     if (s_life_mux) xSemaphoreGive(s_life_mux);
+}
+
+bool tailscale_lifecycle_try_acquire(void)
+{
+    return s_life_mux && xSemaphoreTake(s_life_mux, 0) == pdTRUE;
+}
+
+void tailscale_lifecycle_release(void)
+{
+    life_unlock();
+}
+
+uint32_t tailscale_lifecycle_generation(void)
+{
+    return s_life_generation;
 }
 
 /* Start SNTP if it has not been started yet.  Called by tailscale_connect_task
@@ -267,6 +283,9 @@ const char *tailscale_advertise_routes_effective(void)
 
 static esp_err_t tailscale_connect_locked(void)
 {
+    /* A generation, rather than an address, detects allocator reuse after
+     * reconnect. Readers hold the lifecycle mutex when inspecting it. */
+    ++s_life_generation;
     if (!tailscale_enabled) {
         ESP_LOGI(TAG, "Tailscale not enabled");
         return ESP_ERR_INVALID_STATE;
@@ -353,6 +372,7 @@ void tailscale_disconnect(void)
      * connect's teardown/re-init would double-free s_microlink. */
     life_lock();
     tailscale_connected = false;
+    ++s_life_generation;
     tailscale_tunnel_ip = 0;
     if (s_microlink) {
         sdlog_set_microlink(NULL);   /* detach recorder before freeing the instance */

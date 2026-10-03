@@ -51,6 +51,14 @@ extern uint32_t tailscale_tunnel_ip;     // Tailnet IP, network byte order (0 if
 struct microlink_s;
 struct microlink_s *tailscale_get_microlink(void);
 
+/* Task-context lease for supervisor work. Non-blocking: false while a
+ * connect/disconnect owns the instance (or the mutex was not allocated).
+ * Hold through every handle/netif use, then release. Never call from lwIP
+ * callbacks, which teardown may itself be waiting for. */
+bool tailscale_lifecycle_try_acquire(void);
+void tailscale_lifecycle_release(void);
+uint32_t tailscale_lifecycle_generation(void); /* read while leased */
+
 // Lifecycle
 void init_sntp_if_needed(void);          // Start SNTP once (idempotent); defined in tailscale_manager.c
 void tailscale_init(void);               // Load NVS settings; call once from app_main
