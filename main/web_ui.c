@@ -20,6 +20,7 @@
 #include "cJSON.h"
 #include "lwip/ip4_addr.h"
 #include "web_ui.h"
+#include "peer_dns.h"
 #include "tailscale_config.h"
 #include "tailscale_mtu.h"
 #include "nvs_params.h"
@@ -4770,6 +4771,7 @@ void web_ui_init(void)
     }
     reg_uri(server, &uri_index);
     reg_uri(server, &uri_favicon);
+    peer_dns_register(server);
     reg_uri(server, &uri_status);
     reg_uri(server, &uri_network);
     reg_uri(server, &uri_network_save);

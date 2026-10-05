@@ -62,6 +62,28 @@ Up to **5** networks, tried in order. Per network:
 | **Accept peer subnet routes** | Install routes other nodes advertise. |
 | **LAN bypass when using an exit node** | RFC1918 destinations stay on the local LAN even with an exit node selected. |
 
+### Serving as an exit node
+
+Add `0.0.0.0/0` and `::/0` to the advertised routes, enable **Source-NAT
+advertised routes**, then approve the exit node in the Tailscale admin
+console. The current firmware forwards IPv4 only; IPv6 internet traffic
+is not supported.
+
+Exit-node clients use the advertised PeerAPI DNS service on TCP port 80.
+`POST /dns-query` accepts `application/dns-message`; `GET /dns-query?dns=...`
+accepts an unpadded base64url DNS message. Responses are DNS wire messages
+with `Content-Type: application/dns-message` and `Cache-Control: no-store`.
+Requests require the router's WireGuard destination address and a known
+tailnet peer's source address, rather than a web-admin cookie. Requests
+through the AP or uplink address are rejected. The service uses the
+configured uplink resolver; it must be reachable outside the tunnel.
+Authorization covers known peers; the handler does not interpret
+Tailscale's `autogroup:internet` policy itself.
+POST messages and responses are limited to 4096 bytes; GET also has the
+HTTP server's 512-byte URI limit. Upstream DNS uses TCP with a three-second
+deadline. Invalid requests return 400 or 415, unauthorized requests 403,
+and upstream failures 502 or 504.
+
 ### Tunnel MTU
 
 `Auto` is recommended — 1280, the Tailscale tunnel MTU. Every peer's tun

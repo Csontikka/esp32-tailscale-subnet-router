@@ -325,6 +325,7 @@ static esp_err_t tailscale_connect_locked(void)
         .ctrl_host = (tailscale_login_server && tailscale_login_server[0]) ? tailscale_login_server : NULL,
         .ipn_version = ipn_version_effective(),
         .advertise_routes = tailscale_advertise_routes_effective(),
+        .peer_api_port = 80,
         .netcheck_override_enabled = (tailscale_netcheck_override != 0),
         .netcheck_override_threshold_ms = (uint32_t)tailscale_netcheck_threshold_ms,
         .preferred_derp_region = (uint16_t)tailscale_default_derp_region,
