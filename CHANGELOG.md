@@ -6,6 +6,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+- **Internal RAM no longer collapses while traffic flows through an exit node** (microlink). With an exit node selected, a download by an AP client pushed free internal RAM from about 38 KB down to 4.5–5.5 KB — the pool the WiFi driver's buffers come from — and it only recovered when the transfer ended. Packets arriving from the tunnel were copied into internal RAM before being queued for the WireGuard task, and under load the 32-deep queue held up to ~45 KB of them. The copies now come from PSRAM, as the relay path's already did. Measured on the reference router during a 5 MB download through an exit node: minimum free internal RAM 38.2 KB instead of 4.5–5.5 KB, same download time.
+
 ## [0.1.30] — 2026-10-05
 
 Three fixes: a memory leak that hit any reconnect arriving shortly after a connect, uplinks that live in the CGNAT range (#17, reported by @5queezer), and a race between the route supervisor and a reconnect (#14, contributed by @gszigethy). Device-tested before tagging on the WiFi-only reference router: manual OTA; a reconnect requested right after the tunnel came up, twice, with the heap back at its normal level each time; the web endpoints and the favicon; the route table and an AP client's traffic with the exit node off and with exit node plus LAN bypass on; six peers direct. The CGNAT case was measured with the router's own AP moved into 100.64.4.0/24; a real CGNAT uplink was not available.
