@@ -2162,6 +2162,13 @@
           </div>
 
           <div class="form-group">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="ts-adv-exit"> Offer this router as an exit node
+            </label>
+            <span class="form-hint">Lets tailnet devices send their internet traffic out through this router's uplink (IPv4 only; expect roughly 1 Mbit/s). Advertises the default routes, masquerades the traffic and answers the clients' DNS — approve the exit node in the Tailscale admin console, then pick it on the client. Cannot be combined with using an exit node below. Takes effect after a restart. <span id="ts-adv-exit-state" class="mono"></span></span>
+          </div>
+
+          <div class="form-group">
             <label class="form-label" for="ts-routes">Additional advertised subnet routes</label>
             <textarea class="textarea input" id="ts-routes" placeholder="192.168.1.0/24" style="min-height:5rem; font-family:var(--font-mono); font-size:0.9rem;"></textarea>
             <span class="form-hint">One CIDR per line, on top of the AP subnet above — e.g. the uplink LAN (see Source-NAT below).</span>
@@ -5312,6 +5319,8 @@
           document.getElementById('ts-accept-routes').checked = !!s.accept_routes;
           document.getElementById('ts-lan-bypass').checked    = !!s.lan_bypass;
           document.getElementById('ts-adv-ap').checked        = (s.advertise_ap !== false);
+          document.getElementById('ts-adv-exit').checked      = !!s.advertise_exit_node;
+          document.getElementById('ts-adv-exit-state').textContent = s.exit_server_active ? '(active now)' : (s.advertise_exit_node ? '(saved, not active yet)' : '');
           (function () {
             var eff = (s.effective_routes || '').split('\n')[0];
             document.getElementById('ts-adv-ap-cidr').textContent = (s.advertise_ap !== false && eff) ? eff : '—';
@@ -5481,7 +5490,7 @@
 
     /* Dirty-track and wiring. */
     ['ts_enabled_on', 'ts_enabled_off', 'ts-auth-key', 'ts-hostname', 'ts-login', 'ts-ipn-version',
-     'ts-adv-ap', 'ts-routes', 'ts-max-peers', 'ts-accept-routes', 'ts-lan-bypass', 'ts-snat', 'ts-exit-node'
+     'ts-adv-ap', 'ts-adv-exit', 'ts-routes', 'ts-max-peers', 'ts-accept-routes', 'ts-lan-bypass', 'ts-snat', 'ts-exit-node'
     ].forEach(function (id) {
       var el = document.getElementById(id);
       var ev = (el.tagName === 'SELECT' || el.type === 'checkbox' || el.type === 'radio')
@@ -5616,6 +5625,7 @@
           accept_routes:     document.getElementById('ts-accept-routes').checked,
           lan_bypass:        document.getElementById('ts-lan-bypass').checked,
           advertise_ap:      document.getElementById('ts-adv-ap').checked,
+          advertise_exit_node: document.getElementById('ts-adv-exit').checked,
           snat_subnet_routes: document.getElementById('ts-snat').checked,
           exit_node_ip:      document.getElementById('ts-exit-node').value
         }

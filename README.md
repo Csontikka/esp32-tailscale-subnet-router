@@ -125,6 +125,10 @@ traffic you route through it.)*
 - **Tailscale, the real protocol** — DISCO peer discovery, direct paths
   *and* DERP relay fallback, NAT traversal, MagicDNS-aware, exit-node
   client and gateway. Powered by [microlink](https://github.com/Csontikka/microlink).
+- **Exit-node server** — the router can also *offer* its uplink as an exit
+  node to tailnet devices (off by default, IPv4, about 1 Mbit/s), with the
+  DNS service official clients expect. See
+  [Offering the router as an exit node](docs/CONFIGURATION.md#offering-the-router-as-an-exit-node).
 - **Exit-node aware routing** — AP clients' internet traffic can be
   forced through a chosen Tailscale exit node; when the exit node is
   unreachable the firmware **fails closed** (traffic stops) rather than

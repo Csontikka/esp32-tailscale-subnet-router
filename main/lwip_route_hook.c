@@ -983,7 +983,8 @@ err_t __wrap_ip_napt_forward(struct pbuf *p, struct ip_hdr *iphdr,
          * on the STA side) reverses it automatically. Gated to inp==wg && outp==sta
          * so AP→tunnel / tunnel→AP / AP→WAN paths are untouched (no regression).
          * Runs in the single-threaded tcpip context, so the toggle is race-free. */
-        if (tailscale_snat_subnet_routes && inp && outp && inp != outp &&
+        if ((tailscale_snat_subnet_routes || tailscale_exit_server_active()) &&
+            inp && outp && inp != outp &&
             !ip_in_cgnat(dest_hbo) &&
             inp == find_wg_netif() && netif_is_sta(outp)) {
             uint8_t saved = inp->napt;

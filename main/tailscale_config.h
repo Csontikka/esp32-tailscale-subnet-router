@@ -21,6 +21,7 @@ extern char* tailscale_login_server;     // "" = Tailscale SaaS; otherwise Heads
 extern char* tailscale_ipn_version;      // Hostinfo.IPNVersion reported to the control plane; "" = not reported (default)
 extern char* tailscale_advertise_routes; // Newline-separated CIDRs (e.g. "192.168.4.0/24\n192.168.1.0/24")
 extern int32_t tailscale_advertise_ap;   // 1 (default) = the AP subnet is advertised as a subnet route, computed live from the AP settings; 0 = only the listed routes
+extern int32_t tailscale_advertise_exit_node; // 1 = offer this router as an exit node (see tailscale_exit_server_active)
 extern int32_t tailscale_max_peers;      // Active WG tunnels (microlink default 16, range 1..64)
 extern uint32_t tailscale_exit_node_ip;  // VPN IP (host byte order) of selected exit node; 0 = none
 extern int32_t tailscale_netcheck_override;       // 1 = let netcheck override the chosen default region, 0 = always stay on default
@@ -58,6 +59,18 @@ struct microlink_s *tailscale_get_microlink(void);
 bool tailscale_lifecycle_try_acquire(void);
 void tailscale_lifecycle_release(void);
 uint32_t tailscale_lifecycle_generation(void); /* read while leased */
+
+/* Exit-node SERVER mode: the router offers its uplink to tailnet peers.
+ * Active when the switch is on and no exit node is being USED -- doing both
+ * would send the peers' traffic straight back into the tunnel. While active:
+ * 0.0.0.0/0 and ::/0 are advertised, tunnel->uplink traffic is masqueraded,
+ * and the PeerAPI DNS service is advertised and served so that official
+ * clients can resolve names through the exit node. Fixed for the life of a
+ * boot (both settings are read at init and take effect after a restart). */
+bool tailscale_exit_server_active(void);
+/* PeerAPI listener for the exit-node DNS service. Tailscale clients learn the
+ * port from the node's Hostinfo, so the number itself does not matter. */
+#define TAILSCALE_PEERAPI_PORT 41180
 
 // Lifecycle
 void init_sntp_if_needed(void);          // Start SNTP once (idempotent); defined in tailscale_manager.c

@@ -4,14 +4,14 @@
  */
 #pragma once
 
-#include "esp_http_server.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Register GET and POST /dns-query handlers on the existing web server. */
-void peer_dns_register(httpd_handle_t server);
+/* Start the exit-node DNS service on TAILSCALE_PEERAPI_PORT. Does nothing
+ * unless the router offers itself as an exit node; call once at boot. */
+void peer_dns_start(void);
 
 #ifdef __cplusplus
 }

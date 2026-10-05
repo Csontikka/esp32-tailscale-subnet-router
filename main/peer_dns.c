@@ -1,9 +1,15 @@
 /* DNS-over-HTTP service for Tailscale peers using this node as an exit node.
  *
- * Native Tailscale clients send DNS wire messages to
- * http://<tailnet-ip>:80/dns-query.  This endpoint deliberately shares the
- * existing HTTP listener, but authorises requests from the accepted socket's
- * addresses before it reads headers, query parameters, or a request body.
+ * Native Tailscale clients send DNS wire messages to the PeerAPI address the
+ * node advertises: http://<tailnet-ip>:<TAILSCALE_PEERAPI_PORT>/dns-query.
+ * The service has its own small HTTP server and runs only while the router
+ * offers itself as an exit node: the admin web server handles one request at
+ * a time, and a page load on a client is dozens of lookups, so sharing it
+ * would stall the UI. Requests are authorised from the accepted socket's
+ * addresses before any header, query parameter or body is read.
+ *
+ * Lookups go to the uplink resolver (or the DNS forwarder's configured
+ * upstream): UDP first, TCP when the answer is truncated.
  *
  * SPDX-License-Identifier: MIT
  */
@@ -19,6 +25,8 @@
 #include <strings.h>
 
 #include "dns_relay.h"
+#include "esp_heap_caps.h"
+#include "esp_http_server.h"
 #include "esp_log.h"
 #include "esp_netif.h"
 #include "esp_timer.h"
@@ -31,6 +39,7 @@
 #define PEER_DNS_MAX_B64           (((PEER_DNS_MAX_MESSAGE + 2U) / 3U) * 4U)
 #define PEER_DNS_MAX_QUERY_STRING  (PEER_DNS_MAX_B64 + 32U)
 #define PEER_DNS_TIMEOUT_US        (3000LL * 1000LL)
+#define PEER_DNS_UDP_TIMEOUT_US    (1500LL * 1000LL)
 
 static const char *TAG = "peer_dns";
 
@@ -55,24 +64,7 @@ static esp_err_t send_error(httpd_req_t *req, const char *status,
 
 static bool advertises_exit_node(void)
 {
-    if (tailscale_enabled == 0) return false;
-
-    const char *routes = tailscale_advertise_routes_effective();
-    while (routes && *routes) {
-        while (*routes == ' ' || *routes == '\t' ||
-               *routes == '\r' || *routes == '\n') routes++;
-        const char *end = routes;
-        while (*end && *end != '\r' && *end != '\n') end++;
-        const char *trimmed = end;
-        while (trimmed > routes &&
-               (trimmed[-1] == ' ' || trimmed[-1] == '\t')) trimmed--;
-        if ((size_t)(trimmed - routes) == sizeof("0.0.0.0/0") - 1 &&
-            memcmp(routes, "0.0.0.0/0", sizeof("0.0.0.0/0") - 1) == 0) {
-            return true;
-        }
-        routes = end;
-    }
-    return false;
+    return tailscale_exit_server_active();
 }
 
 /* ESP-IDF's HTTP server listens with PF_INET6 when lwIP IPv6 support is
@@ -212,7 +204,6 @@ static bool resolver_is_usable(uint32_t resolver_nbo)
     if (host == 0 || host == UINT32_MAX) return false;
     if ((host & 0xFF000000U) == 0x00000000U || /* this network */
         (host & 0xFF000000U) == 0x7F000000U || /* loopback */
-        (host & 0xFFC00000U) == 0x64400000U || /* tailnet CGNAT */
         (host & 0xF0000000U) == 0xE0000000U) { /* multicast/reserved */
         return false;
     }
@@ -301,6 +292,87 @@ static upstream_result_t socket_read_all(int fd, uint8_t *data,
         }
     }
     return UPSTREAM_OK;
+}
+
+/* One UDP exchange with `server` (network byte order). A truncated answer is
+ * reported as such so the caller can repeat the question over TCP. */
+static upstream_result_t forward_dns_udp(uint32_t server, const uint8_t *query,
+                                         size_t query_len, uint8_t **response,
+                                         size_t *response_len, bool *truncated)
+{
+    *truncated = false;
+    uint8_t *answer = malloc(PEER_DNS_MAX_MESSAGE);
+    if (!answer) return UPSTREAM_NO_MEMORY;
+
+    int fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP);
+    if (fd < 0) {
+        free(answer);
+        return UPSTREAM_ERROR;
+    }
+    struct sockaddr_in to = {
+        .sin_family = AF_INET,
+        .sin_port = htons(53),
+        .sin_addr.s_addr = server,
+    };
+    upstream_result_t result = UPSTREAM_OK;
+    if (sendto(fd, query, query_len, 0, (struct sockaddr *)&to, sizeof(to)) != (ssize_t)query_len) {
+        result = UPSTREAM_ERROR;
+    }
+    int64_t deadline = esp_timer_get_time() + PEER_DNS_UDP_TIMEOUT_US;
+    ssize_t n = 0;
+    while (result == UPSTREAM_OK) {
+        int ready = wait_for_socket(fd, false, deadline);
+        if (ready <= 0) {
+            result = ready == 0 ? UPSTREAM_TIMEOUT : UPSTREAM_ERROR;
+            break;
+        }
+        struct sockaddr_in from = {0};
+        socklen_t from_len = sizeof(from);
+        n = recvfrom(fd, answer, PEER_DNS_MAX_MESSAGE, 0,
+                     (struct sockaddr *)&from, &from_len);
+        if (n < 0) {
+            result = UPSTREAM_ERROR;
+            break;
+        }
+        /* Only the server we asked, answering this question. */
+        if (from.sin_addr.s_addr == server && n >= 12 &&
+            answer[0] == query[0] && answer[1] == query[1] &&
+            (answer[2] & 0x80U) != 0) {
+            break;
+        }
+    }
+    close(fd);
+    if (result != UPSTREAM_OK) {
+        free(answer);
+        return result;
+    }
+    if (answer[2] & 0x02U) {   /* TC */
+        *truncated = true;
+        free(answer);
+        return UPSTREAM_OK;
+    }
+    *response = answer;
+    *response_len = (size_t)n;
+    return UPSTREAM_OK;
+}
+
+static upstream_result_t forward_dns_tcp(const uint8_t *query, size_t query_len,
+                                         uint8_t **response, size_t *response_len);
+
+/* UDP to the resolver, TCP only for a truncated answer or when UDP got
+ * nothing: one datagram each way is what almost every lookup needs, and a TCP
+ * connection per question tripled the time a client waits. */
+static upstream_result_t forward_dns(const uint8_t *query, size_t query_len,
+                                     uint8_t **response, size_t *response_len)
+{
+    uint32_t resolver = select_resolver();
+    if (resolver == 0) return UPSTREAM_ERROR;
+    bool truncated = false;
+    upstream_result_t result = forward_dns_udp(resolver, query, query_len,
+                                               response, response_len, &truncated);
+    if (result == UPSTREAM_OK && !truncated) return UPSTREAM_OK;
+    if (result == UPSTREAM_NO_MEMORY) return result;
+    return forward_dns_tcp(query, query_len, response, response_len);
 }
 
 static upstream_result_t forward_dns_tcp(const uint8_t *query, size_t query_len,
@@ -397,8 +469,8 @@ static esp_err_t send_dns_response(httpd_req_t *req, const uint8_t *query,
 {
     uint8_t *response = NULL;
     size_t response_len = 0;
-    upstream_result_t result = forward_dns_tcp(query, query_len,
-                                               &response, &response_len);
+    upstream_result_t result = forward_dns(query, query_len,
+                                           &response, &response_len);
     if (result == UPSTREAM_TIMEOUT) {
         return send_error(req, "504 Gateway Timeout", "DNS upstream timed out");
     }
@@ -528,8 +600,27 @@ static esp_err_t peer_dns_post_handler(httpd_req_t *req)
     return err;
 }
 
-void peer_dns_register(httpd_handle_t server)
+void peer_dns_start(void)
 {
+    static httpd_handle_t server = NULL;
+    if (server || !tailscale_exit_server_active()) return;
+
+    httpd_config_t conf = HTTPD_DEFAULT_CONFIG();
+    conf.server_port      = TAILSCALE_PEERAPI_PORT;
+    conf.ctrl_port        = (uint16_t)(conf.ctrl_port + 1);   /* the admin server owns the default */
+    conf.max_uri_handlers = 2;
+    conf.max_open_sockets = 3;
+    conf.lru_purge_enable = true;
+    conf.stack_size       = 6144;
+    /* PSRAM stack: internal RAM is the scarce pool on this board. */
+    conf.task_caps        = MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT;
+    if (httpd_start(&server, &conf) != ESP_OK) {
+        ESP_LOGE(TAG, "exit-node DNS service failed to start on port %d",
+                 TAILSCALE_PEERAPI_PORT);
+        server = NULL;
+        return;
+    }
+
     const httpd_uri_t get = {
         .uri = "/dns-query",
         .method = HTTP_GET,
@@ -548,4 +639,5 @@ void peer_dns_register(httpd_handle_t server)
     if (err != ESP_OK) {
         ESP_LOGE(TAG, "register POST /dns-query failed: %s", esp_err_to_name(err));
     }
+    ESP_LOGW(TAG, "exit-node DNS service on port %d", TAILSCALE_PEERAPI_PORT);
 }

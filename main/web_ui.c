@@ -2625,6 +2625,15 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
     cJSON_AddBoolToObject  (settings, "snat_subnet_routes",      tailscale_snat_subnet_routes != 0);
     cJSON_AddBoolToObject  (settings, "advertise_ap",            tailscale_advertise_ap != 0);
     {
+        /* The saved switch (it takes effect after a restart, like the exit
+         * node selection) and what this boot is actually doing. */
+        int32_t saved_adv_exit = tailscale_advertise_exit_node;
+        (void)nvs_param_get_int("ts_adv_exit", &saved_adv_exit);
+        cJSON_AddBoolToObject(settings, "advertise_exit_node", saved_adv_exit != 0);
+        cJSON_AddBoolToObject(settings, "exit_server_active",  tailscale_exit_server_active());
+        cJSON_AddNumberToObject(settings, "peerapi_port",      TAILSCALE_PEERAPI_PORT);
+    }
+    {
         const char *eff = tailscale_advertise_routes_effective();
         cJSON_AddStringToObject(settings, "effective_routes", eff ? eff : "");
     }
@@ -2821,6 +2830,25 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
      * the credential. */
     const cJSON *s = cJSON_GetObjectItem(root, "settings");
     if (cJSON_IsObject(s)) {
+        /* Offering an exit node and using one at the same time would send the
+         * peers' traffic straight back into the tunnel. Work out what both
+         * settings would be after this save and refuse the combination before
+         * anything is written. */
+        {
+            int32_t adv = 0, exit_hbo = 0;
+            (void)nvs_param_get_int("ts_adv_exit", &adv);
+            (void)nvs_param_get_int("ts_exit_node", &exit_hbo);
+            const cJSON *adv_j  = cJSON_GetObjectItem(s, "advertise_exit_node");
+            const cJSON *exit_j = cJSON_GetObjectItem(s, "exit_node_ip");
+            if (cJSON_IsBool(adv_j)) adv = cJSON_IsTrue(adv_j) ? 1 : 0;
+            if (cJSON_IsString(exit_j)) exit_hbo = exit_j->valuestring[0] ? 1 : 0;
+            if (adv && exit_hbo) {
+                cJSON_Delete(root);
+                httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST,
+                                    "cannot offer an exit node and use one at the same time");
+                return ESP_FAIL;
+            }
+        }
         const cJSON *enabled = cJSON_GetObjectItem(s, "enabled");
         if (cJSON_IsBool(enabled)) {
             nvs_save_int("ts_enabled", cJSON_IsTrue(enabled) ? 1 : 0);
@@ -2883,6 +2911,8 @@ static esp_err_t tailscale_save_handler(httpd_req_t *req)
             { cJSON_GetObjectItem(s, "accept_routes"),     (void *)"ts_acpt_rt" },
             { cJSON_GetObjectItem(s, "snat_subnet_routes"), (void *)"ts_snat_sr" },
             { cJSON_GetObjectItem(s, "advertise_ap"),      (void *)"ts_adv_ap"  },
+            /* persisted only: read at init, applies after the restart */
+            { cJSON_GetObjectItem(s, "advertise_exit_node"), (void *)"ts_adv_exit" },
         };
         for (size_t i = 0; i < sizeof bool_keys / sizeof bool_keys[0]; i++) {
             const cJSON *v = bool_keys[i][0];
@@ -4771,7 +4801,7 @@ void web_ui_init(void)
     }
     reg_uri(server, &uri_index);
     reg_uri(server, &uri_favicon);
-    peer_dns_register(server);
+    peer_dns_start();
     reg_uri(server, &uri_status);
     reg_uri(server, &uri_network);
     reg_uri(server, &uri_network_save);
