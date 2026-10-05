@@ -61,7 +61,8 @@ void tailscale_lifecycle_release(void);
 uint32_t tailscale_lifecycle_generation(void); /* read while leased */
 
 /* Exit-node SERVER mode: the router offers its uplink to tailnet peers.
- * Active when the switch is on and no exit node is being USED -- doing both
+ * Active when the switch is on (or 0.0.0.0/0 is typed into the additional routes,
+ * the pre-switch way of doing it) and no exit node is being USED -- doing both
  * would send the peers' traffic straight back into the tunnel. While active:
  * 0.0.0.0/0 and ::/0 are advertised, tunnel->uplink traffic is masqueraded,
  * and the PeerAPI DNS service is advertised and served so that official

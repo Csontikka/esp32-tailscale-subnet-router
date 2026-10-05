@@ -6,6 +6,13 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Fixed
+- **A default route typed in by hand now brings the exit-node DNS service with it** (#18, reported by [@5queezer](https://github.com/5queezer)). Before 0.1.31 the way to offer an exit node was to add `0.0.0.0/0` to the additional routes. A router configured like that kept offering the exit node after upgrading, but the DNS service and the automatic NAT hung on the new switch, so clients reached addresses and resolved nothing until the switch was found and the router restarted. A hand-listed `0.0.0.0/0` now counts as the switch being on.
+- An out-of-memory start of the Tailscale instance no longer ends in an assert and a reboot, and a stop request arriving while the instance waits for its relay connection is noticed at once instead of after the 15 s wait (microlink; both found in the ESPHome port, neither reproducible on the reference router).
+
+### Changed
+- Exit-node throughput is described as what it is: setup-dependent. The reference bench gives about 0.9 Mbit/s whatever the number of parallel connections, with the router's processor about a quarter busy; a contributor measured about 6 Mbit/s with a phone. 0.1.31's notes and UI text said "about 1 Mbit/s" as if it were a property of the firmware.
+
 ## [0.1.31] — 2026-10-05
 
 A new mode and a memory fix. The router can now offer its own uplink as an exit node to tailnet devices, with the DNS service official Tailscale clients expect (#18; the DNS service and the microlink change behind it are by @5queezer). And traffic through an exit node no longer drains internal RAM. Device-tested before tagging on the WiFi-only reference router with an official client (Tailscale 1.102 on Linux) using it as exit node: the client selects the router, leaves through its uplink address, resolves names and loads sites by name; 5 MB in about 45 s (roughly 0.9 Mbit/s); 80 name lookups four at a time with the admin UI still answering within a fifth of a second; the DNS service refuses callers from the uplink side and its port is closed when the mode is off. Regression: web endpoints, using an exit node with LAN bypass, a reconnect right after boot (heap back to normal), peers direct.

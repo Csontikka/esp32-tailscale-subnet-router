@@ -80,13 +80,22 @@ What to expect:
 
 - **IPv4 only.** `::/0` is announced because Tailscale wants the pair; IPv6
   traffic from a client is not carried.
-- **About 1 Mbit/s** on a direct path (measured: 5 MB in 45 s), less when
-  the path is relayed. Fine for browsing and API calls, not for video.
+- **A few Mbit/s at best, and it depends on the setup.** On the reference
+  bench an official Linux client gets about 0.9 Mbit/s over a direct path
+  (5 MB in 45 s), and more parallel connections do not add to that; a
+  contributor measured about 6 Mbit/s with a phone on 5G (fast.com, several
+  connections). The router's processor is not the limit in the bench case
+  (about a quarter busy), so the WiFi link and the path between the two
+  ends decide. Less when the path is relayed. Fine for browsing and API
+  calls; do not plan video around it.
 - It **cannot be combined with using an exit node** (the setting below):
   the peers' traffic would go straight back into the tunnel. The save is
   refused if both are set.
 - With a selected exit node the same combination is ignored at boot, the
   exit node in use wins.
+- A `0.0.0.0/0` typed into the additional routes (how it was done before
+  the switch existed) counts as the switch being on, so an upgraded router
+  that already offered an exit node also gets the DNS service and the NAT.
 
 The DNS service is a small HTTP server on its own port (41180; clients
 learn it from the node's Hostinfo). It runs only in this mode and answers

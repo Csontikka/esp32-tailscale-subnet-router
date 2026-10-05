@@ -256,10 +256,30 @@ static bool ap_cidr_from_nvs(char *out, size_t out_size)
  * months). Advertising is harmless on its own: peers use the route only
  * after it is approved in the admin console. The AP CIDR follows the AP
  * settings, so changing the AP address needs no route edit any more. */
+/* Is 0.0.0.0/0 one of the hand-typed routes? Before the switch existed that
+ * was the way to offer an exit node, and such a configuration keeps offering
+ * one after an upgrade -- so it has to bring the DNS service and the NAT
+ * with it, or clients reach addresses but cannot resolve a single name. */
+static bool manual_routes_offer_exit(void)
+{
+    static const char def[] = "0.0.0.0/0";
+    const char *p = tailscale_advertise_routes ? tailscale_advertise_routes : "";
+    while (*p) {
+        while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+        const char *end = p;
+        while (*end && *end != '\r' && *end != '\n') end++;
+        const char *trimmed = end;
+        while (trimmed > p && (trimmed[-1] == ' ' || trimmed[-1] == '\t')) trimmed--;
+        if ((size_t)(trimmed - p) == sizeof def - 1 && memcmp(p, def, sizeof def - 1) == 0) return true;
+        p = end;
+    }
+    return false;
+}
+
 bool tailscale_exit_server_active(void)
 {
-    return tailscale_enabled != 0 && tailscale_advertise_exit_node != 0 &&
-           tailscale_exit_node_ip == 0;
+    return tailscale_enabled != 0 && tailscale_exit_node_ip == 0 &&
+           (tailscale_advertise_exit_node != 0 || manual_routes_offer_exit());
 }
 
 /* Append one route to the newline-separated list unless it is already there. */

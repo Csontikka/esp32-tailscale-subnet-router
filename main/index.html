@@ -2165,7 +2165,7 @@
             <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
               <input type="checkbox" id="ts-adv-exit"> Offer this router as an exit node
             </label>
-            <span class="form-hint">Lets tailnet devices send their internet traffic out through this router's uplink (IPv4 only; expect roughly 1 Mbit/s). Advertises the default routes, masquerades the traffic and answers the clients' DNS — approve the exit node in the Tailscale admin console, then pick it on the client. Cannot be combined with using an exit node below. Takes effect after a restart. <span id="ts-adv-exit-state" class="mono"></span></span>
+            <span class="form-hint">Lets tailnet devices send their internet traffic out through this router's uplink (IPv4 only; roughly 1–6 Mbit/s depending on the link). Advertises the default routes, masquerades the traffic and answers the clients' DNS — approve the exit node in the Tailscale admin console, then pick it on the client. Cannot be combined with using an exit node below. Takes effect after a restart (the banner at the top offers one after saving). A <span class="mono">0.0.0.0/0</span> listed by hand in the additional routes counts as this switch being on. <span id="ts-adv-exit-state" class="mono"></span></span>
           </div>
 
           <div class="form-group">
