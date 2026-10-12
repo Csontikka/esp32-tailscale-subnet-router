@@ -189,6 +189,8 @@ snmpget  -v2c -c <community> <device-ip> 1.3.6.1.2.1.99.1.1.1.4.1  # temperature
 |---|---|
 | **Device name** | Friendly name shown in the UI header and `/api`. |
 | **Timezone** | Device TZ; a real change flags a pending reboot. |
+| **TX power** | 0 = IDF default (≈ 20 dBm), 8–84 in 0.25 dBm steps. Applied live and at boot. |
+| **WiFi power save** | On by default (modem sleep, the lower-current choice). With it on, traffic sent *to* the router waits for the uplink AP's next beacon: LAN ping 1–135 ms (average about 50) on the reference router against 1–35 ms (average about 8) with it off, and the same shift on tunnel round trips. Throughput is the same either way. Applied live and at boot. |
 | **Anonymous telemetry** | On by default; one toggle in the **About** card opts out. Daily anonymous hash + counters (see README → Telemetry). |
 | **SD card logging** | Enable + per-sink (console / SD) log level; the on-device flight recorder. |
 | **Firmware update (OTA)** | Manual upload, or polled auto-install window. Optional **beta channel** also offers GitHub pre-releases (off by default = stable releases only). |

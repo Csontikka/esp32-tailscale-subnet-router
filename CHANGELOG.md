@@ -6,6 +6,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+### Added
+- **WiFi power save switch** (System card, on by default = unchanged behaviour). With modem sleep on, traffic sent to the router waits for the uplink AP's next beacon; the reference router answers a LAN ping in 1–135 ms (average about 50) with it on and in 1–35 ms (average about 8) with it off, with the same shift on tunnel round trips and no change in throughput. Off draws more current, so it is a choice.
+
 ## [0.1.32] — 2026-10-12
 
 Fixes, one of them a throughput fix. Logging sat on the WireGuard data path: with the console at INFO it capped the tunnel at about 0.9 Mbit/s (which 0.1.31's notes reported as the bench figure), and a 10-second state dump at WARN stalled the WireGuard task for a third of a second on every build. A `0.0.0.0/0` typed into the additional routes — the pre-0.1.31 way to offer an exit node — now counts as the exit-node switch, so such a router keeps its DNS service and NAT after upgrading (#18). Two microlink guards found in the ESPHome port. Device-tested before tagging on the WiFi-only reference router: manual OTA; an official client (Tailscale 1.102 on Linux) using the router as exit node downloads 5 MB in 8.5 s (4.9 Mbit/s, 5.7 on four connections; 0.87 before); using an exit node with LAN bypass from an AP client; the web endpoints; peers direct.

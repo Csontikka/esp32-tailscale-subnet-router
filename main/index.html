@@ -2612,6 +2612,12 @@
             </div>
             <span class="form-hint">Lower values cut interference at the cost of AP range. <strong>80 ≈ 20 dBm</strong> is the IDF default. Applied live + at next boot.</span>
           </div>
+          <div class="form-group" style="margin:0.25rem 0 0 0;">
+            <label style="display:flex; align-items:center; gap:0.5rem; cursor:pointer;">
+              <input type="checkbox" id="sys-wifi-ps"> WiFi power save (modem sleep)
+            </label>
+            <span class="form-hint">On by default and the lower-current choice. With it on, traffic sent <em>to</em> the router waits for the uplink AP's next beacon: on the reference router that is a LAN ping of 1–135 ms (average about 50) against 1–35 ms (average about 8) with it off, and the same shift on tunnel round trips. Throughput is the same either way. Applied live + at next boot.</span>
+          </div>
           <div class="stat-row"><span class="stat-label">Firmware version</span><span class="stat-value mono" id="sys-version">—</span></div>
           <div class="stat-row"><span class="stat-label">Build tag</span>        <span class="stat-value mono" id="sys-build-tag" title="—">—</span></div>
           <div class="stat-row"><span class="stat-label">ESP-IDF</span>          <span class="stat-value mono" id="sys-idf">—</span></div>
@@ -6248,6 +6254,7 @@
                           : (typeof d.tx_power === 'number' ? d.tx_power : 0);
           document.getElementById('sys-tx-power').value      = txShown || 0;
           updateTxPowerDbm(txShown);
+          document.getElementById('sys-wifi-ps').checked = (d.wifi_power_save !== false);
           document.getElementById('sys-device-name-save').disabled = true;
           document.getElementById('sys-version').textContent = d.version || '—';
           var builtStr = ((d.build_date || '') + ' ' + (d.build_time || '')).trim() || '—';
@@ -6567,10 +6574,10 @@
       xhr.send(f);
     });
 
-    /* Device-card dirty-track + save — covers Friendly name, Timezone
-     * and TX power since they share one Save button. */
-    ['sys-device-name', 'sys-tz', 'sys-tx-power'].forEach(function (id) {
-      document.getElementById(id).addEventListener('input', function () {
+    /* Device-card dirty-track + save — covers Friendly name, Timezone,
+     * TX power and WiFi power save since they share one Save button. */
+    ['sys-device-name', 'sys-tz', 'sys-tx-power', 'sys-wifi-ps'].forEach(function (id) {
+      document.getElementById(id).addEventListener(id === 'sys-wifi-ps' ? 'change' : 'input', function () {
         document.getElementById('sys-device-name-save').disabled = false;
         if (id === 'sys-tx-power') updateTxPowerDbm(this.value);
       });
@@ -7010,12 +7017,13 @@
       var name     = document.getElementById('sys-device-name').value.trim();
       var tz       = document.getElementById('sys-tz').value.trim();
       var tx_power = parseInt(document.getElementById('sys-tx-power').value, 10) || 0;
+      var wifi_ps  = document.getElementById('sys-wifi-ps').checked;
       var btn      = this;
       btn.disabled = true;
       apiFetch('/api/system', {
         method:  'POST',
         headers: { 'Content-Type': 'application/json' },
-        body:    JSON.stringify({ device_name: name, tz: tz, tx_power: tx_power })
+        body:    JSON.stringify({ device_name: name, tz: tz, tx_power: tx_power, wifi_power_save: wifi_ps })
       })
         .then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
         .then(function (resp) {

@@ -817,6 +817,22 @@ void app_main(void)
     /* Start WiFi */
     ESP_ERROR_CHECK(esp_wifi_start() );
 
+    /* WiFi power save. The IDF default (modem sleep, WIFI_PS_MIN_MODEM)
+     * stays unless NVS "wifi_ps" is 0: with modem sleep the station only
+     * listens at DTIM beacons, so anything sent TO the router waits for
+     * the next one -- measured on the reference router: LAN ping 1-135 ms
+     * (average ~50) against 1-35 ms (average ~8) with power save off, and
+     * the same shift on the tunnel RTT. Throughput does not change. Off
+     * costs more current, which is why it is a choice and not the default. */
+    {
+        uint8_t ps = 1;
+        nvs_param_get_u8("wifi_ps", &ps);
+        if (ps == 0) {
+            esp_wifi_set_ps(WIFI_PS_NONE);
+            ESP_LOGI("main", "WiFi power save off (NVS wifi_ps=0)");
+        }
+    }
+
     /* Optional TX-power override. NVS "tx_pwr" is a u8 in 0.25 dBm
      * steps (matches esp_wifi_set_max_tx_power): valid range is 8..84
      * (≈ 2..21 dBm). 0/unset means leave the IDF default in place. */
