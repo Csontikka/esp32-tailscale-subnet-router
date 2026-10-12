@@ -80,14 +80,17 @@ What to expect:
 
 - **IPv4 only.** `::/0` is announced because Tailscale wants the pair; IPv6
   traffic from a client is not carried.
-- **A few Mbit/s at best, and it depends on the setup.** On the reference
-  bench an official Linux client gets about 0.9 Mbit/s over a direct path
-  (5 MB in 45 s), and more parallel connections do not add to that; a
-  contributor measured about 6 Mbit/s with a phone on 5G (fast.com, several
-  connections). The router's processor is not the limit in the bench case
-  (about a quarter busy), so the WiFi link and the path between the two
-  ends decide. Less when the path is relayed. Fine for browsing and API
-  calls; do not plan video around it.
+- **Roughly 5–6 Mbit/s, and it depends on the setup.** On the reference
+  bench an official Linux client gets about 5 Mbit/s on one connection and
+  about 6 on four over a direct path (5 MB in 8 s); a contributor measured
+  6.3 Mbit/s with a phone on 5G. Less when the path is relayed or when the
+  WiFi link to the uplink is poor. Fine for browsing and API calls; do not
+  plan video around it.
+- **Leave the console log level at WARN** (System → SD card logging) unless
+  you are reading the log. Console output is written synchronously on the
+  115200-baud UART, so an INFO console costs the tasks that log their
+  share of the wire time; before 0.1.32 that alone capped the tunnel at
+  about 0.9 Mbit/s. The SD recorder's own level is not affected.
 - It **cannot be combined with using an exit node** (the setting below):
   the peers' traffic would go straight back into the tunnel. The save is
   refused if both are set.
