@@ -6,6 +6,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.33] — 2026-10-13
+
+One setting. The WiFi modem-sleep that the ESP-IDF enables by default can now be switched off on the System card for routers where latency matters more than current draw; the default stays on, so nothing changes on upgrade. Device-tested before tagging on the WiFi-only reference router: manual OTA; the switch off and on with a reboot in between (setting persists, LAN ping average drops from about 50 ms to under 10 ms and comes back); the web endpoints; an official client using the router as exit node; peers direct.
+
 ### Added
 - **WiFi power save switch** (System card, on by default = unchanged behaviour). With modem sleep on, traffic sent to the router waits for the uplink AP's next beacon; the reference router answers a LAN ping in 1–135 ms (average about 50) with it on and in 1–35 ms (average about 8) with it off, with the same shift on tunnel round trips and no change in throughput. Off draws more current, so it is a choice.
 
