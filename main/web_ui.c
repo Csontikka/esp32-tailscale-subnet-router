@@ -2695,8 +2695,8 @@ static esp_err_t tailscale_handler(httpd_req_t *req)
                  * bare number. NULL (region 0 / not in DERPMap yet) → omit. */
                 const char *_hrn = microlink_get_derp_region_name(mlh, diag.derp_home_region);
                 if (_hrn) cJSON_AddStringToObject(runtime, "derp_home_region_name", _hrn);
-                microlink_derp_rtt_t _rtts[16];
-                int _nr = microlink_get_derp_rtts(mlh, _rtts, 16);
+                microlink_derp_rtt_t _rtts[32];   /* ML_MAX_DERP_REGIONS; the count passed below must not exceed this */
+                int _nr = microlink_get_derp_rtts(mlh, _rtts, 32);
                 cJSON *derp_rtts = cJSON_CreateArray();
                 for (int _i = 0; _i < _nr; _i++) {
                     cJSON *e = cJSON_CreateObject();
