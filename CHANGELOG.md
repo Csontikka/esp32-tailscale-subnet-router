@@ -6,6 +6,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ## [Unreleased]
 
+## [0.1.35] — 2026-10-13
+
+Two security fixes and a control-plane fix, all in microlink, from the second pass over the other maintained microlink forks (TimelyToga, TailTiny). Two tasks could encrypt WireGuard packets under the same nonce; the coordinator's Noise handshake reply was not bounds-checked; and a control session the server had closed went unnoticed until the 120 s watchdog, which showed the node offline in the admin console for up to two minutes at each connection rotation. Device-tested before tagging on the WiFi-only reference router: manual OTA; A/B/A throughput against 0.1.34 with no difference; an official client (Tailscale 1.102 on Linux) using the router as exit node; using an exit node with LAN bypass from an AP client; no spurious control reconnect over the rounds; the web endpoints; peers direct.
+
 ### Security
 - **Two tasks can no longer encrypt WireGuard packets under the same nonce** (microlink, wireguard-lwip). Transport packets are encrypted from the TCP/IP thread (forwarded traffic) and from the WireGuard manager task (keepalives from the receive path and the periodic timer). The send counter is the AEAD nonce; two packets reading it before either incremented it would have been encrypted under the same nonce, which breaks ChaCha20-Poly1305. One mutex now covers "read counter, encrypt, increment". Found in the TimelyToga fork.
 - **The coordinator's Noise handshake reply is bounds-checked** (microlink). The reply's 3-byte header was read into a buffer that could be 1–2 bytes long, and a reply longer than the 48 bytes the Noise IK pattern allows was decrypted into a null buffer. Both are refused now. Found in the TimelyToga fork.
