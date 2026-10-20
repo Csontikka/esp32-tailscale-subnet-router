@@ -358,10 +358,16 @@ static esp_err_t tailscale_connect_locked(void)
          * would read freed memory. Clear the handle first to close that
          * teardown window (paired with microlink_stop's socket unblocking,
          * the fix for the 2026-05-26 ml_derp_tx teardown crash). */
-        sdlog_set_microlink(NULL);
-        microlink_stop(s_microlink);
-        microlink_destroy(s_microlink);
+        /* The same holds for every other reader -- web UI, telemetry, peer
+         * DNS -- which fetch the handle through tailscale_get_microlink()
+         * without the lifecycle lock: the handle goes NULL before the
+         * teardown, not after it, so none of them can pick up an instance
+         * that is being stopped and freed. */
+        struct microlink_s *old = s_microlink;
         s_microlink = NULL;
+        sdlog_set_microlink(NULL);
+        microlink_stop(old);
+        microlink_destroy(old);
     }
 
     microlink_config_t cfg = {
@@ -431,10 +437,11 @@ void tailscale_disconnect(void)
     ++s_life_generation;
     tailscale_tunnel_ip = 0;
     if (s_microlink) {
+        struct microlink_s *old = s_microlink;
+        s_microlink = NULL;          /* readers see no instance before it is torn down */
         sdlog_set_microlink(NULL);   /* detach recorder before freeing the instance */
-        microlink_stop(s_microlink);
-        microlink_destroy(s_microlink);
-        s_microlink = NULL;
+        microlink_stop(old);
+        microlink_destroy(old);
     }
     life_unlock();
     ESP_LOGI(TAG, "Tailscale stopped");

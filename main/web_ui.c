@@ -3471,6 +3471,38 @@ static esp_err_t system_debug_radio_post_handler(httpd_req_t *req)
 static const httpd_uri_t uri_system_debug_radio_get = {
     .uri = "/api/debug/radio", .method = HTTP_GET, .handler = system_debug_radio_get_handler,
 };
+/* POST /api/debug/wg-tx {"copyfree": bool, "reset": bool} — WireGuard TX path A/B on a live device:
+ * switch between encrypt-in-place (copy-free) and the copying path, and reset the cost counters
+ * that /api/system/diag reports (memory.wg_tx_pkts / wg_tx_cycles). */
+static esp_err_t system_debug_wg_tx_post_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    char buf[128];
+    if (recv_body(req, buf, sizeof buf, NULL) != ESP_OK) return ESP_FAIL;
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) { httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid JSON"); return ESP_FAIL; }
+    esp_err_t err = ESP_OK;
+    const cJSON *cf = cJSON_GetObjectItem(root, "copyfree");
+    if (cJSON_IsBool(cf)) {
+        struct microlink_s *mlh = tailscale_get_microlink();
+        err = mlh ? microlink_set_wg_tx_copyfree(mlh, cJSON_IsTrue(cf)) : ESP_ERR_INVALID_STATE;
+    }
+    const cJSON *rs = cJSON_GetObjectItem(root, "reset");
+    if (cJSON_IsTrue(rs)) microlink_get_wg_tx_profile(NULL, NULL, true);
+    cJSON_Delete(root);
+    uint32_t pk = 0; uint64_t us = 0; microlink_get_wg_tx_profile(&pk, &us, false);
+    struct microlink_s *mlh2 = tailscale_get_microlink();
+    httpd_resp_set_type(req, "application/json");
+    char resp[160];
+    snprintf(resp, sizeof resp, "{\"ok\":%s,\"copyfree\":%s,\"pkts\":%lu,\"us\":%llu}",
+             err == ESP_OK ? "true" : "false", (mlh2 && microlink_get_wg_tx_copyfree(mlh2)) ? "true" : "false",
+             (unsigned long)pk, (unsigned long long)us);
+    return httpd_resp_sendstr(req, resp);
+}
+static const httpd_uri_t uri_system_debug_wg_tx_post = {
+    .uri = "/api/debug/wg-tx", .method = HTTP_POST, .handler = system_debug_wg_tx_post_handler,
+};
+
 static const httpd_uri_t uri_system_debug_radio_post = {
     .uri = "/api/debug/radio", .method = HTTP_POST, .handler = system_debug_radio_post_handler,
 };
@@ -3907,6 +3939,13 @@ static esp_err_t system_diag_handler(httpd_req_t *req)
         cJSON_AddNumberToObject(m, "spiram_free",       heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
         cJSON_AddNumberToObject(m, "spiram_min_free",   heap_caps_get_minimum_free_size(MALLOC_CAP_SPIRAM));
         cJSON_AddNumberToObject(m, "spiram_largest",    heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM));
+        {
+            uint32_t _pk = 0; uint64_t _us = 0; microlink_get_wg_tx_profile(&_pk, &_us, false);
+            cJSON_AddNumberToObject(m, "wg_tx_pkts", _pk);
+            cJSON_AddNumberToObject(m, "wg_tx_us",   (double)_us);
+            struct microlink_s *_mlh = tailscale_get_microlink();
+            cJSON_AddBoolToObject(m, "wg_tx_copyfree", _mlh ? microlink_get_wg_tx_copyfree(_mlh) : false);
+        }
         cJSON_AddItemToObject(root, "memory", m);
     }
 
@@ -4862,6 +4901,7 @@ void web_ui_init(void)
     reg_uri(server, &uri_system_debug_ts_reconnect);
     reg_uri(server, &uri_system_debug_radio_get);
     reg_uri(server, &uri_system_debug_radio_post);
+    reg_uri(server, &uri_system_debug_wg_tx_post);
     reg_uri(server, &uri_auth_status);
     reg_uri(server, &uri_auth_login);
     reg_uri(server, &uri_auth_logout);
