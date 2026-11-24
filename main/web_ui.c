@@ -3503,6 +3503,22 @@ static const httpd_uri_t uri_system_debug_wg_tx_post = {
     .uri = "/api/debug/wg-tx", .method = HTTP_POST, .handler = system_debug_wg_tx_post_handler,
 };
 
+/* POST /api/debug/ts-rebind -- bench hook: reconnect the control connection and the relay
+ * while the tunnel instance stays up (microlink_rebind), unlike /api/debug/ts-reconnect,
+ * which stops and restarts everything. Exercises what a dropped control or relay
+ * connection exercises in the field. */
+static esp_err_t system_debug_ts_rebind_handler(httpd_req_t *req)
+{
+    if (require_auth(req) != ESP_OK) return ESP_FAIL;
+    struct microlink_s *mlh = tailscale_get_microlink();
+    esp_err_t err = mlh ? microlink_rebind(mlh) : ESP_ERR_INVALID_STATE;
+    httpd_resp_set_type(req, "application/json");
+    return httpd_resp_sendstr(req, err == ESP_OK ? "{\"ok\":true}" : "{\"ok\":false}");
+}
+static const httpd_uri_t uri_system_debug_ts_rebind = {
+    .uri = "/api/debug/ts-rebind", .method = HTTP_POST, .handler = system_debug_ts_rebind_handler,
+};
+
 static const httpd_uri_t uri_system_debug_radio_post = {
     .uri = "/api/debug/radio", .method = HTTP_POST, .handler = system_debug_radio_post_handler,
 };
@@ -4902,6 +4918,7 @@ void web_ui_init(void)
     reg_uri(server, &uri_system_debug_radio_get);
     reg_uri(server, &uri_system_debug_radio_post);
     reg_uri(server, &uri_system_debug_wg_tx_post);
+    reg_uri(server, &uri_system_debug_ts_rebind);
     reg_uri(server, &uri_auth_status);
     reg_uri(server, &uri_auth_login);
     reg_uri(server, &uri_auth_logout);
